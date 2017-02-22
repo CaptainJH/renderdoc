@@ -1022,6 +1022,16 @@ void RenderDoc::SuccessfullyWrittenLog(uint32_t frameNumber)
     SCOPED_LOCK(m_CaptureLock);
     m_Captures.push_back(cap);
   }
+
+  // FX DeBugger:
+  string replayapp = FileIO::GetReplayAppFilename();
+  if (!replayapp.empty())
+  {
+	string cmd = "--temp \"";
+	cmd += m_CurrentLogFile;
+	cmd += "\"";
+	Process::LaunchProcess(replayapp.c_str(), "", cmd.c_str());
+  }
 }
 
 void RenderDoc::AddDeviceFrameCapturer(void *dev, IFrameCapturer *cap)

@@ -578,7 +578,7 @@ namespace renderdocui.Windows
                 w.CloseButtonVisible = false;
             }
 
-            if (shader != null && shader.DebugInfo.entryFunc.Length > 0 && shader.DebugInfo.files.Length > 0)
+            if (shader != null /*&& shader.DebugInfo.entryFunc.Length > 0*/ && shader.DebugInfo.files.Length > 0)
             {
                 if(trace != null)
                     Text = String.Format("Debug {0}() - {1}", shader.DebugInfo.entryFunc, debugContext);
