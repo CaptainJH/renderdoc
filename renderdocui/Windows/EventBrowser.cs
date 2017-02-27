@@ -1,7 +1,7 @@
 ﻿/******************************************************************************
  * The MIT License (MIT)
  * 
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -50,6 +50,8 @@ namespace renderdocui.Windows
         }
 
         private TreelistView.Node m_FrameNode = null;
+
+        Dictionary<uint, List<CounterResult>> m_Times = new Dictionary<uint, List<CounterResult>>();
 
         private Core m_Core;
 
@@ -259,13 +261,61 @@ namespace renderdocui.Windows
             return GetEndDrawID(drawcall.children.Last());
         }
 
+        public static bool ShouldHide(Core core, FetchDrawcall drawcall)
+        {
+            if (drawcall.flags.HasFlag(DrawcallFlags.PushMarker))
+            {
+                if (core.Config.EventBrowser_HideEmpty)
+                {
+                    if (drawcall.children == null || drawcall.children.Length == 0)
+                        return true;
+
+                    bool allhidden = true;
+
+                    foreach (FetchDrawcall child in drawcall.children)
+                    {
+                        if (ShouldHide(core, child))
+                            continue;
+
+                        allhidden = false;
+                        break;
+                    }
+
+                    if (allhidden)
+                        return true;
+                }
+
+                if (core.Config.EventBrowser_HideAPICalls)
+                {
+                    if (drawcall.children == null || drawcall.children.Length == 0)
+                        return false;
+
+                    bool onlyapi = true;
+
+                    foreach (FetchDrawcall child in drawcall.children)
+                    {
+                        if (ShouldHide(core, child))
+                            continue;
+
+                        if (!child.flags.HasFlag(DrawcallFlags.APICalls))
+                        {
+                            onlyapi = false;
+                            break;
+                        }
+                    }
+
+                    if (onlyapi)
+                        return true;
+                }
+            }
+
+            return false;
+        }
+
         private TreelistView.Node AddDrawcall(FetchDrawcall drawcall, TreelistView.Node root)
         {
-            if (m_Core.Config.EventBrowser_HideEmpty)
-            {
-                if ((drawcall.children == null || drawcall.children.Length == 0) && (drawcall.flags & DrawcallFlags.PushMarker) != 0)
-                    return null;
-            }
+            if (EventBrowser.ShouldHide(m_Core, drawcall))
+                return null;
 
             UInt32 eventNum = drawcall.eventID;
             TreelistView.Node drawNode = null;
@@ -311,7 +361,9 @@ namespace renderdocui.Windows
                     if (i > 0 && drawNode.Nodes.Count >= 2 &&
                         (drawcall.children[i - 1].flags & DrawcallFlags.SetMarker) > 0)
                     {
-                        drawNode.Nodes[drawNode.Nodes.Count - 2].Tag = drawNode.Nodes.LastNode.Tag;
+                        DeferredEvent markerTag = drawNode.Nodes[drawNode.Nodes.Count - 2].Tag as DeferredEvent;
+                        DeferredEvent drawTag = drawNode.Nodes.LastNode.Tag as DeferredEvent;
+                        markerTag.eventID = drawTag.eventID;
                     }
                 }
 
@@ -362,7 +414,11 @@ namespace renderdocui.Windows
             {
                 uint eid = GetNodeEventID(n);
 
-                if (times.ContainsKey(eid))
+                DeferredEvent def = n.Tag as DeferredEvent;
+
+                if (def != null && def.marker)
+                    duration = -1.0;
+                else if (times.ContainsKey(eid))
                     duration = times[eid][0].value.d;
                 else
                     duration = -1.0;
@@ -829,8 +885,7 @@ namespace renderdocui.Windows
 
                 var desc = r.DescribeCounter(counters[0]);
 
-                Dictionary<uint, List<CounterResult>> times = new Dictionary<uint, List<CounterResult>>();
-                times = r.FetchCounters(counters);
+                m_Times = r.FetchCounters(counters);
 
                 BeginInvoke((MethodInvoker)delegate
                 {
@@ -842,7 +897,7 @@ namespace renderdocui.Windows
 
                     eventView.BeginUpdate();
 
-                    SetDrawcallTimes(m_FrameNode, times);
+                    SetDrawcallTimes(m_FrameNode, m_Times);
 
                     eventView.EndUpdate();
                 });
@@ -1227,13 +1282,62 @@ namespace renderdocui.Windows
                 GetMaxNameLength(ref maxNameLength, indent + 1, i == 0, drawcall.children[i]);
         }
 
+        private double GetDrawTime(FetchDrawcall drawcall)
+        {
+            if (drawcall.children.Length > 0)
+            {
+                double total = 0.0;
+
+                foreach (FetchDrawcall c in drawcall.children)
+                {
+                    double f = GetDrawTime(c);
+                    if(f >= 0)
+                        total += f;
+                }
+
+                return total;
+            }
+            else if (m_Times.ContainsKey(drawcall.eventID))
+            {
+                return m_Times[drawcall.eventID][0].value.d;
+            }
+
+            return -1.0;
+        }
+
         private void ExportDrawcall(StreamWriter sw, int maxNameLength, int indent, bool firstchild, FetchDrawcall drawcall)
         {
             string eidString = drawcall.children.Length > 0 ? "" : drawcall.eventID.ToString();
 
             string nameString = GetExportDrawcallString(indent, firstchild, drawcall);
 
-            sw.WriteLine(String.Format("{0,-5} | {1,-" + maxNameLength + "} | {2,-5}", eidString, nameString, drawcall.drawcallID));
+            string line = String.Format("{0,-5} | {1,-" + maxNameLength + "} | {2,-6}", eidString, nameString, drawcall.drawcallID);
+
+            if (m_Times.Count > 0)
+            {
+                if (m_Core.Config.EventBrowser_TimeUnit != m_TimeUnit)
+                    UpdateDurationColumn();
+
+                double f = GetDrawTime(drawcall);
+
+                if (f >= 0)
+                {
+                    if (m_Core.Config.EventBrowser_TimeUnit == PersistantConfig.TimeUnit.Milliseconds)
+                        f *= 1000.0;
+                    else if (m_Core.Config.EventBrowser_TimeUnit == PersistantConfig.TimeUnit.Microseconds)
+                        f *= 1000000.0;
+                    else if (m_Core.Config.EventBrowser_TimeUnit == PersistantConfig.TimeUnit.Nanoseconds)
+                        f *= 1000000000.0;
+
+                    line += String.Format(" | {0}", Formatter.Format(f));
+                }
+                else
+                {
+                    line += " |";
+                }
+            }
+
+            sw.WriteLine(line);
 
             for (int i = 0; i < drawcall.children.Length; i++)
                 ExportDrawcall(sw, maxNameLength, indent + 1, i == 0, drawcall.children[i]);
@@ -1259,8 +1363,30 @@ namespace renderdocui.Windows
                         foreach (FetchDrawcall d in m_Core.GetDrawcalls())
                             GetMaxNameLength(ref maxNameLength, 0, false, d);
 
-                        sw.WriteLine(String.Format(" EID  | {0,-" + maxNameLength + "} | Draw #", "Event"));
-                        sw.WriteLine(String.Format("--------{0}-----------", new string('-', maxNameLength)));
+                        string line = String.Format(" EID  | {0,-" + maxNameLength + "} | Draw #", "Event");
+
+                        if (m_Times.Count > 0)
+                        {
+                            if (m_Core.Config.EventBrowser_TimeUnit != m_TimeUnit)
+                                UpdateDurationColumn();
+
+                            line += String.Format(" | {0}", eventView.Columns["Duration"].Caption);
+                        }
+
+                        sw.WriteLine(line);
+
+                        line = String.Format("--------{0}-----------", new string('-', maxNameLength));
+
+                        if (m_Times.Count > 0)
+                        {
+                            int maxDurationLength = 0;
+                            maxDurationLength = Math.Max(maxDurationLength, Formatter.Format(1.0).Length);
+                            maxDurationLength = Math.Max(maxDurationLength, Formatter.Format(1.2345e-200).Length);
+                            maxDurationLength = Math.Max(maxDurationLength, Formatter.Format(123456.7890123456789).Length);
+                            line += new string('-', 3 + maxDurationLength); // 3 extra for " | "
+                        }
+
+                        sw.WriteLine(line);
 
                         foreach (FetchDrawcall d in m_Core.GetDrawcalls())
                             ExportDrawcall(sw, maxNameLength, 0, false, d);

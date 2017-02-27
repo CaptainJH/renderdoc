@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -24,6 +24,7 @@
  ******************************************************************************/
 
 #include "driver/d3d11/d3d11_context.h"
+#include "3rdparty/tinyfiledialogs/tinyfiledialogs.h"
 #include "driver/d3d11/d3d11_renderstate.h"
 #include "driver/d3d11/d3d11_resources.h"
 #include "driver/dx/official/dxgi1_3.h"
@@ -116,7 +117,7 @@ bool WrappedID3D11DeviceContext::Serialise_PopEvent()
   {
     FetchDrawcall draw;
     draw.name = "API Calls";
-    draw.flags |= eDraw_SetMarker;
+    draw.flags |= eDraw_SetMarker | eDraw_APICalls;
 
     AddDrawcall(draw, true);
   }
@@ -3130,7 +3131,7 @@ bool WrappedID3D11DeviceContext::Serialise_OMSetRenderTargets(
       pDepthStencilView = (ID3D11DepthStencilView *)m_pDevice->GetResourceManager()->GetLiveResource(
           DepthStencilView);
 
-    if(m_CurrentPipelineState->ValidOutputMerger(RenderTargetViews, pDepthStencilView))
+    if(m_CurrentPipelineState->ValidOutputMerger(RenderTargetViews, pDepthStencilView, NULL))
     {
       m_CurrentPipelineState->ChangeRefWrite(m_CurrentPipelineState->OM.RenderTargets,
                                              RenderTargetViews, 0,
@@ -3182,7 +3183,7 @@ void WrappedID3D11DeviceContext::OMSetRenderTargets(UINT NumViews,
     RTs[i] = ppRenderTargetViews[i];
 
   // this function always sets all render targets
-  if(m_CurrentPipelineState->ValidOutputMerger(RTs, pDepthStencilView))
+  if(m_CurrentPipelineState->ValidOutputMerger(RTs, pDepthStencilView, NULL))
   {
     m_CurrentPipelineState->ChangeRefWrite(m_CurrentPipelineState->OM.RenderTargets, RTs, 0,
                                            D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT);
@@ -3319,7 +3320,11 @@ bool WrappedID3D11DeviceContext::Serialise_OMSetRenderTargetsAndUnorderedAccessV
 
     if(NumRTVs != D3D11_KEEP_RENDER_TARGETS_AND_DEPTH_STENCIL)
     {
-      if(m_CurrentPipelineState->ValidOutputMerger(RenderTargetViews, pDepthStencilView))
+      ID3D11UnorderedAccessView **srcUAVs = NumUAVs != D3D11_KEEP_UNORDERED_ACCESS_VIEWS
+                                                ? UnorderedAccessViews
+                                                : m_CurrentPipelineState->OM.UAVs;
+
+      if(m_CurrentPipelineState->ValidOutputMerger(RenderTargetViews, pDepthStencilView, srcUAVs))
       {
         m_CurrentPipelineState->ChangeRefWrite(m_CurrentPipelineState->OM.RenderTargets,
                                                RenderTargetViews, 0,
@@ -3331,9 +3336,21 @@ bool WrappedID3D11DeviceContext::Serialise_OMSetRenderTargetsAndUnorderedAccessV
 
     if(NumUAVs != D3D11_KEEP_UNORDERED_ACCESS_VIEWS)
     {
-      m_CurrentPipelineState->ChangeRefWrite(m_CurrentPipelineState->OM.UAVs, UnorderedAccessViews,
-                                             0, D3D11_1_UAV_SLOT_COUNT);
-      m_CurrentPipelineState->Change(m_CurrentPipelineState->OM.UAVStartSlot, UAVStartSlot);
+      bool valid = false;
+      if(NumRTVs != D3D11_KEEP_RENDER_TARGETS_AND_DEPTH_STENCIL)
+        valid = m_CurrentPipelineState->ValidOutputMerger(RenderTargetViews, pDepthStencilView,
+                                                          UnorderedAccessViews);
+      else
+        valid = m_CurrentPipelineState->ValidOutputMerger(m_CurrentPipelineState->OM.RenderTargets,
+                                                          m_CurrentPipelineState->OM.DepthView,
+                                                          UnorderedAccessViews);
+
+      if(valid)
+      {
+        m_CurrentPipelineState->ChangeRefWrite(m_CurrentPipelineState->OM.UAVs,
+                                               UnorderedAccessViews, 0, D3D11_1_UAV_SLOT_COUNT);
+        m_CurrentPipelineState->Change(m_CurrentPipelineState->OM.UAVStartSlot, UAVStartSlot);
+      }
     }
 
     for(UINT i = 0; i < NumRTVs && NumRTVs != D3D11_KEEP_RENDER_TARGETS_AND_DEPTH_STENCIL; i++)
@@ -3402,7 +3419,10 @@ void WrappedID3D11DeviceContext::OMSetRenderTargetsAndUnorderedAccessViews(
 
   if(NumRTVs != D3D11_KEEP_RENDER_TARGETS_AND_DEPTH_STENCIL)
   {
-    if(m_CurrentPipelineState->ValidOutputMerger(RTs, pDepthStencilView))
+    ID3D11UnorderedAccessView **srcUAVs =
+        NumUAVs != D3D11_KEEP_UNORDERED_ACCESS_VIEWS ? UAVs : m_CurrentPipelineState->OM.UAVs;
+
+    if(m_CurrentPipelineState->ValidOutputMerger(RTs, pDepthStencilView, srcUAVs))
     {
       m_CurrentPipelineState->ChangeRefWrite(m_CurrentPipelineState->OM.RenderTargets, RTs, 0,
                                              D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT);
@@ -3438,9 +3458,19 @@ void WrappedID3D11DeviceContext::OMSetRenderTargetsAndUnorderedAccessViews(
 
   if(NumUAVs != D3D11_KEEP_UNORDERED_ACCESS_VIEWS)
   {
-    m_CurrentPipelineState->ChangeRefWrite(m_CurrentPipelineState->OM.UAVs, UAVs, 0,
-                                           D3D11_1_UAV_SLOT_COUNT);
-    m_CurrentPipelineState->Change(m_CurrentPipelineState->OM.UAVStartSlot, UAVStartSlot);
+    bool valid = false;
+    if(NumRTVs != D3D11_KEEP_RENDER_TARGETS_AND_DEPTH_STENCIL)
+      valid = m_CurrentPipelineState->ValidOutputMerger(RTs, pDepthStencilView, UAVs);
+    else
+      valid = m_CurrentPipelineState->ValidOutputMerger(m_CurrentPipelineState->OM.RenderTargets,
+                                                        m_CurrentPipelineState->OM.DepthView, UAVs);
+
+    if(valid)
+    {
+      m_CurrentPipelineState->ChangeRefWrite(m_CurrentPipelineState->OM.UAVs, UAVs, 0,
+                                             D3D11_1_UAV_SLOT_COUNT);
+      m_CurrentPipelineState->Change(m_CurrentPipelineState->OM.UAVStartSlot, UAVStartSlot);
+    }
   }
 
   // invalid case where UAV/RTV overlap, UAV seems to take precedence
@@ -7687,10 +7717,12 @@ bool WrappedID3D11DeviceContext::Serialise_Unmap(ID3D11Resource *pResource, UINT
     {
       if(!record->VerifyShadowStorage(ctxMapID))
       {
-        int res =
-            MessageBoxA(NULL, "Breakpoint now to see callstack,\nor click 'Yes' to debugbreak.",
-                        "Map() overwrite detected!", MB_YESNO | MB_ICONERROR);
-        if(res == IDYES)
+        string msg = StringFormat::Fmt(
+            "Overwrite of %llu byte Map()'d buffer detected\n"
+            "Breakpoint now to see callstack,\nor click 'Yes' to debugbreak.",
+            record->Length);
+        int res = tinyfd_messageBox("Map() overwrite detected!", msg.c_str(), "yesno", "error", 1);
+        if(res == 1)
         {
           OS_DEBUG_BREAK();
         }

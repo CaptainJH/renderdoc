@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -34,6 +34,7 @@ class VulkanPipelineStateViewer;
 
 class RDTreeWidget;
 class QTreeWidgetItem;
+class PipelineStateViewer;
 
 struct SamplerData
 {
@@ -47,12 +48,14 @@ class VulkanPipelineStateViewer : public QFrame, public ILogViewerForm
   Q_OBJECT
 
 public:
-  explicit VulkanPipelineStateViewer(CaptureContext *ctx, QWidget *parent = 0);
+  explicit VulkanPipelineStateViewer(CaptureContext &ctx, PipelineStateViewer &common,
+                                     QWidget *parent = 0);
   ~VulkanPipelineStateViewer();
 
   void OnLogfileLoaded();
   void OnLogfileClosed();
-  void OnEventSelected(uint32_t eventID);
+  void OnSelectedEventChanged(uint32_t eventID) {}
+  void OnEventChanged(uint32_t eventID);
 
 private slots:
   // automatic slots
@@ -64,10 +67,12 @@ private slots:
   void on_viBuffers_itemActivated(QTreeWidgetItem *item, int column);
   void on_viAttrs_mouseMove(QMouseEvent *event);
   void on_viBuffers_mouseMove(QMouseEvent *event);
+  void on_pipeFlow_stageSelected(int index);
 
   // manual slots
   void shaderView_clicked();
   void shaderEdit_clicked();
+
   void shaderSave_clicked();
   void resource_itemActivated(QTreeWidgetItem *item, int column);
   void ubo_itemActivated(QTreeWidgetItem *item, int column);
@@ -75,7 +80,8 @@ private slots:
 
 private:
   Ui::VulkanPipelineStateViewer *ui;
-  CaptureContext *m_Ctx;
+  CaptureContext &m_Ctx;
+  PipelineStateViewer &m_Common;
 
   QVariantList makeSampler(
       const QString &bindset, const QString &slotname,
@@ -101,6 +107,8 @@ private:
   QString formatMembers(int indent, const QString &nameprefix,
                         const rdctype::array<ShaderConstant> &vars);
   const VulkanPipelineState::ShaderStage *stageForSender(QWidget *widget);
+
+  QString disassembleSPIRV(const ShaderReflection *shaderDetails);
 
   template <typename viewType>
   void setViewDetails(QTreeWidgetItem *node, const viewType &view, FetchTexture *tex);

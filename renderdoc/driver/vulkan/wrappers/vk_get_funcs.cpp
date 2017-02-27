@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -232,4 +232,79 @@ VkResult WrappedVulkan::vkMergePipelineCaches(VkDevice device, VkPipelineCache d
 {
   // do nothing, our pipeline caches are always dummies
   return VK_SUCCESS;
+}
+
+VkResult WrappedVulkan::vkGetPhysicalDeviceExternalImageFormatPropertiesNV(
+    VkPhysicalDevice physicalDevice, VkFormat format, VkImageType type, VkImageTiling tiling,
+    VkImageUsageFlags usage, VkImageCreateFlags flags,
+    VkExternalMemoryHandleTypeFlagsNV externalHandleType,
+    VkExternalImageFormatPropertiesNV *pExternalImageFormatProperties)
+{
+  return ObjDisp(physicalDevice)
+      ->GetPhysicalDeviceExternalImageFormatPropertiesNV(Unwrap(physicalDevice), format, type,
+                                                         tiling, usage, flags, externalHandleType,
+                                                         pExternalImageFormatProperties);
+}
+
+#if defined(VK_USE_PLATFORM_WIN32_KHR)
+VkResult WrappedVulkan::vkGetMemoryWin32HandleNV(VkDevice device, VkDeviceMemory memory,
+                                                 VkExternalMemoryHandleTypeFlagsNV handleType,
+                                                 HANDLE *pHandle)
+{
+  return ObjDisp(device)->GetMemoryWin32HandleNV(Unwrap(device), Unwrap(memory), handleType, pHandle);
+}
+#endif
+
+void WrappedVulkan::vkGetPhysicalDeviceFeatures2KHR(VkPhysicalDevice physicalDevice,
+                                                    VkPhysicalDeviceFeatures2KHR *pFeatures)
+{
+  return ObjDisp(physicalDevice)->GetPhysicalDeviceFeatures2KHR(Unwrap(physicalDevice), pFeatures);
+}
+
+void WrappedVulkan::vkGetPhysicalDeviceProperties2KHR(VkPhysicalDevice physicalDevice,
+                                                      VkPhysicalDeviceProperties2KHR *pProperties)
+{
+  return ObjDisp(physicalDevice)->GetPhysicalDeviceProperties2KHR(Unwrap(physicalDevice), pProperties);
+}
+
+void WrappedVulkan::vkGetPhysicalDeviceFormatProperties2KHR(VkPhysicalDevice physicalDevice,
+                                                            VkFormat format,
+                                                            VkFormatProperties2KHR *pFormatProperties)
+{
+  return ObjDisp(physicalDevice)
+      ->GetPhysicalDeviceFormatProperties2KHR(Unwrap(physicalDevice), format, pFormatProperties);
+}
+
+VkResult WrappedVulkan::vkGetPhysicalDeviceImageFormatProperties2KHR(
+    VkPhysicalDevice physicalDevice, const VkPhysicalDeviceImageFormatInfo2KHR *pImageFormatInfo,
+    VkImageFormatProperties2KHR *pImageFormatProperties)
+{
+  return ObjDisp(physicalDevice)
+      ->GetPhysicalDeviceImageFormatProperties2KHR(Unwrap(physicalDevice), pImageFormatInfo,
+                                                   pImageFormatProperties);
+}
+
+void WrappedVulkan::vkGetPhysicalDeviceQueueFamilyProperties2KHR(
+    VkPhysicalDevice physicalDevice, uint32_t *pCount,
+    VkQueueFamilyProperties2KHR *pQueueFamilyProperties)
+{
+  return ObjDisp(physicalDevice)
+      ->GetPhysicalDeviceQueueFamilyProperties2KHR(Unwrap(physicalDevice), pCount,
+                                                   pQueueFamilyProperties);
+}
+
+void WrappedVulkan::vkGetPhysicalDeviceMemoryProperties2KHR(
+    VkPhysicalDevice physicalDevice, VkPhysicalDeviceMemoryProperties2KHR *pMemoryProperties)
+{
+  return ObjDisp(physicalDevice)
+      ->GetPhysicalDeviceMemoryProperties2KHR(Unwrap(physicalDevice), pMemoryProperties);
+}
+
+void WrappedVulkan::vkGetPhysicalDeviceSparseImageFormatProperties2KHR(
+    VkPhysicalDevice physicalDevice, const VkPhysicalDeviceSparseImageFormatInfo2KHR *pFormatInfo,
+    uint32_t *pPropertyCount, VkSparseImageFormatProperties2KHR *pProperties)
+{
+  return ObjDisp(physicalDevice)
+      ->GetPhysicalDeviceSparseImageFormatProperties2KHR(Unwrap(physicalDevice), pFormatInfo,
+                                                         pPropertyCount, pProperties);
 }

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -35,8 +35,10 @@ class TextureViewer;
 }
 
 class ResourcePreview;
+class ShaderViewer;
 class ThumbnailStrip;
 class TextureGoto;
+class QFileSystemWatcher;
 
 enum struct FollowType
 {
@@ -61,34 +63,34 @@ struct Following
 
   bool operator==(const Following &o);
   bool operator!=(const Following &o);
-  static void GetDrawContext(CaptureContext *ctx, bool &copy, bool &compute);
+  static void GetDrawContext(CaptureContext &ctx, bool &copy, bool &compute);
 
-  int GetHighestMip(CaptureContext *ctx);
-  int GetFirstArraySlice(CaptureContext *ctx);
-  FormatComponentType GetTypeHint(CaptureContext *ctx);
+  int GetHighestMip(CaptureContext &ctx);
+  int GetFirstArraySlice(CaptureContext &ctx);
+  FormatComponentType GetTypeHint(CaptureContext &ctx);
 
-  ResourceId GetResourceId(CaptureContext *ctx);
-  BoundResource GetBoundResource(CaptureContext *ctx, int arrayIdx);
+  ResourceId GetResourceId(CaptureContext &ctx);
+  BoundResource GetBoundResource(CaptureContext &ctx, int arrayIdx);
 
-  static QVector<BoundResource> GetOutputTargets(CaptureContext *ctx);
+  static QVector<BoundResource> GetOutputTargets(CaptureContext &ctx);
 
-  static BoundResource GetDepthTarget(CaptureContext *ctx);
+  static BoundResource GetDepthTarget(CaptureContext &ctx);
 
-  QMap<BindpointMap, QVector<BoundResource>> GetReadWriteResources(CaptureContext *ctx);
+  QMap<BindpointMap, QVector<BoundResource>> GetReadWriteResources(CaptureContext &ctx);
 
-  static QMap<BindpointMap, QVector<BoundResource>> GetReadWriteResources(CaptureContext *ctx,
+  static QMap<BindpointMap, QVector<BoundResource>> GetReadWriteResources(CaptureContext &ctx,
                                                                           ShaderStageType stage);
 
-  QMap<BindpointMap, QVector<BoundResource>> GetReadOnlyResources(CaptureContext *ctx);
+  QMap<BindpointMap, QVector<BoundResource>> GetReadOnlyResources(CaptureContext &ctx);
 
-  static QMap<BindpointMap, QVector<BoundResource>> GetReadOnlyResources(CaptureContext *ctx,
+  static QMap<BindpointMap, QVector<BoundResource>> GetReadOnlyResources(CaptureContext &ctx,
                                                                          ShaderStageType stage);
 
-  ShaderReflection *GetReflection(CaptureContext *ctx);
-  static ShaderReflection *GetReflection(CaptureContext *ctx, ShaderStageType stage);
+  const ShaderReflection *GetReflection(CaptureContext &ctx);
+  static const ShaderReflection *GetReflection(CaptureContext &ctx, ShaderStageType stage);
 
-  ShaderBindpointMapping GetMapping(CaptureContext *ctx);
-  static ShaderBindpointMapping GetMapping(CaptureContext *ctx, ShaderStageType stage);
+  const ShaderBindpointMapping &GetMapping(CaptureContext &ctx);
+  static const ShaderBindpointMapping &GetMapping(CaptureContext &ctx, ShaderStageType stage);
 };
 
 struct TexSettings
@@ -121,12 +123,13 @@ private:
   Q_PROPERTY(QVariant persistData READ persistData WRITE setPersistData DESIGNABLE false SCRIPTABLE false)
 
 public:
-  explicit TextureViewer(CaptureContext *ctx, QWidget *parent = 0);
+  explicit TextureViewer(CaptureContext &ctx, QWidget *parent = 0);
   ~TextureViewer();
 
   void OnLogfileLoaded();
   void OnLogfileClosed();
-  void OnEventSelected(uint32_t eventID);
+  void OnSelectedEventChanged(uint32_t eventID) {}
+  void OnEventChanged(uint32_t eventID);
 
   void GotoLocation(int x, int y);
   void ViewTexture(ResourceId ID, bool focus);
@@ -158,6 +161,12 @@ private slots:
   void on_viewTexBuffer_clicked();
   void on_texListShow_clicked();
   void on_saveTex_clicked();
+  void on_debugPixelContext_clicked();
+  void on_pixelHistory_clicked();
+
+  void on_customCreate_clicked();
+  void on_customEdit_clicked();
+  void on_customDelete_clicked();
 
   void on_cancelTextureListFilter_clicked();
   void on_textureListFilter_editTextChanged(const QString &text);
@@ -186,6 +195,8 @@ private slots:
   void rangePoint_textChanged(QString text);
   void rangePoint_leave();
   void rangePoint_keyPress(QKeyEvent *e);
+
+  void customShaderModified(const QString &path);
 
   void channelsWidget_toggled(bool checked) { UI_UpdateChannels(); }
   void channelsWidget_selected(int index) { UI_UpdateChannels(); }
@@ -286,12 +297,19 @@ private:
   TextureGoto *m_Goto;
 
   Ui::TextureViewer *ui;
-  CaptureContext *m_Ctx = NULL;
+  CaptureContext &m_Ctx;
   IReplayOutput *m_Output = NULL;
 
   FetchTexture *m_CachedTexture;
   Following m_Following = Following::Default;
   QMap<ResourceId, TexSettings> m_TextureSettings;
+
+  QFileSystemWatcher *m_Watcher = NULL;
+  QStringList m_CustomShadersBusy;
+  QMap<QString, ResourceId> m_CustomShaders;
+  QMap<QString, ShaderViewer *> m_CustomShaderEditor;
+
+  void reloadCustomShaders(const QString &filter);
 
   TextureDisplay m_TexDisplay;
 };

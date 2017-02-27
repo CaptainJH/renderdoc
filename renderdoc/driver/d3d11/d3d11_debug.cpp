@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -1679,6 +1679,12 @@ void D3D11DebugManager::BindOutputWindow(uint64_t id, bool depth)
   if(id == 0 || m_OutputWindows.find(id) == m_OutputWindows.end())
     return;
 
+  if(m_RealState.active)
+    RDCERR("Trashing RealState! Mismatched use of BindOutputWindow / FlipOutputWindow");
+
+  m_RealState.active = true;
+  m_RealState.state = *m_WrappedContext->GetCurrentPipelineState();
+
   m_WrappedContext->OMSetRenderTargets(
       1, &m_OutputWindows[id].rtv, depth && m_OutputWindows[id].dsv ? m_OutputWindows[id].dsv : NULL);
 
@@ -1704,6 +1710,17 @@ void D3D11DebugManager::FlipOutputWindow(uint64_t id)
 
   if(m_OutputWindows[id].swap)
     m_OutputWindows[id].swap->Present(0, 0);
+
+  if(m_RealState.active)
+  {
+    m_RealState.active = false;
+    m_RealState.state.ApplyState(m_WrappedContext);
+    m_RealState.state.Clear();
+  }
+  else
+  {
+    RDCERR("RealState wasn't active! Mismatched use of BindOutputWindow / FlipOutputWindow");
+  }
 }
 
 uint32_t D3D11DebugManager::GetStructCount(ID3D11UnorderedAccessView *uav)
@@ -3420,12 +3437,14 @@ bool D3D11DebugManager::RenderTexture(TextureDisplay cfg, bool blendAlpha)
 
   int srvOffset = 0;
 
-  if(IsUIntFormat(details.texFmt))
+  if(IsUIntFormat(details.texFmt) ||
+     (IsTypelessFormat(details.texFmt) && cfg.typeHint == eCompType_UInt))
   {
     pixelData.OutputDisplayFormat |= TEXDISPLAY_UINT_TEX;
     srvOffset = 10;
   }
-  if(IsIntFormat(details.texFmt))
+  if(IsIntFormat(details.texFmt) ||
+     (IsTypelessFormat(details.texFmt) && cfg.typeHint == eCompType_SInt))
   {
     pixelData.OutputDisplayFormat |= TEXDISPLAY_SINT_TEX;
     srvOffset = 20;

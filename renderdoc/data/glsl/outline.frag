@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  * 
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -38,7 +38,7 @@ void main(void)
 			(ab.x > 16 && ab.y > 16)
 		);
 
-	if(outline.Scissor == 0)
+	if(outline.Scissor == 0u)
 	{
 		if(rectPos.x < 3.0f || rectPos.x > rectSize.x - 3.0f ||
 		   rectPos.y < 3.0f || rectPos.y > rectSize.y - 3.0f)

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -179,6 +179,7 @@ FetchTexture D3D12Replay::GetTexture(ResourceId id)
   ret.byteSize = 0;
   for(uint32_t i = 0; i < ret.mips; i++)
     ret.byteSize += GetByteSize(ret.width, ret.height, ret.depth, desc.Format, i);
+  ret.byteSize *= ret.arraysize;
 
   switch(ret.dimension)
   {
@@ -290,7 +291,6 @@ void D3D12Replay::FillResourceView(D3D12PipelineState::ResourceView &view, D3D12
 
   if(desc->GetType() == D3D12Descriptor::TypeSampler || desc->GetType() == D3D12Descriptor::TypeCBV)
   {
-    RDCERR("Invalid descriptors - expected a resource view");
     return;
   }
 

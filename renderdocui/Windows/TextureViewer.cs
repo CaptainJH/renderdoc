@@ -1,7 +1,7 @@
 ﻿/******************************************************************************
  * The MIT License (MIT)
  * 
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -2079,6 +2079,12 @@ namespace renderdocui.Windows
             bool uintTex = (tex.format.compType == FormatComponentType.UInt);
             bool sintTex = (tex.format.compType == FormatComponentType.SInt);
 
+            if (tex.format.compType == FormatComponentType.None && m_TexDisplay.typeHint == FormatComponentType.UInt)
+                uintTex = true;
+
+            if (tex.format.compType == FormatComponentType.None && m_TexDisplay.typeHint == FormatComponentType.SInt)
+                sintTex = true;
+
             if (m_TexDisplay.overlay == TextureDisplayOverlay.QuadOverdrawPass ||
                 m_TexDisplay.overlay == TextureDisplayOverlay.QuadOverdrawDraw)
             {
@@ -2961,6 +2967,9 @@ namespace renderdocui.Windows
         private void pixelContext_MouseClick(object sender, MouseEventArgs e)
         {
             pixelContext.Focus();
+
+            if (!m_Core.LogLoaded)
+                return;
 
             if (e.Button == MouseButtons.Right)
             {

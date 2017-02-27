@@ -59,7 +59,7 @@
          <string/>
         </property>
         <property name="pixmap">
-         <pixmap resource="../../resources.qrc">:/Resources/hourglass.png</pixmap>
+         <pixmap resource="../../Resources/resources.qrc">:/hourglass.png</pixmap>
         </property>
        </widget>
       </item>
@@ -84,9 +84,6 @@
        </spacer>
       </item>
      </layout>
-     <zorder>connectionIcon</zorder>
-     <zorder>connectionStatus</zorder>
-     <zorder>connectionSpacer</zorder>
     </widget>
    </item>
    <item>
@@ -416,7 +413,7 @@
   </customwidget>
  </customwidgets>
  <resources>
-  <include location="../../resources.qrc"/>
+  <include location="../../Resources/resources.qrc"/>
  </resources>
  <connections/>
 </ui>

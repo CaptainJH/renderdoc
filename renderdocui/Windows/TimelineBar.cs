@@ -1,7 +1,7 @@
 ﻿/******************************************************************************
  * The MIT License (MIT)
  * 
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -337,11 +337,8 @@ namespace renderdocui.Windows
                 if ((d.flags & (DrawcallFlags.SetMarker | DrawcallFlags.Present)) > 0)
                     continue;
 
-                if (m_Core.Config.EventBrowser_HideEmpty)
-                {
-                    if ((d.children == null || d.children.Length == 0) && (d.flags & (DrawcallFlags.PushMarker | DrawcallFlags.MultiDraw)) != 0)
-                        continue;
-                }
+                if(EventBrowser.ShouldHide(m_Core, d))
+                    continue;
 
                 bool newSection = ((d.flags & (DrawcallFlags.PushMarker|DrawcallFlags.MultiDraw)) > 0 || sections.Count == 0);
                 if (!newSection)

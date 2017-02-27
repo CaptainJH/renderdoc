@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -58,6 +58,8 @@ struct D3D11RenderState
 
   struct ResourceRange
   {
+    static ResourceRange Null;
+
     ResourceRange(ID3D11Buffer *res)
     {
       resource = res;
@@ -116,6 +118,7 @@ struct D3D11RenderState
       return false;
     }
 
+    bool IsNull() const { return resource == NULL; }
   private:
     ResourceRange();
 
@@ -339,6 +342,44 @@ struct D3D11RenderState
     UnbindIUnknownForRead(ResourceRange(uav), false, false);
   }
 
+  template <typename T>
+  void UnbindForWrite(T *resource);
+
+  template <>
+  void UnbindForWrite(ID3D11Buffer *buffer)
+  {
+    if(buffer == NULL)
+      return;
+    UnbindIUnknownForWrite(ResourceRange(buffer));
+  }
+
+  template <>
+  void UnbindForWrite(ID3D11RenderTargetView *rtv)
+  {
+    if(rtv == NULL)
+      return;
+
+    UnbindIUnknownForWrite(ResourceRange(rtv));
+  }
+
+  template <>
+  void UnbindForWrite(ID3D11DepthStencilView *dsv)
+  {
+    if(dsv == NULL)
+      return;
+
+    UnbindIUnknownForWrite(ResourceRange(dsv));
+  }
+
+  template <>
+  void UnbindForWrite(ID3D11UnorderedAccessView *uav)
+  {
+    if(uav == NULL)
+      return;
+
+    UnbindIUnknownForWrite(ResourceRange(uav));
+  }
+
   /////////////////////////////////////////////////////////////////////////
   // Utility functions to swap resources around, removing and adding refs
 
@@ -346,82 +387,89 @@ struct D3D11RenderState
   void ReleaseRef(ID3D11DeviceChild *p);
 
   template <typename T>
-  void ChangeRefRead(T **stateArray, T *const *newArray, size_t offset, size_t num)
-  {
-    for(size_t i = 0; i < num; i++)
-    {
-      T *old = stateArray[offset + i];
-      ReleaseRef(old);
-
-      if(newArray[i] == NULL)
-      {
-        stateArray[offset + i] = newArray[i];
-      }
-      else
-      {
-        if(IsBoundForWrite(newArray[i]))
-        {
-          // RDCDEBUG("Resource %d was bound for write, forcing to NULL", offset+i);
-          stateArray[offset + i] = NULL;
-        }
-        else
-        {
-          stateArray[offset + i] = newArray[i];
-        }
-      }
-      TakeRef(stateArray[offset + i]);
-    }
-  }
-
-  template <typename T>
-  void ChangeRefWrite(T **stateArray, T *const *newArray, size_t offset, size_t num)
-  {
-    for(size_t i = 0; i < num; i++)
-    {
-      T *old = stateArray[offset + i];
-      ReleaseRef(old);
-
-      if(newArray[i])
-        UnbindForRead(newArray[i]);
-      stateArray[offset + i] = newArray[i];
-      TakeRef(stateArray[offset + i]);
-    }
-  }
-
-  template <typename T>
   void ChangeRefRead(T *&stateItem, T *newItem)
   {
+    // don't do anything for redundant changes. This prevents the object from bouncing off refcount
+    // 0 during the changeover if it's only bound once, has no external refcount.
+    if(stateItem == newItem)
+      return;
+
+    // release the old item, which may destroy it but we won't use it again as we know is not the
+    // same as the new item.
     ReleaseRef(stateItem);
+
+    // assign the new item, but don't ref it yet
     stateItem = newItem;
 
-    if(newItem == NULL)
+    // if the item is bound for writing anywhere, we instead bind NULL
+    if(IsBoundForWrite(newItem))
     {
-      stateItem = newItem;
-    }
-    else
-    {
-      if(IsBoundForWrite(newItem))
-      {
-        // RDCDEBUG("Resource was bound for write, forcing to NULL");
-        stateItem = NULL;
-      }
-      else
-      {
-        stateItem = newItem;
-      }
+      // RDCDEBUG("Resource was bound for write, forcing to NULL");
+      stateItem = NULL;
     }
 
-    TakeRef(newItem);
+    // finally we take the ref on the new item
+    TakeRef(stateItem);
+  }
+
+  template <typename T>
+  void ChangeRefRead(T **stateArray, T *const *newArray, size_t offset, size_t num)
+  {
+    // addref the whole array so none of it can be destroyed during processing
+    for(size_t i = 0; i < num; i++)
+      if(newArray[i])
+        newArray[i]->AddRef();
+
+    for(size_t i = 0; i < num; i++)
+      ChangeRefRead(stateArray[offset + i], newArray[i]);
+
+    // release the ref we added above
+    for(size_t i = 0; i < num; i++)
+      if(newArray[i])
+        newArray[i]->Release();
   }
 
   template <typename T>
   void ChangeRefWrite(T *&stateItem, T *newItem)
   {
+    // don't do anything for redundant changes. This prevents the object from bouncing off refcount
+    // 0 during the changeover if it's only bound once, has no external refcount.
+    if(stateItem == newItem)
+      return;
+
+    // release the old item, which may destroy it but we won't use it again as we know is not the
+    // same as the new item. We NULL it out so that it doesn't get unbound again below
     ReleaseRef(stateItem);
-    stateItem = newItem;
+    stateItem = NULL;
+
+    // if we're not binding NULL, then unbind any other conflicting uses
     if(newItem)
+    {
       UnbindForRead(newItem);
-    TakeRef(newItem);
+      // when binding something for write, all other write slots are NULL'd too
+      UnbindForWrite(newItem);
+    }
+
+    // now bind the new item and ref it
+    stateItem = newItem;
+    TakeRef(stateItem);
+  }
+
+  template <typename T>
+  void ChangeRefWrite(T **stateArray, T *const *newArray, size_t offset, size_t num)
+  {
+    // addref the whole array so none of it can be destroyed during processing
+    for(size_t i = 0; i < num; i++)
+      if(newArray[i])
+        newArray[i]->AddRef();
+
+    for(size_t i = 0; i < num; i++)
+      ChangeRefWrite(stateArray[offset + i], newArray[i]);
+
+    // release the ref we added above
+    for(size_t i = 0; i < num; i++)
+      if(newArray[i])
+        newArray[i]->Release();
   }
 
   template <typename T>
@@ -442,7 +490,8 @@ struct D3D11RenderState
   // that might not be obvious/intended.
 
   // validate an output merger combination of render targets and depth view
-  bool ValidOutputMerger(ID3D11RenderTargetView **RTs, ID3D11DepthStencilView *depth);
+  bool ValidOutputMerger(ID3D11RenderTargetView **RTs, ID3D11DepthStencilView *depth,
+                         ID3D11UnorderedAccessView **uavs);
 
   struct inputassembler
   {

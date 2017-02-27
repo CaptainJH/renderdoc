@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -991,9 +991,13 @@ static VkResourceRecord *GetObjRecord(VkDebugReportObjectTypeEXT objType, uint64
     case VK_DEBUG_REPORT_OBJECT_TYPE_SURFACE_KHR_EXT: return GetRecord((VkSurfaceKHR)object);
     case VK_DEBUG_REPORT_OBJECT_TYPE_SWAPCHAIN_KHR_EXT: return GetRecord((VkSwapchainKHR)object);
     case VK_DEBUG_REPORT_OBJECT_TYPE_COMMAND_POOL_EXT: return GetRecord((VkCommandPool)object);
+    case VK_DEBUG_REPORT_OBJECT_TYPE_DISPLAY_KHR_EXT:
+    case VK_DEBUG_REPORT_OBJECT_TYPE_DISPLAY_MODE_KHR_EXT:
     case VK_DEBUG_REPORT_OBJECT_TYPE_UNKNOWN_EXT:
     case VK_DEBUG_REPORT_OBJECT_TYPE_DEBUG_REPORT_EXT:
     case VK_DEBUG_REPORT_OBJECT_TYPE_RANGE_SIZE_EXT:
+    case VK_DEBUG_REPORT_OBJECT_TYPE_OBJECT_TABLE_NVX_EXT:
+    case VK_DEBUG_REPORT_OBJECT_TYPE_INDIRECT_COMMANDS_LAYOUT_NVX_EXT:
     case VK_DEBUG_REPORT_OBJECT_TYPE_MAX_ENUM_EXT: break;
   }
   return NULL;

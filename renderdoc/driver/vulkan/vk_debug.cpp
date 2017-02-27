@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -709,6 +709,10 @@ VulkanDebugManager::VulkanDebugManager(WrappedVulkan *driver, VkDevice dev)
       texelFetchBrokenDriver = true;
   }
 
+// only check this on windows. This is a bit of a hack, as really we want to check if we're
+// using the AMD official driver, but there's not a great other way to distinguish it from
+// the RADV open source driver.
+#if ENABLED(RDOC_WIN32)
   if(driverVersion.IsAMD())
   {
     // for AMD the bugfix version isn't clear as version numbering wasn't strong for a while, but
@@ -718,6 +722,7 @@ VulkanDebugManager::VulkanDebugManager(WrappedVulkan *driver, VkDevice dev)
     if(driverVersion.Major() < 1)
       texelFetchBrokenDriver = true;
   }
+#endif
 
   if(texelFetchBrokenDriver)
   {
@@ -1049,7 +1054,8 @@ VulkanDebugManager::VulkanDebugManager(WrappedVulkan *driver, VkDevice dev)
       RDCASSERTEQUAL(vkr, VK_SUCCESS);
     }
 
-    if(!texelFetchBrokenDriver)
+    if(!texelFetchBrokenDriver && m_pDriver->GetDeviceFeatures().shaderStorageImageMultisample &&
+       m_pDriver->GetDeviceFeatures().shaderStorageImageWriteWithoutFormat)
     {
       compPipeInfo.stage.module = ms2arrayModule;
       compPipeInfo.layout = m_ArrayMSPipeLayout;
@@ -1065,6 +1071,8 @@ VulkanDebugManager::VulkanDebugManager(WrappedVulkan *driver, VkDevice dev)
                                                 &m_Array2MSPipe);
       RDCASSERTEQUAL(vkr, VK_SUCCESS);
     }
+
+    ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 
     pipeInfo.layout = m_TextPipeLayout;
 
@@ -1975,7 +1983,8 @@ VulkanDebugManager::VulkanDebugManager(WrappedVulkan *driver, VkDevice dev)
     RDCASSERTEQUAL(vkr, VK_SUCCESS);
   }
 
-  if(!texelFetchBrokenDriver)
+  if(!texelFetchBrokenDriver && m_pDriver->GetDeviceFeatures().shaderStorageImageMultisample &&
+     m_pDriver->GetDeviceFeatures().shaderStorageImageWriteWithoutFormat)
   {
     compPipeInfo.stage.module = module[MS2ARRAYCS];
     compPipeInfo.layout = m_ArrayMSPipeLayout;
@@ -2705,7 +2714,7 @@ void VulkanDebugManager::RenderTextInternal(const TextPrintState &textstate, flo
       ->CmdBindDescriptorSets(Unwrap(textstate.cmd), VK_PIPELINE_BIND_POINT_GRAPHICS,
                               Unwrap(m_TextPipeLayout), 0, 1, UnwrapPtr(m_TextDescSet), 2, offsets);
 
-  ObjDisp(textstate.cmd)->CmdDraw(Unwrap(textstate.cmd), 4, (uint32_t)strlen(text), 0, 0);
+  ObjDisp(textstate.cmd)->CmdDraw(Unwrap(textstate.cmd), 6 * (uint32_t)strlen(text), 1, 0, 0);
 }
 
 void VulkanDebugManager::ReplaceResource(ResourceId from, ResourceId to)
@@ -2734,24 +2743,43 @@ void VulkanDebugManager::ReplaceResource(ResourceId from, ResourceId to)
 
     if(refdShader)
     {
-      VkGraphicsPipelineCreateInfo pipeCreateInfo;
-      MakeGraphicsPipelineInfo(pipeCreateInfo, it->first);
-
-      // replace the relevant module
-      for(uint32_t i = 0; i < pipeCreateInfo.stageCount; i++)
-      {
-        VkPipelineShaderStageCreateInfo &sh =
-            (VkPipelineShaderStageCreateInfo &)pipeCreateInfo.pStages[i];
-
-        if(sh.module == srcShaderModule)
-          sh.module = dstShaderModule;
-      }
-
-      // create the new pipeline
       VkPipeline pipe = VK_NULL_HANDLE;
-      VkResult vkr =
-          m_pDriver->vkCreateGraphicsPipelines(dev, VK_NULL_HANDLE, 1, &pipeCreateInfo, NULL, &pipe);
-      RDCASSERTEQUAL(vkr, VK_SUCCESS);
+      const VulkanCreationInfo::Pipeline &pipeInfo = m_pDriver->m_CreationInfo.m_Pipeline[it->first];
+      if(pipeInfo.renderpass != ResourceId())    // check if this is a graphics or compute pipeline
+      {
+        VkGraphicsPipelineCreateInfo pipeCreateInfo;
+        MakeGraphicsPipelineInfo(pipeCreateInfo, it->first);
+
+        // replace the relevant module
+        for(uint32_t i = 0; i < pipeCreateInfo.stageCount; i++)
+        {
+          VkPipelineShaderStageCreateInfo &sh =
+              (VkPipelineShaderStageCreateInfo &)pipeCreateInfo.pStages[i];
+
+          if(sh.module == srcShaderModule)
+            sh.module = dstShaderModule;
+        }
+
+        // create the new graphics pipeline
+        VkResult vkr = m_pDriver->vkCreateGraphicsPipelines(dev, VK_NULL_HANDLE, 1, &pipeCreateInfo,
+                                                            NULL, &pipe);
+        RDCASSERTEQUAL(vkr, VK_SUCCESS);
+      }
+      else
+      {
+        VkComputePipelineCreateInfo pipeCreateInfo;
+        MakeComputePipelineInfo(pipeCreateInfo, it->first);
+
+        // replace the relevant module
+        VkPipelineShaderStageCreateInfo &sh = pipeCreateInfo.stage;
+        RDCASSERT(sh.module == srcShaderModule);
+        sh.module = dstShaderModule;
+
+        // create the new compute pipeline
+        VkResult vkr = m_pDriver->vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &pipeCreateInfo,
+                                                           NULL, &pipe);
+        RDCASSERTEQUAL(vkr, VK_SUCCESS);
+      }
 
       // remove the replacements
       GetResourceManager()->ReplaceResource(it->first, GetResID(pipe));
@@ -3946,7 +3974,9 @@ uint32_t VulkanDebugManager::PickVertex(uint32_t eventID, const MeshDisplay &cfg
     // the derivation of the projection matrix might not be right (hell, it could be an
     // orthographic projection). But it'll be close enough likely.
     Matrix4f guessProj =
-        Matrix4f::Perspective(cfg.fov, cfg.position.nearPlane, cfg.position.farPlane, cfg.aspect);
+        cfg.position.farPlane != FLT_MAX
+            ? Matrix4f::Perspective(cfg.fov, cfg.position.nearPlane, cfg.position.farPlane, cfg.aspect)
+            : Matrix4f::ReversePerspective(cfg.fov, cfg.position.nearPlane, cfg.aspect);
 
     if(cfg.ortho)
       guessProj = Matrix4f::Orthographic(cfg.position.nearPlane, cfg.position.farPlane);
@@ -4466,7 +4496,7 @@ void VulkanDebugManager::GetBufferData(ResourceId buff, uint64_t offset, uint64_
 void VulkanDebugManager::MakeGraphicsPipelineInfo(VkGraphicsPipelineCreateInfo &pipeCreateInfo,
                                                   ResourceId pipeline)
 {
-  VulkanCreationInfo::Pipeline &pipeInfo = m_pDriver->m_CreationInfo.m_Pipeline[pipeline];
+  const VulkanCreationInfo::Pipeline &pipeInfo = m_pDriver->m_CreationInfo.m_Pipeline[pipeline];
 
   static VkPipelineShaderStageCreateInfo stages[6];
   static VkSpecializationInfo specInfo[6];
@@ -4687,6 +4717,77 @@ void VulkanDebugManager::MakeGraphicsPipelineInfo(VkGraphicsPipelineCreateInfo &
       GetResourceManager()->GetCurrentHandle<VkPipelineLayout>(pipeInfo.layout),
       GetResourceManager()->GetCurrentHandle<VkRenderPass>(pipeInfo.renderpass),
       pipeInfo.subpass,
+      VK_NULL_HANDLE,    // base pipeline handle
+      0,                 // base pipeline index
+  };
+
+  pipeCreateInfo = ret;
+}
+
+void VulkanDebugManager::MakeComputePipelineInfo(VkComputePipelineCreateInfo &pipeCreateInfo,
+                                                 ResourceId pipeline)
+{
+  const VulkanCreationInfo::Pipeline &pipeInfo = m_pDriver->m_CreationInfo.m_Pipeline[pipeline];
+
+  VkPipelineShaderStageCreateInfo stage;    // Returned by value
+  static VkSpecializationInfo specInfo;
+  static vector<VkSpecializationMapEntry> specMapEntries;
+
+  const uint32_t i = 5;    // Compute stage
+  RDCASSERT(pipeInfo.shaders[i].module != ResourceId());
+
+  size_t specEntries = 0;
+  if(!pipeInfo.shaders[i].specialization.empty())
+    specEntries += pipeInfo.shaders[i].specialization.size();
+
+  specMapEntries.resize(specEntries);
+  VkSpecializationMapEntry *entry = &specMapEntries[0];
+
+  stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  stage.stage = (VkShaderStageFlagBits)(1 << i);
+  stage.module = GetResourceManager()->GetCurrentHandle<VkShaderModule>(pipeInfo.shaders[i].module);
+  stage.pName = pipeInfo.shaders[i].entryPoint.c_str();
+  stage.pNext = NULL;
+  stage.pSpecializationInfo = NULL;
+  stage.flags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+  if(!pipeInfo.shaders[i].specialization.empty())
+  {
+    stage.pSpecializationInfo = &specInfo;
+    specInfo.pMapEntries = entry;
+    specInfo.mapEntryCount = (uint32_t)pipeInfo.shaders[i].specialization.size();
+
+    byte *minDataPtr = NULL;
+    byte *maxDataPtr = NULL;
+
+    for(size_t s = 0; s < pipeInfo.shaders[i].specialization.size(); s++)
+    {
+      entry[s].constantID = pipeInfo.shaders[i].specialization[s].specID;
+      entry[s].size = pipeInfo.shaders[i].specialization[s].size;
+
+      if(minDataPtr == NULL)
+        minDataPtr = pipeInfo.shaders[i].specialization[s].data;
+      else
+        minDataPtr = RDCMIN(minDataPtr, pipeInfo.shaders[i].specialization[s].data);
+
+      maxDataPtr = RDCMAX(minDataPtr, pipeInfo.shaders[i].specialization[s].data + entry[s].size);
+    }
+
+    for(size_t s = 0; s < pipeInfo.shaders[i].specialization.size(); s++)
+      entry[s].offset = (uint32_t)(pipeInfo.shaders[i].specialization[s].data - minDataPtr);
+
+    specInfo.dataSize = (maxDataPtr - minDataPtr);
+    specInfo.pData = (const void *)minDataPtr;
+
+    entry += specInfo.mapEntryCount;
+  }
+
+  VkComputePipelineCreateInfo ret = {
+      VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+      NULL,
+      pipeInfo.flags,
+      stage,
+      GetResourceManager()->GetCurrentHandle<VkPipelineLayout>(pipeInfo.layout),
       VK_NULL_HANDLE,    // base pipeline handle
       0,                 // base pipeline index
   };
@@ -4951,6 +5052,10 @@ struct VulkanQuadOverdrawCallback : public VulkanDrawcallCallback
   void PreDispatch(uint32_t eid, VkCommandBuffer cmd) {}
   bool PostDispatch(uint32_t eid, VkCommandBuffer cmd) { return false; }
   void PostRedispatch(uint32_t eid, VkCommandBuffer cmd) {}
+  // Ditto copy/etc
+  void PreMisc(uint32_t eid, DrawcallFlags flags, VkCommandBuffer cmd) {}
+  bool PostMisc(uint32_t eid, DrawcallFlags flags, VkCommandBuffer cmd) { return false; }
+  void PostRemisc(uint32_t eid, DrawcallFlags flags, VkCommandBuffer cmd) {}
   bool RecordAllCmds() { return false; }
   void AliasEvent(uint32_t primary, uint32_t alias)
   {
@@ -5147,8 +5252,11 @@ ResourceId VulkanDebugManager::RenderOverlay(ResourceId texid, TextureDisplayOve
 
   VkImageSubresourceRange subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
 
+  const FetchDrawcall *mainDraw = m_pDriver->GetDrawcall(eventID);
+
   // Secondary commands can't have render passes
-  if(!m_pDriver->m_Partial[WrappedVulkan::Primary].renderPassActive)
+  if((mainDraw && (mainDraw->flags & eDraw_Drawcall) == 0) ||
+     !m_pDriver->m_Partial[WrappedVulkan::Primary].renderPassActive)
   {
     // don't do anything, no drawcall capable of making overlays selected
     float black[] = {0.0f, 0.0f, 0.0f, 0.0f};
@@ -5293,6 +5401,7 @@ ResourceId VulkanDebugManager::RenderOverlay(ResourceId texid, TextureDisplayOve
 
     // set our renderpass and shader
     pipeCreateInfo.renderPass = m_OverlayNoDepthRP;
+    pipeCreateInfo.subpass = 0;
 
     bool found = false;
     for(uint32_t i = 0; i < pipeCreateInfo.stageCount; i++)
@@ -5438,6 +5547,9 @@ ResourceId VulkanDebugManager::RenderOverlay(ResourceId texid, TextureDisplayOve
       ubo->Scissor = 0;
       ubo->ViewRect = Vec4f(viewport.x, viewport.y, viewport.width, viewport.height);
 
+      if(m_pDriver->m_ExtensionsEnabled[VkCheckExt_AMD_neg_viewport])
+        ubo->ViewRect.w = fabs(viewport.height);
+
       m_OutlineUBO.Unmap();
 
       vt->CmdBindPipeline(Unwrap(cmd), VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -5569,6 +5681,7 @@ ResourceId VulkanDebugManager::RenderOverlay(ResourceId texid, TextureDisplayOve
 
     // set our renderpass and shader
     pipeCreateInfo.renderPass = m_OverlayNoDepthRP;
+    pipeCreateInfo.subpass = 0;
 
     VkPipelineShaderStageCreateInfo *fragShader = NULL;
 
@@ -5828,6 +5941,7 @@ ResourceId VulkanDebugManager::RenderOverlay(ResourceId texid, TextureDisplayOve
 
     // set our renderpass and shader
     pipeCreateInfo.renderPass = m_OverlayNoDepthRP;
+    pipeCreateInfo.subpass = 0;
 
     VkPipelineShaderStageCreateInfo *fragShader = NULL;
 

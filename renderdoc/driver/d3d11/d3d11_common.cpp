@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -29,6 +29,41 @@
 #include "driver/d3d11/d3d11_resources.h"
 #include "serialise/serialiser.h"
 #include "serialise/string_utils.h"
+
+WrappedID3D11Device *D3D11MarkerRegion::device;
+
+D3D11MarkerRegion::D3D11MarkerRegion(const std::string &marker)
+{
+  if(device == NULL)
+    return;
+
+  ID3DUserDefinedAnnotation *annot = device->GetAnnotations();
+
+  if(annot)
+    annot->BeginEvent(StringFormat::UTF82Wide(marker).c_str());
+}
+
+void D3D11MarkerRegion::Set(const std::string &marker)
+{
+  if(device == NULL)
+    return;
+
+  ID3DUserDefinedAnnotation *annot = device->GetAnnotations();
+
+  if(annot)
+    annot->SetMarker(StringFormat::UTF82Wide(marker).c_str());
+}
+
+D3D11MarkerRegion::~D3D11MarkerRegion()
+{
+  if(device == NULL)
+    return;
+
+  ID3DUserDefinedAnnotation *annot = device->GetAnnotations();
+
+  if(annot)
+    annot->EndEvent();
+}
 
 static ShaderConstant MakeConstantBufferVariable(const DXBC::CBufferVariable &var, uint32_t &offset);
 

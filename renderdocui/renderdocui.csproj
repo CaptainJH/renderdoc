@@ -548,6 +548,11 @@
     </BootstrapperPackage>
   </ItemGroup>
   <ItemGroup>
+    <Content Include="3rdparty\ironpython\pythonlibs.zip" Condition="Exists('3rdparty\ironpython\pythonlibs.zip')">
+      <Link>pythonlibs.zip</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Visible>false</Visible>
+    </Content>
     <Content Include="3rdparty\ScintillaNET\SciLexer.dll">
       <Link>SciLexer.dll</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -607,6 +612,8 @@
     <None Include="Resources\stepnext.png" />
     <None Include="Resources\time.png" />
     <None Include="Resources\timeline_marker.png" />
+    <None Include="Resources\runsample.png" />
+    <None Include="Resources\runnaninf.png" />
     <Content Include="Resources\topologies\topo_linelist.png" />
     <Content Include="Resources\topologies\topo_linelist_adj.png" />
     <Content Include="Resources\topologies\topo_linestrip.png" />

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -69,6 +69,11 @@ bool RefCountDXGIObject::HandleWrap(REFIID riid, void **ppvObject)
   // {79D2046C-22EF-451B-9E74-2245D9C760EA}
   static const GUID Unknown_uuid = {
       0x79d2046c, 0x22ef, 0x451b, {0x9e, 0x74, 0x22, 0x45, 0xd9, 0xc7, 0x60, 0xea}};
+
+  // ditto
+  // {9B7E4C04-342C-4106-A19F-4F2704F689F0}
+  static const GUID ID3D10Texture2D_uuid = {
+      0x9b7e4c04, 0x342c, 0x4106, {0xa1, 0x9f, 0x4f, 0x27, 0x04, 0xf6, 0x89, 0xf0}};
 
   if(riid == __uuidof(IDXGIDevice))
   {
@@ -147,6 +152,16 @@ bool RefCountDXGIObject::HandleWrap(REFIID riid, void **ppvObject)
     IDXGIFactory5 *real = (IDXGIFactory5 *)(*ppvObject);
     *ppvObject = (IDXGIFactory5 *)(new WrappedIDXGIFactory5(real));
     return true;
+  }
+  else if(riid == ID3D10Texture2D_uuid)
+  {
+    static bool printed = false;
+    if(!printed)
+    {
+      printed = true;
+      RDCWARN("Querying IDXGIObject for unsupported D3D10 interface: %s", ToStr::Get(riid).c_str());
+    }
+    return false;
   }
   else if(riid == Unknown_uuid)
   {
@@ -265,6 +280,19 @@ HRESULT STDMETHODCALLTYPE WrappedIDXGISwapChain4::QueryInterface(REFIID riid, vo
     {
       AddRef();
       *ppvObject = (IDXGISwapChain3 *)this;
+      return S_OK;
+    }
+    else
+    {
+      return E_NOINTERFACE;
+    }
+  }
+  else if(riid == __uuidof(IDXGISwapChain4))
+  {
+    if(m_pReal4)
+    {
+      AddRef();
+      *ppvObject = (IDXGISwapChain4 *)this;
       return S_OK;
     }
     else
@@ -868,6 +896,8 @@ HRESULT WrappedIDXGIFactory5::CreateSwapChainForCoreWindow(IUnknown *pDevice, IU
     {
       HWND wnd = NULL;
       (*ppSwapChain)->GetHwnd(&wnd);
+      if(wnd == NULL)
+        wnd = (HWND)pWindow;
       *ppSwapChain = new WrappedIDXGISwapChain4(*ppSwapChain, wnd, wrapDevice);
     }
 
@@ -903,6 +933,8 @@ HRESULT WrappedIDXGIFactory5::CreateSwapChainForComposition(IUnknown *pDevice,
     {
       HWND wnd = NULL;
       (*ppSwapChain)->GetHwnd(&wnd);
+      if(wnd == NULL)
+        wnd = (HWND)0x1;
       *ppSwapChain = new WrappedIDXGISwapChain4(*ppSwapChain, wnd, wrapDevice);
     }
 

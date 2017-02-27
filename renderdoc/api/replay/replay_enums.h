@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -40,6 +40,7 @@ enum DirectoryFileProperty
 
 enum VarType
 {
+  eVar_Unknown = -1,
   eVar_Float = 0,
   eVar_Int,
   eVar_UInt,
@@ -345,6 +346,13 @@ enum ShaderStageBits
                    eStageBits_Compute,
 };
 
+enum ShaderDebugStateFlags
+{
+  eShaderDbg_None = 0,
+  eShaderDbg_SampleLoadGather = 0x1,
+  eShaderDbg_GeneratedNanOrInf = 0x2,
+};
+
 enum DebugMessageCategory
 {
   eDbgCategory_Application_Defined = 0,
@@ -464,6 +472,7 @@ enum DrawcallFlags
   eDraw_ClearDepthStencil = 0x200000,
   eDraw_BeginPass = 0x400000,
   eDraw_EndPass = 0x800000,
+  eDraw_APICalls = 0x1000000,
 };
 
 enum SolidShadeMode
@@ -495,10 +504,20 @@ enum GPUCounters
   eCounter_FirstGeneric = 1,
   eCounter_EventGPUDuration = eCounter_FirstGeneric,
   eCounter_InputVerticesRead,
-  eCounter_VSInvocations,
-  eCounter_PSInvocations,
+  eCounter_IAPrimitives,
+  eCounter_GSPrimitives,
+  eCounter_RasterizerInvocations,
   eCounter_RasterizedPrimitives,
   eCounter_SamplesWritten,
+  eCounter_VSInvocations,
+  eCounter_HSInvocations,
+  eCounter_TCSInvocations = eCounter_HSInvocations,
+  eCounter_DSInvocations,
+  eCounter_TESInvocations = eCounter_DSInvocations,
+  eCounter_GSInvocations,
+  eCounter_PSInvocations,
+  eCounter_CSInvocations,
+  eCounter_GLMaxCounters,
 
   // IHV specific counters can be set above this point
   // with ranges reserved for each IHV
@@ -581,4 +600,15 @@ enum LogMessageType
   eLogType_Error,
   eLogType_Fatal,
   eLogType_NumTypes,
+};
+
+enum VulkanFlags
+{
+  eVulkan_OtherInstallsRegistered = 0x1,
+  eVulkan_ThisInstallRegistered = 0x2,
+  eVulkan_NeedElevation = 0x4,
+  eVulkan_CouldElevate = 0x8,
+  eVulkan_RegisterAll = 0x10,
+  eVulkan_UpdateAllowed = 0x20,
+  eVulkan_Unfixable = 0x40,
 };

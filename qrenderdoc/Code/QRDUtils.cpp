@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -23,12 +23,18 @@
  ******************************************************************************/
 
 #include "QRDUtils.h"
+#include <QApplication>
 #include <QFileSystemModel>
 #include <QGridLayout>
 #include <QGuiApplication>
 #include <QJsonDocument>
+#include <QKeyEvent>
+#include <QLabel>
 #include <QMenu>
 #include <QMetaMethod>
+#include <QProcess>
+#include <QProgressDialog>
+#include <QStandardPaths>
 #include <QTreeWidget>
 #include <QtMath>
 
@@ -176,6 +182,60 @@ QString ToQStr(const ShaderStageType stage, const GraphicsAPI apitype)
   }
 
   return "Unknown";
+}
+
+QString TypeString(const SigParameter &sig)
+{
+  QString ret = "";
+
+  if(sig.compType == eCompType_Float)
+    ret += "float";
+  else if(sig.compType == eCompType_UInt || sig.compType == eCompType_UScaled)
+    ret += "uint";
+  else if(sig.compType == eCompType_SInt || sig.compType == eCompType_SScaled)
+    ret += "int";
+  else if(sig.compType == eCompType_UNorm)
+    ret += "unorm float";
+  else if(sig.compType == eCompType_SNorm)
+    ret += "snorm float";
+  else if(sig.compType == eCompType_Depth)
+    ret += "float";
+
+  if(sig.compCount > 1)
+    ret += QString::number(sig.compCount);
+
+  return ret;
+}
+
+QString D3DSemanticString(const SigParameter &sig)
+{
+  if(sig.systemValue == eAttr_None)
+    return ToQStr(sig.semanticIdxName);
+
+  QString ret = ToQStr(sig.systemValue);
+
+  // need to include the index if it's a system value semantic that's numbered
+  if(sig.systemValue == eAttr_ColourOutput || sig.systemValue == eAttr_CullDistance ||
+     sig.systemValue == eAttr_ClipDistance)
+    ret += QString::number(sig.semanticIndex);
+
+  return ret;
+}
+
+QString GetComponentString(byte mask)
+{
+  QString ret = "";
+
+  if((mask & 0x1) > 0)
+    ret += "R";
+  if((mask & 0x2) > 0)
+    ret += "G";
+  if((mask & 0x4) > 0)
+    ret += "B";
+  if((mask & 0x8) > 0)
+    ret += "A";
+
+  return ret;
 }
 
 bool SaveToJSON(QVariantMap &data, QIODevice &f, const char *magicIdentifier, uint32_t magicVersion)
@@ -375,9 +435,11 @@ QString RDDialog::getExecutableFileName(QWidget *parent, const QString &caption,
   fd.setOptions(options);
   fd.setAcceptMode(QFileDialog::AcceptOpen);
   fd.setFileMode(QFileDialog::ExistingFile);
-  QFileFilterModel *proxy = new QFileFilterModel(parent);
-  proxy->setRequirePermissions(QDir::Executable);
-  fd.setProxyModel(proxy);
+  {
+    QFileFilterModel *fileProxy = new QFileFilterModel(parent);
+    fileProxy->setRequirePermissions(QDir::Executable);
+    fd.setProxyModel(fileProxy);
+  }
   show(&fd);
 
   if(fd.result() == QFileDialog::Accepted)
@@ -454,8 +516,6 @@ void addGridLines(QGridLayout *grid)
     for(int x = 0; x < grid->columnCount(); x++)
     {
       QLayoutItem *item = grid->itemAtPosition(y, x);
-      QLayoutItem *east = grid->itemAtPosition(y, x + 1);
-      QLayoutItem *south = grid->itemAtPosition(y + 1, x);
 
       if(item == NULL)
         continue;
@@ -465,16 +525,12 @@ void addGridLines(QGridLayout *grid)
       if(w == NULL)
         continue;
 
-      QString name = w->objectName();
+      QString style = "border: solid black; border-bottom-width: 1px; border-right-width: 1px;";
 
-      QString style;
-
-      style += "border: solid black; border-top-width: 1px; border-left-width: 1px;";
-
-      if(!east || !east->widget())
-        style += "border-right-width: 1px;";
-      if(!south || !south->widget())
-        style += "border-bottom-width: 1px;";
+      if(x == 0)
+        style += "border-left-width: 1px;";
+      if(y == 0)
+        style += "border-top-width: 1px;";
 
       w->setStyleSheet(style);
     }
@@ -501,6 +557,16 @@ QTreeWidgetItem *makeTreeNode(const QVariantList &values)
     ret->setData(i++, Qt::DisplayRole, v);
 
   return ret;
+}
+
+void deleteChildren(QTreeWidgetItem *item)
+{
+  while(item->childCount() > 0)
+  {
+    QTreeWidgetItem *child = item->takeChild(0);
+    deleteChildren(child);
+    delete child;
+  }
 }
 
 int Formatter::m_minFigures = 2, Formatter::m_maxFigures = 5, Formatter::m_expNegCutoff = 5,
@@ -543,4 +609,348 @@ QString Formatter::Format(double f, bool)
   }
 
   return ret;
+}
+
+class RDProgressDialog : public QProgressDialog
+{
+public:
+  RDProgressDialog(const QString &labelText, QWidget *parent)
+      // we add 1 so that the progress value never hits maximum until we are actually finished
+      : QProgressDialog(labelText, QString(), 0, maxProgress + 1, parent),
+        m_Label(this)
+  {
+    setWindowTitle(tr("Please Wait"));
+    setWindowFlags(Qt::CustomizeWindowHint | Qt::Dialog | Qt::WindowTitleHint);
+    setWindowIcon(QIcon());
+    setMinimumSize(QSize(250, 0));
+    setMaximumSize(QSize(250, 10000));
+    setCancelButton(NULL);
+    setMinimumDuration(0);
+    setWindowModality(Qt::ApplicationModal);
+    setValue(0);
+
+    m_Label.setText(labelText);
+    m_Label.setAlignment(Qt::AlignCenter);
+    m_Label.setWordWrap(true);
+
+    setLabel(&m_Label);
+  }
+
+  void setPercentage(float percent) { setValue(int(maxProgress * percent)); }
+  void setInfinite(bool infinite)
+  {
+    if(infinite)
+    {
+      setMinimum(0);
+      setMaximum(0);
+      setValue(0);
+    }
+    else
+    {
+      setMinimum(0);
+      setMaximum(maxProgress + 1);
+      setValue(0);
+    }
+  }
+
+  void closeAndReset()
+  {
+    setValue(maxProgress);
+    hide();
+    reset();
+  }
+
+protected:
+  void keyPressEvent(QKeyEvent *e) override
+  {
+    if(e->key() == Qt::Key_Escape)
+      return;
+
+    QProgressDialog::keyPressEvent(e);
+  }
+
+  QLabel m_Label;
+
+  static const int maxProgress = 1000;
+};
+
+#if defined(Q_OS_WIN32)
+#include <windows.h>
+
+#include <shellapi.h>
+#endif
+
+bool RunProcessAsAdmin(const QString &fullExecutablePath, const QStringList &params,
+                       std::function<void()> finishedCallback)
+{
+#if defined(Q_OS_WIN32)
+
+  std::wstring wideExe = fullExecutablePath.toStdWString();
+  std::wstring wideParams = params.join(QChar(' ')).toStdWString();
+
+  SHELLEXECUTEINFOW info = {};
+  info.cbSize = sizeof(info);
+  info.fMask = SEE_MASK_NOCLOSEPROCESS;
+  info.lpVerb = L"runas";
+  info.lpFile = wideExe.c_str();
+  info.lpParameters = wideParams.c_str();
+  info.nShow = SW_SHOWNORMAL;
+
+  ShellExecuteExW(&info);
+
+  if((uintptr_t)info.hInstApp > 32 && info.hProcess != NULL)
+  {
+    if(finishedCallback)
+    {
+      HANDLE h = info.hProcess;
+
+      // do the wait on another thread
+      LambdaThread *thread = new LambdaThread([h, finishedCallback]() {
+        WaitForSingleObject(h, 30000);
+        CloseHandle(h);
+        GUIInvoke::call(finishedCallback);
+      });
+      thread->selfDelete(true);
+      thread->start();
+    }
+    else
+    {
+      CloseHandle(info.hProcess);
+    }
+
+    return true;
+  }
+
+  return false;
+
+#else
+  // try to find a way to run the application elevated.
+  const QString graphicalSudo[] = {
+      "pkexec", "kdesudo", "gksudo", "beesu",
+  };
+
+  // if none of the graphical options, then look for sudo and either
+  const QString termEmulator[] = {
+      "x-terminal-emulator", "gnome-terminal", "knosole", "xterm",
+  };
+
+  for(const QString &sudo : graphicalSudo)
+  {
+    QString inPath = QStandardPaths::findExecutable(sudo);
+
+    // can't find in path
+    if(inPath.isEmpty())
+      continue;
+
+    QProcess *process = new QProcess;
+
+    QStringList sudoParams;
+    sudoParams << fullExecutablePath;
+    for(const QString &p : params)
+      sudoParams << p;
+
+    qInfo() << "Running" << sudo << "with params" << sudoParams;
+
+    // run with sudo
+    process->start(sudo, sudoParams);
+
+    // when the process exits, call the callback and delete
+    QObject::connect(process, OverloadedSlot<int>::of(&QProcess::finished),
+                     [process, finishedCallback](int exitCode) {
+                       process->deleteLater();
+                       GUIInvoke::call(finishedCallback);
+                     });
+
+    return true;
+  }
+
+  QString sudo = QStandardPaths::findExecutable("sudo");
+
+  if(sudo.isEmpty())
+  {
+    qCritical() << "Couldn't find graphical or terminal sudo program!\n"
+                << "Please run " << fullExecutablePath << "with args" << params << "manually.";
+    return false;
+  }
+
+  for(const QString &term : termEmulator)
+  {
+    QString inPath = QStandardPaths::findExecutable(term);
+
+    // can't find in path
+    if(inPath.isEmpty())
+      continue;
+
+    QProcess *process = new QProcess;
+
+    // run terminal sudo with emulator
+    QStringList termParams;
+    termParams << "-e"
+               << QString("bash -c 'sudo %1 %2'").arg(fullExecutablePath).arg(params.join(QChar(' ')));
+
+    process->start(term, termParams);
+
+    // when the process exits, call the callback and delete
+    QObject::connect(process, OverloadedSlot<int>::of(&QProcess::finished),
+                     [process, finishedCallback](int exitCode) {
+                       process->deleteLater();
+                       GUIInvoke::call(finishedCallback);
+                     });
+
+    return true;
+  }
+
+  qCritical() << "Couldn't find graphical or terminal emulator to launch sudo.\n"
+              << "Please run " << fullExecutablePath << "with args" << params << "manually.";
+
+  return false;
+#endif
+}
+
+QStringList ParseArgsList(const QString &args)
+{
+  QStringList ret;
+
+  if(args.isEmpty())
+    return ret;
+
+// on windows just use the function provided by the system
+#if defined(Q_OS_WIN32)
+  std::wstring wargs = args.toStdWString();
+
+  int argc = 0;
+  wchar_t **argv = CommandLineToArgvW(wargs.c_str(), &argc);
+
+  for(int i = 0; i < argc; i++)
+    ret << QString::fromWCharArray(argv[i]);
+
+  LocalFree(argv);
+#else
+  std::string argString = args.toStdString();
+
+  // perform some kind of sane parsing
+  bool dquot = false, squot = false;    // are we inside ''s or ""s
+
+  // current character
+  char *c = &argString[0];
+
+  // current argument we're building
+  std::string a;
+
+  while(*c)
+  {
+    if(!dquot && !squot && (*c == ' ' || *c == '\t'))
+    {
+      if(!a.empty())
+        ret << QString::fromStdString(a);
+
+      a = "";
+    }
+    else if(!dquot && *c == '"')
+    {
+      dquot = true;
+    }
+    else if(!squot && *c == '\'')
+    {
+      squot = true;
+    }
+    else if(dquot && *c == '"')
+    {
+      dquot = false;
+    }
+    else if(squot && *c == '\'')
+    {
+      squot = false;
+    }
+    else if(squot)
+    {
+      // single quotes don't escape, just copy literally until we leave single quote mode
+      a.push_back(*c);
+    }
+    else if(dquot)
+    {
+      // handle escaping
+      if(*c == '\\')
+      {
+        c++;
+        if(*c)
+        {
+          a.push_back(*c);
+        }
+        else
+        {
+          qCritical() << "Malformed args list:" << args;
+          return ret;
+        }
+      }
+      else
+      {
+        a.push_back(*c);
+      }
+    }
+    else
+    {
+      a.push_back(*c);
+    }
+
+    c++;
+  }
+
+  // if we were building an argument when we hit the end of the string
+  if(!a.empty())
+    ret << QString::fromStdString(a);
+#endif
+
+  return ret;
+}
+
+void ShowProgressDialog(QWidget *window, const QString &labelText, ProgressFinishedMethod finished,
+                        ProgressUpdateMethod update)
+{
+  RDProgressDialog dialog(labelText, window);
+
+  // if we don't have an update function, set the progress display to be 'infinite spinner'
+  dialog.setInfinite(!update);
+
+  QSemaphore tickerSemaphore(1);
+
+  // start a lambda thread to tick our functions and close the progress dialog when we're done.
+  LambdaThread progressTickerThread([finished, update, &dialog, &tickerSemaphore]() {
+    while(tickerSemaphore.available())
+    {
+      QThread::msleep(30);
+
+      if(update)
+        GUIInvoke::call([update, &dialog]() { dialog.setPercentage(update()); });
+
+      GUIInvoke::call([finished, &tickerSemaphore]() {
+        if(finished())
+          tickerSemaphore.tryAcquire();
+      });
+    }
+
+    GUIInvoke::call([&dialog]() { dialog.closeAndReset(); });
+  });
+  progressTickerThread.start();
+
+  // show the dialog
+  RDDialog::show(&dialog);
+
+  // signal the thread to exit if somehow we got here without it finishing, then wait for it thread
+  // to clean itself up
+  tickerSemaphore.tryAcquire();
+  progressTickerThread.wait();
+}
+
+QString GetSystemUsername()
+{
+  QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+
+  QString username = env.value("USER");
+  if(username == QString())
+    username = env.value("USERNAME");
+  if(username == QString())
+    username = "Unknown_User";
+
+  return username;
 }

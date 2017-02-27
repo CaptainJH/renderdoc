@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  * 
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -152,7 +152,7 @@ namespace renderdoc
         private static extern bool ReplayOutput_PickPixel(IntPtr real, ResourceId texID, bool customShader,
                                                                 UInt32 x, UInt32 y, UInt32 sliceFace, UInt32 mip, UInt32 sample, IntPtr outval);
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern UInt32 ReplayOutput_PickVertex(IntPtr real, UInt32 eventID, UInt32 x, UInt32 y);
+        private static extern UInt32 ReplayOutput_PickVertex(IntPtr real, UInt32 eventID, UInt32 x, UInt32 y, IntPtr outPickedInstance);
 
         private IntPtr m_Real = IntPtr.Zero;
 
@@ -269,9 +269,16 @@ namespace renderdoc
             return ret;
         }
 
-        public UInt32 PickVertex(UInt32 eventID, UInt32 x, UInt32 y)
+        public UInt32 PickVertex(UInt32 eventID, UInt32 x, UInt32 y, out UInt32 pickedInstance)
         {
-            return ReplayOutput_PickVertex(m_Real, eventID,  x, y);
+            IntPtr mem = CustomMarshal.Alloc(typeof(UInt32));
+
+            UInt32 pickedVertex = ReplayOutput_PickVertex(m_Real, eventID,  x, y, mem);
+            pickedInstance = (UInt32)CustomMarshal.PtrToStructure(mem, typeof(UInt32), true);
+
+            CustomMarshal.Free(mem);
+
+            return pickedVertex;
         }
 
     };

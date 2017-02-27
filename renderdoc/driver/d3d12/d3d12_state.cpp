@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -165,17 +165,21 @@ void D3D12RenderState::ApplyState(ID3D12GraphicsCommandList *cmd) const
   for(size_t i = 0; i < vbuffers.size(); i++)
   {
     D3D12_VERTEX_BUFFER_VIEW vb;
+    vb.BufferLocation = 0;
 
-    ID3D12Resource *res = GetResourceManager()->GetCurrentAs<ID3D12Resource>(vbuffers[i].buf);
-    if(res)
-      vb.BufferLocation = res->GetGPUVirtualAddress() + vbuffers[i].offs;
-    else
-      vb.BufferLocation = 0;
+    if(vbuffers[i].buf != ResourceId())
+    {
+      ID3D12Resource *res = GetResourceManager()->GetCurrentAs<ID3D12Resource>(vbuffers[i].buf);
+      if(res)
+        vb.BufferLocation = res->GetGPUVirtualAddress() + vbuffers[i].offs;
+      else
+        vb.BufferLocation = 0;
 
-    vb.StrideInBytes = vbuffers[i].stride;
-    vb.SizeInBytes = vbuffers[i].size;
+      vb.StrideInBytes = vbuffers[i].stride;
+      vb.SizeInBytes = vbuffers[i].size;
 
-    cmd->IASetVertexBuffers((UINT)i, 1, &vb);
+      cmd->IASetVertexBuffers((UINT)i, 1, &vb);
+    }
   }
 
   std::vector<ID3D12DescriptorHeap *> descHeaps;
@@ -192,7 +196,8 @@ void D3D12RenderState::ApplyState(ID3D12GraphicsCommandList *cmd) const
     D3D12_CPU_DESCRIPTOR_HANDLE rtHandles[8];
     D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle = CPUHandleFromPortableHandle(GetResourceManager(), dsv);
 
-    UINT numActualHandles = rtSingle ? 1 : (UINT)rts.size();
+    UINT rtCount = (UINT)rts.size();
+    UINT numActualHandles = rtSingle ? RDCMIN(1U, rtCount) : rtCount;
 
     for(UINT i = 0; i < numActualHandles; i++)
       rtHandles[i] = CPUHandleFromPortableHandle(GetResourceManager(), rts[i]);

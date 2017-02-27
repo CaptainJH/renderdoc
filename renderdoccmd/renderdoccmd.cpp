@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -542,12 +542,13 @@ struct ReplayCommand : public Command
   }
 };
 
-struct Cap32For64Command : public Command
+struct CapAltBitCommand : public Command
 {
   virtual void AddOptions(cmdline::parser &parser)
   {
     parser.add<uint32_t>("pid", 0, "");
     parser.add<string>("log", 0, "");
+    parser.add<string>("debuglog", 0, "");
     parser.add<string>("capopts", 0, "");
     parser.stop_at_rest(true);
   }
@@ -563,7 +564,7 @@ struct Cap32For64Command : public Command
 
     if(rest.size() % 3 != 0)
     {
-      std::cerr << "Invalid generated cap32for64 command rest.size() == " << rest.size() << std::endl;
+      std::cerr << "Invalid generated capaltbit command rest.size() == " << rest.size() << std::endl;
       return 0;
     }
 
@@ -625,7 +626,7 @@ struct Cap32For64Command : public Command
       }
       else
       {
-        std::cerr << "Invalid generated cap32for64 env '" << rest[i * 3 + 0] << std::endl;
+        std::cerr << "Invalid generated capaltbit env '" << rest[i * 3 + 0] << std::endl;
         RENDERDOC_FreeEnvironmentModificationList(env);
         return 0;
       }
@@ -633,6 +634,10 @@ struct Cap32For64Command : public Command
       RENDERDOC_SetEnvironmentModification(env, i, rest[i * 3 + 1].c_str(), rest[i * 3 + 2].c_str(),
                                            type, sep);
     }
+
+    string debuglog = parser.get<string>("debuglog");
+
+    RENDERDOC_SetDebugLogFile(debuglog.c_str());
 
     int ret = RENDERDOC_InjectIntoProcess(parser.get<uint32_t>("pid"), env,
                                           parser.get<string>("log").c_str(), &cmdopts, false);
@@ -673,7 +678,7 @@ int renderdoccmd(std::vector<std::string> &argv)
     add_command("inject", new InjectCommand());
     add_command("remoteserver", new RemoteServerCommand());
     add_command("replay", new ReplayCommand());
-    add_command("cap32for64", new Cap32For64Command());
+    add_command("capaltbit", new CapAltBitCommand());
 
     if(argv.size() <= 1)
     {

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -23,6 +23,7 @@
  ******************************************************************************/
 
 #include "d3d12_device.h"
+#include "driver/dxgi/dxgi_common.h"
 #include "d3d12_command_list.h"
 #include "d3d12_command_queue.h"
 #include "d3d12_resources.h"
@@ -446,7 +447,15 @@ bool WrappedID3D12Device::Serialise_CreateDescriptorHeap(
     // while patching, because DX12 has a stupid limitation to not be able
     // to set multiple descriptor heaps at once of the same type
     if(Descriptor.Type == D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV)
-      Descriptor.NumDescriptors += 16;
+    {
+      if(m_D3D12Opts.ResourceBindingTier == D3D12_RESOURCE_BINDING_TIER_3 ||
+         Descriptor.NumDescriptors + 16 <= 1000000)
+        Descriptor.NumDescriptors += 16;
+      else
+        RDCERR(
+            "RenderDoc needs extra descriptors for patching during analysis,"
+            "but heap is already at binding tier limit");
+    }
 
     ID3D12DescriptorHeap *ret = NULL;
     HRESULT hr = m_pDevice->CreateDescriptorHeap(&Descriptor, guid, (void **)&ret);
@@ -934,6 +943,19 @@ bool WrappedID3D12Device::Serialise_CreateCommittedResource(
   if(m_State == READING)
   {
     pOptimizedClearValue = HasClearValue ? &clearVal : NULL;
+
+    if(props.Type == D3D12_HEAP_TYPE_UPLOAD && desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER)
+    {
+      // place large resources in local memory so that initial contents and maps can
+      // be cached and copied on the GPU instead of memcpy'd from the CPU every time.
+      // smaller resources it's better to just leave them as upload and map into them
+      if(desc.Width >= 1024 * 1024)
+      {
+        RDCLOG("Remapping committed resource %llu from upload to default for efficient replay", Res);
+        props.Type = D3D12_HEAP_TYPE_DEFAULT;
+        m_UploadResourceIds.insert(Res);
+      }
+    }
 
     if(desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER)
     {

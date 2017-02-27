@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -31,6 +31,7 @@
 #include "api/replay/renderdoc_replay.h"
 #include "driver/dx/official/d3d11_4.h"
 #include "driver/shaders/dxbc/dxbc_debug.h"
+#include "d3d11_renderstate.h"
 
 using std::map;
 using std::pair;
@@ -43,7 +44,7 @@ class WrappedID3D11DeviceContext;
 
 struct DrawcallTreeNode;
 
-struct CounterContext;
+struct D3D11CounterContext;
 
 class D3D11ResourceManager;
 
@@ -316,6 +317,15 @@ private:
   uint64_t m_OutputWindowID;
   map<uint64_t, OutputWindow> m_OutputWindows;
 
+  // used to track the real state so we can preserve it even
+  // across work done to the output windows
+  struct RealState
+  {
+    RealState() : state((Serialiser *)NULL) { active = false; }
+    bool active;
+    D3D11RenderState state;
+  } m_RealState;
+
   static const uint32_t m_ShaderCacheMagic = 0xf000baba;
   static const uint32_t m_ShaderCacheVersion = 3;
 
@@ -581,7 +591,7 @@ private:
   // called before the device is shutdown, to shutdown any counters
   void PreDeviceShutdownCounters();
 
-  void FillTimers(CounterContext &ctx, const DrawcallTreeNode &drawnode);
+  void FillTimers(D3D11CounterContext &ctx, const DrawcallTreeNode &drawnode);
 
   void FillCBuffer(ID3D11Buffer *buf, const void *data, size_t size);
 };

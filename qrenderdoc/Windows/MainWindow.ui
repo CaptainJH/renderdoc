@@ -14,8 +14,8 @@
    <string>QRenderDoc</string>
   </property>
   <property name="windowIcon">
-   <iconset resource="../resources.qrc">
-    <normaloff>:/Resources/icon.ico</normaloff>:/Resources/icon.ico</iconset>
+   <iconset resource="../Resources/resources.qrc">
+    <normaloff>:/icon.ico</normaloff>:/icon.ico</iconset>
   </property>
   <widget class="QWidget" name="centralWidget">
    <layout class="QVBoxLayout" name="verticalLayout">
@@ -50,10 +50,11 @@
      <string>&amp;Tools</string>
     </property>
     <addaction name="action_Resolve_Symbols"/>
-    <addaction name="action_Log_Statistics"/>
     <addaction name="separator"/>
-    <addaction name="action_Options"/>
-    <addaction name="action_Manage_Replay_Devices"/>
+    <addaction name="action_Settings"/>
+    <addaction name="action_Manage_Remote_Servers"/>
+    <addaction name="separator"/>
+    <addaction name="action_Start_Android_Remote_Server"/>
    </widget>
    <widget class="QMenu" name="menu_File">
     <property name="title">
@@ -127,19 +128,20 @@
     <addaction name="action_Mesh_Output"/>
     <addaction name="action_Errors_and_Warnings"/>
     <addaction name="action_Timeline"/>
+    <addaction name="action_Statistics_Viewer"/>
    </widget>
    <widget class="QMenu" name="menu_Help">
     <property name="title">
      <string>&amp;Help</string>
     </property>
-    <addaction name="actionView_Documentation"/>
-    <addaction name="actionView_Diagnostic_Log_File"/>
-    <addaction name="actionSend_Error_Report"/>
+    <addaction name="action_View_Documentation"/>
+    <addaction name="action_View_Diagnostic_Log_File"/>
+    <addaction name="action_Send_Error_Report"/>
     <addaction name="separator"/>
     <addaction name="actionUpdate_available"/>
     <addaction name="separator"/>
-    <addaction name="actionSource_on_github"/>
-    <addaction name="actionBuild_Release_downloads"/>
+    <addaction name="action_Source_on_github"/>
+    <addaction name="action_Build_Release_downloads"/>
     <addaction name="action_About"/>
    </widget>
    <addaction name="menu_File"/>
@@ -328,27 +330,27 @@
     <string>&amp;Log Statistics</string>
    </property>
   </action>
-  <action name="action_Options">
+  <action name="action_Settings">
    <property name="text">
-    <string>&amp;Options</string>
+    <string>&amp;Settings</string>
    </property>
   </action>
-  <action name="action_Manage_Replay_Devices">
+  <action name="action_Manage_Remote_Servers">
    <property name="text">
-    <string>&amp;Manage Replay Devices</string>
+    <string>&amp;Manage Remote Servers</string>
    </property>
   </action>
-  <action name="actionView_Documentation">
+  <action name="action_View_Documentation">
    <property name="text">
     <string>View &amp;Documentation</string>
    </property>
   </action>
-  <action name="actionView_Diagnostic_Log_File">
+  <action name="action_View_Diagnostic_Log_File">
    <property name="text">
     <string>View Diagnostic &amp;Log File</string>
    </property>
   </action>
-  <action name="actionSend_Error_Report">
+  <action name="action_Send_Error_Report">
    <property name="text">
     <string>Send &amp;Error Report</string>
    </property>
@@ -358,12 +360,12 @@
     <string>Update available</string>
    </property>
   </action>
-  <action name="actionSource_on_github">
+  <action name="action_Source_on_github">
    <property name="text">
     <string>Source on github</string>
    </property>
   </action>
-  <action name="actionBuild_Release_downloads">
+  <action name="action_Build_Release_downloads">
    <property name="text">
     <string>Build/Release downloads</string>
    </property>
@@ -383,17 +385,27 @@
     <string>Clear History</string>
    </property>
   </action>
+  <action name="action_Statistics_Viewer">
+   <property name="text">
+    <string>Statisti&amp;cs Viewer</string>
+   </property>
+  </action>
+  <action name="action_Start_Android_Remote_Server">
+   <property name="text">
+    <string>Start &amp;Android Remote Server</string>
+   </property>
+  </action>
  </widget>
  <layoutdefault spacing="6" margin="11"/>
  <customwidgets>
   <customwidget>
    <class>ToolWindowManager</class>
    <extends>QWidget</extends>
-   <header>ToolWindowManager.h</header>
+   <header>3rdparty/toolwindowmanager/ToolWindowManager.h</header>
   </customwidget>
  </customwidgets>
  <resources>
-  <include location="../resources.qrc"/>
+  <include location="../Resources/resources.qrc"/>
  </resources>
  <connections/>
 </ui>

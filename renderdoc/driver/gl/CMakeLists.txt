@@ -20,8 +20,6 @@ set(sources
     gl_shader_refl.h
     official/glcorearb.h
     official/glext.h
-    official/glxext.h
-    official/wglext.h
     wrappers/gl_buffer_funcs.cpp
     wrappers/gl_debug_funcs.cpp
     wrappers/gl_draw_funcs.cpp
@@ -36,19 +34,27 @@ set(sources
     wrappers/gl_texture_funcs.cpp
     wrappers/gl_uniform_funcs.cpp)
 
-if(ANDROID)
-    list(APPEND sources
-        gl_replay_android.cpp
-        gl_hooks_android.cpp)
-elseif(APPLE)
+if(APPLE)
     list(APPEND sources
         gl_replay_apple.cpp
         gl_hooks_apple.cpp)
-elseif(UNIX)
+else()
     list(APPEND sources
-        gl_replay_linux.cpp
-        glx_hooks_linux.cpp
-        gl_hooks_linux.cpp)
+        gl_hooks_linux_shared.cpp)
+
+    if(ENABLE_GL)
+        list(APPEND sources
+            official/glxext.h
+            official/wglext.h
+            gl_replay_linux.cpp
+            glx_hooks_linux.cpp
+            gl_hooks_linux.cpp)
+    endif()
+    if(ENABLE_GLES)
+        list(APPEND sources
+            gl_hooks_egl.cpp
+            gl_replay_egl.cpp)
+    endif()
 endif()
 
 add_library(rdoc_gl OBJECT ${sources})

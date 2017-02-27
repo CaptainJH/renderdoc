@@ -1,7 +1,7 @@
 ﻿/******************************************************************************
  * The MIT License (MIT)
  * 
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -749,15 +749,28 @@ namespace renderdocui.Windows
                 DeleteCaptureUnprompted(i);
         }
 
+        DateTime lastEdit = DateTime.MinValue;
+
+        private void captures_AfterLabelEdit(object sender, LabelEditEventArgs e)
+        {
+            lastEdit = DateTime.Now;
+        }
+
         private void captures_KeyUp(object sender, KeyEventArgs e)
         {
             if (e.KeyCode == Keys.Delete)
             {
                 deleteCapture_Click(sender, null);
             }
+            if (e.KeyCode == Keys.F2 && captures.SelectedItems.Count == 1)
+            {
+                captures.SelectedItems[0].BeginEdit();
+            }
             if (e.KeyCode == Keys.Return || e.KeyCode == Keys.Enter)
             {
-                openCapture_Click(sender, null);
+                // don't interpret the enter from ending an edit as an enter to open
+                if(DateTime.Now.Subtract(lastEdit).TotalMilliseconds >= 500)
+                    openCapture_Click(sender, null);
             }
         }
 

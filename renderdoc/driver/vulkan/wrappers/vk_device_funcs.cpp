@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -66,6 +66,14 @@ static void StripUnwantedLayers(vector<string> &Layers)
       continue;
     }
 
+    // also remove the framerate monitor layer as it's buggy and doesn't do anything
+    // in our case
+    if(*it == "VK_LAYER_LUNARG_monitor")
+    {
+      it = Layers.erase(it);
+      continue;
+    }
+
     // filter out validation layers
     if(*it == "VK_LAYER_LUNARG_standard_validation" || *it == "VK_LAYER_LUNARG_core_validation" ||
        *it == "VK_LAYER_LUNARG_device_limits" || *it == "VK_LAYER_LUNARG_image" ||
@@ -107,7 +115,7 @@ ReplayCreateStatus WrappedVulkan::Initialise(VkInitParams &params)
   {
     if(*it == "VK_KHR_xlib_surface" || *it == "VK_KHR_xcb_surface" ||
        *it == "VK_KHR_wayland_surface" || *it == "VK_KHR_mir_surface" ||
-       *it == "VK_KHR_android_surface" || *it == "VK_KHR_win32_surface")
+       *it == "VK_KHR_android_surface" || *it == "VK_KHR_win32_surface" || *it == "VK_KHR_display")
     {
       it = params.Extensions.erase(it);
     }
@@ -116,6 +124,8 @@ ReplayCreateStatus WrappedVulkan::Initialise(VkInitParams &params)
       ++it;
     }
   }
+
+  RDCEraseEl(m_ExtensionsEnabled);
 
   std::set<string> supportedExtensions;
 
@@ -279,6 +289,33 @@ VkResult WrappedVulkan::vkCreateInstance(const VkInstanceCreateInfo *pCreateInfo
   VkInstanceCreateInfo modifiedCreateInfo;
   modifiedCreateInfo = *pCreateInfo;
 
+  for(uint32_t i = 0; i < modifiedCreateInfo.enabledExtensionCount; i++)
+  {
+    if(!IsSupportedExtension(modifiedCreateInfo.ppEnabledExtensionNames[i]))
+    {
+      RDCERR("RenderDoc does not support instance extension '%s'.",
+             modifiedCreateInfo.ppEnabledExtensionNames[i]);
+      RDCERR("File an issue on github to request support: https://github.com/baldurk/renderdoc");
+
+      // see if any debug report callbacks were passed in the pNext chain
+      VkDebugReportCallbackCreateInfoEXT *report =
+          (VkDebugReportCallbackCreateInfoEXT *)pCreateInfo->pNext;
+
+      while(report)
+      {
+        if(report && report->sType == VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT)
+          report->pfnCallback(VK_DEBUG_REPORT_ERROR_BIT_EXT,
+                              VK_DEBUG_REPORT_OBJECT_TYPE_INSTANCE_EXT, 0, 1, 1, "RDOC",
+                              "RenderDoc does not support a requested instance extension.",
+                              report->pUserData);
+
+        report = (VkDebugReportCallbackCreateInfoEXT *)report->pNext;
+      }
+
+      return VK_ERROR_EXTENSION_NOT_PRESENT;
+    }
+  }
+
   const char **addedExts = new const char *[modifiedCreateInfo.enabledExtensionCount + 1];
 
   for(uint32_t i = 0; i < modifiedCreateInfo.enabledExtensionCount; i++)
@@ -308,10 +345,10 @@ VkResult WrappedVulkan::vkCreateInstance(const VkInstanceCreateInfo *pCreateInfo
   record->instDevInfo = new InstanceDeviceInfo();
 
 #undef CheckExt
-#define CheckExt(name)                                                        \
-  if(!strcmp(modifiedCreateInfo.ppEnabledExtensionNames[i], STRINGIZE(name))) \
-  {                                                                           \
-    record->instDevInfo->name = true;                                         \
+#define CheckExt(name)                                              \
+  if(!strcmp(modifiedCreateInfo.ppEnabledExtensionNames[i], #name)) \
+  {                                                                 \
+    record->instDevInfo->ext_##name = true;                         \
   }
 
   for(uint32_t i = 0; i < modifiedCreateInfo.enabledExtensionCount; i++)
@@ -756,8 +793,18 @@ bool WrappedVulkan::Serialise_vkCreateDevice(Serialiser *localSerialiser,
     {
       // don't include the debug marker extension
       if(strcmp(createInfo.ppEnabledExtensionNames[i], VK_EXT_DEBUG_MARKER_EXTENSION_NAME))
-        Extensions.push_back(createInfo.ppEnabledExtensionNames[i]);
+        continue;
+
+      // don't include direct-display WSI extensions
+      if(strcmp(createInfo.ppEnabledExtensionNames[i], VK_KHR_DISPLAY_SWAPCHAIN_EXTENSION_NAME))
+        continue;
+
+      Extensions.push_back(createInfo.ppEnabledExtensionNames[i]);
     }
+
+    if(std::find(Extensions.begin(), Extensions.end(),
+                 VK_AMD_NEGATIVE_VIEWPORT_HEIGHT_EXTENSION_NAME) != Extensions.end())
+      m_ExtensionsEnabled[VkCheckExt_AMD_neg_viewport] = true;
 
     std::vector<string> Layers;
     for(uint32_t i = 0; i < createInfo.enabledLayerCount; i++)
@@ -1233,17 +1280,18 @@ VkResult WrappedVulkan::vkCreateDevice(VkPhysicalDevice physicalDevice,
       record->instDevInfo = new InstanceDeviceInfo();
 
 #undef CheckExt
-#define CheckExt(name) record->instDevInfo->name = GetRecord(m_Instance)->instDevInfo->name;
+#define CheckExt(name) \
+  record->instDevInfo->ext_##name = GetRecord(m_Instance)->instDevInfo->ext_##name;
 
       // inherit extension enablement from instance, that way GetDeviceProcAddress can check
       // for enabled extensions for instance functions
       CheckInstanceExts();
 
 #undef CheckExt
-#define CheckExt(name)                                                \
-  if(!strcmp(createInfo.ppEnabledExtensionNames[i], STRINGIZE(name))) \
-  {                                                                   \
-    record->instDevInfo->name = true;                                 \
+#define CheckExt(name)                                      \
+  if(!strcmp(createInfo.ppEnabledExtensionNames[i], #name)) \
+  {                                                         \
+    record->instDevInfo->ext_##name = true;                 \
   }
 
       for(uint32_t i = 0; i < createInfo.enabledExtensionCount; i++)

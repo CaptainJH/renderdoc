@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -1212,7 +1212,8 @@ void D3D11RenderState::UnbindIUnknownForRead(const ResourceRange &range, bool al
   }
 }
 
-bool D3D11RenderState::ValidOutputMerger(ID3D11RenderTargetView **RTs, ID3D11DepthStencilView *depth)
+bool D3D11RenderState::ValidOutputMerger(ID3D11RenderTargetView **RTs, ID3D11DepthStencilView *depth,
+                                         ID3D11UnorderedAccessView **uavs)
 {
   D3D11_RENDER_TARGET_VIEW_DESC RTDescs[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT];
   D3D11_DEPTH_STENCIL_VIEW_DESC DepthDesc;
@@ -1245,6 +1246,132 @@ bool D3D11RenderState::ValidOutputMerger(ID3D11RenderTargetView **RTs, ID3D11Dep
   }
 
   bool valid = true;
+
+  // check for duplicates and mark as invalid
+  {
+    ResourceRange rtvRanges[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT] = {
+        ResourceRange::Null, ResourceRange::Null, ResourceRange::Null, ResourceRange::Null,
+        ResourceRange::Null, ResourceRange::Null, ResourceRange::Null, ResourceRange::Null,
+    };
+    ResourceRange depthRange(depth);
+    ResourceRange uavRanges[D3D11_1_UAV_SLOT_COUNT] = {
+        ResourceRange::Null, ResourceRange::Null, ResourceRange::Null, ResourceRange::Null,
+        ResourceRange::Null, ResourceRange::Null, ResourceRange::Null, ResourceRange::Null,
+        ResourceRange::Null, ResourceRange::Null, ResourceRange::Null, ResourceRange::Null,
+        ResourceRange::Null, ResourceRange::Null, ResourceRange::Null, ResourceRange::Null,
+        ResourceRange::Null, ResourceRange::Null, ResourceRange::Null, ResourceRange::Null,
+        ResourceRange::Null, ResourceRange::Null, ResourceRange::Null, ResourceRange::Null,
+        ResourceRange::Null, ResourceRange::Null, ResourceRange::Null, ResourceRange::Null,
+        ResourceRange::Null, ResourceRange::Null, ResourceRange::Null, ResourceRange::Null,
+        ResourceRange::Null, ResourceRange::Null, ResourceRange::Null, ResourceRange::Null,
+        ResourceRange::Null, ResourceRange::Null, ResourceRange::Null, ResourceRange::Null,
+        ResourceRange::Null, ResourceRange::Null, ResourceRange::Null, ResourceRange::Null,
+        ResourceRange::Null, ResourceRange::Null, ResourceRange::Null, ResourceRange::Null,
+        ResourceRange::Null, ResourceRange::Null, ResourceRange::Null, ResourceRange::Null,
+        ResourceRange::Null, ResourceRange::Null, ResourceRange::Null, ResourceRange::Null,
+        ResourceRange::Null, ResourceRange::Null, ResourceRange::Null, ResourceRange::Null,
+        ResourceRange::Null, ResourceRange::Null, ResourceRange::Null, ResourceRange::Null,
+    };
+
+    for(int i = 0; RTs && i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; i++)
+    {
+      if(RTs[i])
+        rtvRanges[i] = ResourceRange(RTs[i]);
+      else
+        break;
+    }
+
+    if(depth)
+      depthRange = ResourceRange(depth);
+
+    int numUAVs = 0;
+
+    for(int i = 0; uavs && i < D3D11_1_UAV_SLOT_COUNT; i++)
+    {
+      if(uavs[i])
+      {
+        uavRanges[i] = ResourceRange(uavs[i]);
+        numUAVs = i + 1;
+      }
+    }
+
+    // since constants are low, just do naive check for any intersecting ranges
+
+    for(int i = 0; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; i++)
+    {
+      if(rtvRanges[i].IsNull())
+        continue;
+
+      // does it match any other RTV?
+      for(int j = i + 1; j < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; j++)
+      {
+        if(rtvRanges[i].Intersects(rtvRanges[j]))
+        {
+          valid = false;
+          m_pDevice->AddDebugMessage(
+              eDbgCategory_State_Setting, eDbgSeverity_High, eDbgSource_IncorrectAPIUse,
+              StringFormat::Fmt("Invalid output merger - Render targets %d and %d overlap", i, j));
+          break;
+        }
+      }
+
+      // or depth?
+      if(rtvRanges[i].Intersects(depthRange))
+      {
+        valid = false;
+        m_pDevice->AddDebugMessage(
+            eDbgCategory_State_Setting, eDbgSeverity_High, eDbgSource_IncorrectAPIUse,
+            StringFormat::Fmt("Invalid output merger - Render target %d and depth overlap", i));
+        break;
+      }
+
+      // or a UAV?
+      for(int j = 0; j < numUAVs; j++)
+      {
+        if(rtvRanges[i].Intersects(uavRanges[j]))
+        {
+          valid = false;
+          m_pDevice->AddDebugMessage(
+              eDbgCategory_State_Setting, eDbgSeverity_High, eDbgSource_IncorrectAPIUse,
+              StringFormat::Fmt("Invalid output merger - Render target %d and UAV %d overlap", i, j));
+          break;
+        }
+      }
+    }
+
+    for(int i = 0; valid && i < numUAVs; i++)
+    {
+      if(uavRanges[i].IsNull())
+        continue;
+
+      // don't have to check RTVs, that's the reflection of the above check
+
+      // does it match depth?
+      if(uavRanges[i].Intersects(depthRange))
+      {
+        valid = false;
+        m_pDevice->AddDebugMessage(
+            eDbgCategory_State_Setting, eDbgSeverity_High, eDbgSource_IncorrectAPIUse,
+            StringFormat::Fmt("Invalid output merger - UAV %d and depth overlap", i));
+        break;
+      }
+
+      // or another UAV?
+      for(int j = i + 1; j < numUAVs; j++)
+      {
+        if(uavRanges[i].Intersects(uavRanges[j]))
+        {
+          valid = false;
+          m_pDevice->AddDebugMessage(
+              eDbgCategory_State_Setting, eDbgSeverity_High, eDbgSource_IncorrectAPIUse,
+              StringFormat::Fmt("Invalid output merger - UAVs %d and %d overlap", i, j));
+          break;
+        }
+      }
+    }
+
+    // don't have to check depth - it was checked against all RTs and UAVs above
+  }
 
   //////////////////////////////////////////////////////////////////////////
   // Resource dimensions of all views must be the same
@@ -1569,6 +1696,9 @@ D3D11RenderStateTracker::~D3D11RenderStateTracker()
 {
   m_RS.ApplyState(m_pContext);
 }
+
+D3D11RenderState::ResourceRange D3D11RenderState::ResourceRange::Null =
+    D3D11RenderState::ResourceRange(NULL, 0, 0);
 
 D3D11RenderState::ResourceRange::ResourceRange(ID3D11ShaderResourceView *srv)
 {

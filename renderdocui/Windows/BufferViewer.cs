@@ -1,7 +1,7 @@
 ﻿/******************************************************************************
  * The MIT License (MIT)
  * 
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -1553,6 +1553,11 @@ namespace renderdocui.Windows
         {
             var state = GetUIState(type);
 
+            var bufView = state.m_GridView;
+
+            if(bufView.IsDisposed)
+                return;
+
             // only do this once, VSIn is guaranteed to be set (even if it's empty data)
             if(type == MeshDataStage.VSIn)
                 CalcCellFloatWidth();
@@ -1561,8 +1566,6 @@ namespace renderdocui.Windows
 
             if(data.Buffers == null)
                 return;
-
-            var bufView = state.m_GridView;
 
             bufView.RowCount = 0;
             state.m_Data = data;
@@ -1855,6 +1858,7 @@ namespace renderdocui.Windows
             state.m_DataParseThread = th;
         }
 
+        private int m_QueuedRowSelect = -1;
         private bool SuppressCaching = false;
 
         private void UI_ShowRows(UIState state, int horizScroll)
@@ -1877,6 +1881,18 @@ namespace renderdocui.Windows
                     largeBufferWarning.Visible = true;
 
                 ScrollToRow(bufView, RowOffset);
+
+                if (m_QueuedRowSelect != -1)
+                {
+                    ScrollToRow(bufView, m_QueuedRowSelect);
+
+                    bufView.ClearSelection();
+                    bufView.Rows[m_QueuedRowSelect].Selected = true;
+
+                    SyncViews(bufView, true, true);
+
+                    m_QueuedRowSelect = -1;
+                }
 
                 SuppressCaching = false;
 
@@ -2376,28 +2392,41 @@ namespace renderdocui.Windows
 
             m_Core.Renderer.BeginInvoke((ReplayRenderer r) =>
             {
-                UInt32 vertSelected = m_Output.PickVertex(m_Core.CurEvent, (UInt32)p.X, (UInt32)p.Y);
+                UInt32 instanceSelected = 0;
+                UInt32 vertSelected = m_Output.PickVertex(m_Core.CurEvent, (UInt32)p.X, (UInt32)p.Y, out instanceSelected);
 
                 if (vertSelected != UInt32.MaxValue)
                 {
                     this.BeginInvoke(new Action(() =>
                     {
-                        var ui = GetUIState(m_MeshDisplay.type);
-
-                        int row = (int)vertSelected;
-
-                        if (row >= 0 && row < ui.m_GridView.RowCount)
+                        if (instanceSelected != m_MeshDisplay.curInstance)
                         {
-                            if (ui.m_GridView.SelectedRows.Count == 0 || ui.m_GridView.SelectedRows[0] != ui.m_GridView.Rows[row])
-                            {
-                                ScrollToRow(ui.m_GridView, row);
-
-                                ui.m_GridView.ClearSelection();
-                                ui.m_GridView.Rows[row].Selected = true;
-                            }
-
-                            SyncViews(ui.m_GridView, true, true);
+                            m_MeshDisplay.curInstance = instanceSelected;
+                            instanceIdx.Text = instanceSelected.ToString();
+                            instanceIdxToolitem.Text = instanceIdx.Text;
+                            OnEventSelected(m_Core.CurEvent);
+                            m_QueuedRowSelect = (int)vertSelected;
                         }
+                        else
+                        {
+                            var ui = GetUIState(m_MeshDisplay.type);
+
+                            int row = (int)vertSelected;
+
+                            if (row >= 0 && row < ui.m_GridView.RowCount)
+                            {
+                                if (ui.m_GridView.SelectedRows.Count == 0 || ui.m_GridView.SelectedRows[0] != ui.m_GridView.Rows[row])
+                                {
+                                    ScrollToRow(ui.m_GridView, row);
+
+                                    ui.m_GridView.ClearSelection();
+                                    ui.m_GridView.Rows[row].Selected = true;
+                                }
+
+                                SyncViews(ui.m_GridView, true, true);
+                            }
+                        }
+
                     }));
                 }
             });

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -25,11 +25,13 @@
 #include "CaptureDialog.h"
 #include <QSortFilterProxyModel>
 #include <QStandardItemModel>
+#include "3rdparty/flowlayout/FlowLayout.h"
+#include "3rdparty/toolwindowmanager/ToolWindowManager.h"
 #include "Code/QRDUtils.h"
 #include "Code/qprocessinfo.h"
-#include "FlowLayout.h"
+#include "Windows/Dialogs/EnvironmentEditor.h"
+#include "Windows/Dialogs/VirtualFileDialog.h"
 #include "LiveCapture.h"
-#include "ToolWindowManager.h"
 #include "ui_CaptureDialog.h"
 
 #define JSON_ID "rdocCaptureSettings"
@@ -109,7 +111,7 @@ void CaptureSettings::fromJSON(const QVariantMap &data)
   Options.DebugOutputMute = opts["DebugOutputMute"].toBool();
 }
 
-CaptureDialog::CaptureDialog(CaptureContext *ctx, OnCaptureMethod captureCallback,
+CaptureDialog::CaptureDialog(CaptureContext &ctx, OnCaptureMethod captureCallback,
                              OnInjectMethod injectCallback, QWidget *parent)
     : QFrame(parent), ui(new Ui::CaptureDialog), m_Ctx(ctx)
 {
@@ -156,8 +158,7 @@ CaptureDialog::CaptureDialog(CaptureContext *ctx, OnCaptureMethod captureCallbac
   // sort by PID by default
   ui->processList->sortByColumn(1, Qt::AscendingOrder);
 
-  // TODO Vulkan Layer
-  ui->vulkanLayerWarn->setVisible(false);
+  ui->vulkanLayerWarn->setVisible(RENDERDOC_NeedVulkanLayerRegistration(NULL, NULL, NULL));
 
   m_CaptureCallback = captureCallback;
   m_InjectCallback = injectCallback;
@@ -169,7 +170,7 @@ CaptureDialog::CaptureDialog(CaptureContext *ctx, OnCaptureMethod captureCallbac
 
 CaptureDialog::~CaptureDialog()
 {
-  m_Ctx->windowClosed(this);
+  m_Ctx.windowClosed(this);
 
   if(ui->toggleGlobal->isChecked())
   {
@@ -196,7 +197,7 @@ void CaptureDialog::setInjectMode(bool inject)
 
     fillProcessList();
 
-    ui->capture->setText("Inject");
+    ui->launch->setText("Inject");
     this->setWindowTitle("Inject into Process");
   }
   else
@@ -207,9 +208,9 @@ void CaptureDialog::setInjectMode(bool inject)
                                                     QSizePolicy::Expanding);
     ui->verticalLayout->invalidate();
 
-    ui->globalGroup->setVisible(m_Ctx->Config.AllowGlobalHook);
+    ui->globalGroup->setVisible(m_Ctx.Config.AllowGlobalHook);
 
-    ui->capture->setText("Capture");
+    ui->launch->setText("Launch");
     this->setWindowTitle("Capture Executable");
   }
 }
@@ -237,23 +238,188 @@ void CaptureDialog::on_processFilter_textChanged(const QString &filter)
   model->setFilterFixedString(filter);
 }
 
-void CaptureDialog::on_exePath_textChanged(const QString &exe)
+void CaptureDialog::on_exePath_textChanged(const QString &text)
 {
+  QString exe = text;
+
+  // This is likely due to someone pasting a full path copied using copy path. Removing the quotes
+  // is safe in any case
+  if(exe.startsWith(QChar('"')) && exe.endsWith(QChar('"')) && exe.count() > 2)
+  {
+    exe = exe.mid(1, exe.count() - 2);
+    ui->exePath->setText(exe);
+    return;
+  }
+
   QFileInfo f(exe);
   QDir dir = f.dir();
   bool valid = dir.makeAbsolute();
 
   if(valid && f.isAbsolute())
-    ui->workDirPath->setPlaceholderText(QDir::toNativeSeparators(dir.absolutePath()));
+  {
+    QString path = dir.absolutePath();
+
+    if(!m_Ctx.Renderer().remote())
+      path = QDir::toNativeSeparators(path);
+
+    // match the path separators from the path
+    if(exe.count(QChar('/')) > exe.count(QChar('\\')))
+      path = path.replace('\\', '/');
+    else
+      path = path.replace('/', '\\');
+
+    ui->workDirPath->setPlaceholderText(path);
+  }
   else if(exe == "")
+  {
     ui->workDirPath->setPlaceholderText("");
+  }
 
   updateGlobalHook();
 }
 
 void CaptureDialog::on_vulkanLayerWarn_clicked()
 {
-  // TODO Vulkan Layer
+  QString caption = tr("Configure Vulkan layer settings in registry?");
+
+  uint32_t flags = 0;
+  rdctype::array<rdctype::str> myJSONs;
+  rdctype::array<rdctype::str> otherJSONs;
+
+  RENDERDOC_NeedVulkanLayerRegistration(&flags, &myJSONs, &otherJSONs);
+
+  const bool hasOtherJSON = (flags & eVulkan_OtherInstallsRegistered);
+  const bool thisRegistered = (flags & eVulkan_ThisInstallRegistered);
+  const bool needElevation = (flags & eVulkan_NeedElevation);
+  const bool couldElevate = (flags & eVulkan_CouldElevate);
+  const bool registerAll = (flags & eVulkan_RegisterAll);
+  const bool updateAllowed = (flags & eVulkan_UpdateAllowed);
+
+  if(flags & eVulkan_Unfixable)
+  {
+    QString msg =
+        tr("There is an unfixable problem with your vulkan layer configuration. Please consult the "
+           "RenderDoc documentation, or package/distribution documentation on linux\n\n");
+
+    for(const rdctype::str &j : otherJSONs)
+      msg += ToQStr(j) + "\n";
+
+    RDDialog::critical(this, tr("Unfixable vulkan layer configuration"), msg);
+    return;
+  }
+
+  QString msg =
+      tr("Vulkan capture happens through the API's layer mechanism. RenderDoc has detected that ");
+
+  if(hasOtherJSON)
+  {
+    if(otherJSONs.count > 1)
+      msg +=
+          tr("there are other RenderDoc builds registered already. They must be disabled so that "
+             "capture can happen without nasty clashes.");
+    else
+      msg +=
+          tr("there is another RenderDoc build registered already. It must be disabled so that "
+             "capture can happen without nasty clashes.");
+
+    if(!thisRegistered)
+      msg += tr(" Also ");
+  }
+
+  if(!thisRegistered)
+  {
+    msg +=
+        tr("the layer for this installation is not yet registered. This could be due to an "
+           "upgrade from a version that didn't support Vulkan, or if this version is just a loose "
+           "unzip/dev build.");
+  }
+
+  msg += tr("\n\nWould you like to proceed with the following changes?\n\n");
+
+  if(hasOtherJSON)
+  {
+    for(const rdctype::str &j : otherJSONs)
+      msg += (updateAllowed ? tr("Unregister/update: %1\n") : tr("Unregister: %1\n")).arg(ToQStr(j));
+
+    msg += "\n";
+  }
+
+  if(!thisRegistered)
+  {
+    if(registerAll)
+    {
+      for(const rdctype::str &j : myJSONs)
+        msg += (updateAllowed ? tr("Register/update: %1\n") : tr("Register: %1\n")).arg(ToQStr(j));
+    }
+    else
+    {
+      msg += updateAllowed ? tr("Register one of:\n") : tr("Register/update one of:\n");
+      for(const rdctype::str &j : myJSONs)
+        msg += tr("  -- %1\n").arg(ToQStr(j));
+    }
+
+    msg += "\n";
+  }
+
+  msg += tr("This is a one-off change, it won't be needed again unless the installation moves.");
+
+  QMessageBox::StandardButton install = RDDialog::question(this, caption, msg, RDDialog::YesNoCancel);
+
+  if(install == QMessageBox::Yes)
+  {
+    bool run = false;
+    bool admin = false;
+
+    // if we need to elevate, just try it.
+    if(needElevation)
+    {
+      admin = run = true;
+    }
+    // if we could elevate, ask the user
+    else if(couldElevate)
+    {
+      QMessageBox::StandardButton elevate = RDDialog::question(
+          this, tr("System layer install"),
+          tr("Do you want to elevate permissions to install the layer at a system level?"),
+          RDDialog::YesNoCancel);
+
+      if(elevate == QMessageBox::Yes)
+        admin = true;
+      else if(elevate == QMessageBox::No)
+        admin = false;
+
+      run = (elevate != QMessageBox::Cancel);
+    }
+    // otherwise run non-elevated
+    else
+    {
+      run = true;
+    }
+
+    if(run)
+    {
+      if(admin)
+      {
+        RunProcessAsAdmin(qApp->applicationFilePath(), QStringList() << "--install_vulkan_layer"
+                                                                     << "root",
+                          [this]() {
+                            // ui->vulkanLayerWarn->setVisible(RENDERDOC_NeedVulkanLayerRegistration(NULL,
+                            // NULL, NULL));
+                            ui->vulkanLayerWarn->setVisible(false);
+                          });
+        return;
+      }
+      else
+      {
+        QProcess process;
+        process.start(qApp->applicationFilePath(), QStringList() << "--install_vulkan_layer"
+                                                                 << "user");
+        process.waitForFinished(300);
+      }
+    }
+
+    ui->vulkanLayerWarn->setVisible(RENDERDOC_NeedVulkanLayerRegistration(NULL, NULL, NULL));
+  }
 }
 
 void CaptureDialog::on_processRefesh_clicked()
@@ -272,31 +438,28 @@ void CaptureDialog::on_exePathBrowse_clicked()
   {
     initDir = dir.absolutePath();
   }
-  else if(m_Ctx->Config.LastCapturePath != "")
+  else if(m_Ctx.Config.LastCapturePath != "")
   {
-    initDir = m_Ctx->Config.LastCapturePath;
-    if(m_Ctx->Config.LastCaptureExe != "")
-      file = m_Ctx->Config.LastCaptureExe;
+    initDir = m_Ctx.Config.LastCapturePath;
+    if(m_Ctx.Config.LastCaptureExe != "")
+      file = m_Ctx.Config.LastCaptureExe;
   }
 
-  // TODO Remote
+  QString filename;
 
-  // if(m_Core.Renderer.Remote == null)
+  if(m_Ctx.Renderer().remote())
   {
-    QString filename = RDDialog::getExecutableFileName(this, tr("Choose executable"), initDir);
-
-    if(filename != "")
-      setExecutableFilename(filename);
+    VirtualFileDialog vfd(m_Ctx, this);
+    RDDialog::show(&vfd);
+    filename = vfd.chosenPath();
   }
-  /*
   else
   {
-    VirtualOpenFileDialog remoteBrowser = new VirtualOpenFileDialog(m_Core.Renderer);
-    remoteBrowser.Opened += new EventHandler<FileOpenedEventArgs>(this.virtualExeBrowser_Opened);
-
-    remoteBrowser.ShowDialog(this);
+    filename = RDDialog::getExecutableFileName(this, tr("Choose executable"), initDir);
   }
-  */
+
+  if(filename != "")
+    setExecutableFilename(filename);
 }
 
 void CaptureDialog::on_workDirBrowse_clicked()
@@ -312,36 +475,39 @@ void CaptureDialog::on_workDirBrowse_clicked()
     QDir dir = QFileInfo(ui->exePath->text()).dir();
     if(dir.exists())
       initDir = dir.absolutePath();
-    else if(m_Ctx->Config.LastCapturePath != "")
-      initDir = m_Ctx->Config.LastCapturePath;
+    else if(m_Ctx.Config.LastCapturePath != "")
+      initDir = m_Ctx.Config.LastCapturePath;
   }
 
-  // TODO Remote
+  QString dir;
 
-  // if(m_Core.Renderer.Remote == null)
+  if(m_Ctx.Renderer().remote())
   {
-    QString dir = RDDialog::getExistingDirectory(this, "Choose working directory", initDir);
-
-    if(dir != "")
-      ui->workDirPath->setText(dir);
+    VirtualFileDialog vfd(m_Ctx, this);
+    vfd.setDirBrowse();
+    RDDialog::show(&vfd);
+    dir = vfd.chosenPath();
   }
-  /*
   else
   {
-    VirtualOpenFileDialog remoteBrowser = new VirtualOpenFileDialog(m_Core.Renderer);
-    remoteBrowser.Opened += new
-  EventHandler<FileOpenedEventArgs>(this.virtualWorkDirBrowser_Opened);
-
-    remoteBrowser.DirectoryBrowse = true;
-
-    remoteBrowser.ShowDialog(this);
+    dir = RDDialog::getExistingDirectory(this, "Choose working directory", initDir);
   }
-  */
+
+  if(dir != "")
+    ui->workDirPath->setText(dir);
 }
 
 void CaptureDialog::on_envVarEdit_clicked()
 {
-  // TODO Env Editor
+  EnvironmentEditor envEditor(this);
+
+  for(const EnvironmentModification &mod : m_EnvModifications)
+    envEditor.addModification(mod, true);
+
+  int res = RDDialog::show(&envEditor);
+
+  if(res)
+    setEnvironmentModifications(envEditor.modifications());
 }
 
 void CaptureDialog::on_toggleGlobal_clicked()
@@ -365,7 +531,7 @@ void CaptureDialog::on_saveSettings_clicked()
     if(dirinfo.exists())
     {
       saveSettings(filename);
-      PersistantConfig::AddRecentFile(m_Ctx->Config.RecentCaptureSettings, filename, 10);
+      PersistantConfig::AddRecentFile(m_Ctx.Config.RecentCaptureSettings, filename, 10);
     }
   }
 }
@@ -378,11 +544,11 @@ void CaptureDialog::on_loadSettings_clicked()
   if(filename != "" && QFileInfo::exists(filename))
   {
     loadSettings(filename);
-    PersistantConfig::AddRecentFile(m_Ctx->Config.RecentCaptureSettings, filename, 10);
+    PersistantConfig::AddRecentFile(m_Ctx.Config.RecentCaptureSettings, filename, 10);
   }
 }
 
-void CaptureDialog::on_capture_clicked()
+void CaptureDialog::on_launch_clicked()
 {
   triggerCapture();
 }
@@ -486,11 +652,16 @@ void CaptureDialog::fillProcessList()
 
 void CaptureDialog::setExecutableFilename(QString filename)
 {
-  filename = QDir::toNativeSeparators(QFileInfo(filename).absoluteFilePath());
+  if(!m_Ctx.Renderer().remote())
+    filename = QDir::toNativeSeparators(QFileInfo(filename).absoluteFilePath());
+
   ui->exePath->setText(filename);
 
-  m_Ctx->Config.LastCapturePath = QFileInfo(filename).absolutePath();
-  m_Ctx->Config.LastCaptureExe = QFileInfo(filename).completeBaseName();
+  if(!m_Ctx.Renderer().remote())
+  {
+    m_Ctx.Config.LastCapturePath = QFileInfo(filename).absolutePath();
+    m_Ctx.Config.LastCaptureExe = QFileInfo(filename).completeBaseName();
+  }
 }
 
 void CaptureDialog::loadSettings(QString filename)
@@ -522,7 +693,7 @@ void CaptureDialog::loadSettings(QString filename)
 
 void CaptureDialog::updateGlobalHook()
 {
-  ui->globalGroup->setVisible(!injectMode() && m_Ctx->Config.AllowGlobalHook);
+  ui->globalGroup->setVisible(!injectMode() && m_Ctx.Config.AllowGlobalHook);
 
   if(ui->exePath->text().length() >= 4)
   {
@@ -584,10 +755,8 @@ void CaptureDialog::triggerCapture()
   {
     QString exe = ui->exePath->text();
 
-    // TODO Remote
-
     // for non-remote captures, check the executable locally
-    // if(m_Core.Renderer.Remote == null)
+    if(!m_Ctx.Renderer().remote())
     {
       if(!QFileInfo::exists(exe))
       {
@@ -599,20 +768,16 @@ void CaptureDialog::triggerCapture()
 
     QString workingDir = "";
 
-    // TODO Remote
-
     // for non-remote captures, check the directory locally
-    // if(m_Core.Renderer.Remote == null)
+    if(m_Ctx.Renderer().remote())
+    {
+      workingDir = ui->workDirPath->text();
+    }
+    else
     {
       if(QDir(ui->workDirPath->text()).exists())
         workingDir = ui->workDirPath->text();
     }
-    /*
-    else
-    {
-      workingDir = RealWorkDir;
-    }
-    */
 
     QString cmdLine = ui->cmdline->text();
 

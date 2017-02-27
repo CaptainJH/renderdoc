@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -141,9 +141,18 @@ D3D12DebugManager::D3D12DebugManager(WrappedID3D12Device *wrapper)
     RDCERR("Couldn't create DSV descriptor heap! 0x%08x", hr);
   }
 
-  desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
   desc.NumDescriptors = 4096;
   desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+
+  hr = m_WrappedDevice->CreateDescriptorHeap(&desc, __uuidof(ID3D12DescriptorHeap),
+                                             (void **)&uavClearHeap);
+
+  if(FAILED(hr))
+  {
+    RDCERR("Couldn't create CBV/SRV descriptor heap! 0x%08x", hr);
+  }
+
+  desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 
   hr = m_WrappedDevice->CreateDescriptorHeap(&desc, __uuidof(ID3D12DescriptorHeap),
                                              (void **)&cbvsrvuavHeap);
@@ -885,6 +894,8 @@ D3D12DebugManager::D3D12DebugManager(WrappedID3D12Device *wrapper)
 
     m_WrappedDevice->CreateUnorderedAccessView(m_PickResultBuf, m_PickResultBuf, &uavDesc,
                                                GetCPUHandle(PICK_RESULT_UAV));
+    m_WrappedDevice->CreateUnorderedAccessView(m_PickResultBuf, m_PickResultBuf, &uavDesc,
+                                               GetUAVClearHandle(PICK_RESULT_UAV));
 
     // this UAV is used for clearing everything back to 0
 
@@ -895,6 +906,8 @@ D3D12DebugManager::D3D12DebugManager(WrappedID3D12Device *wrapper)
 
     m_WrappedDevice->CreateUnorderedAccessView(m_PickResultBuf, NULL, &uavDesc,
                                                GetCPUHandle(PICK_RESULT_CLEAR_UAV));
+    m_WrappedDevice->CreateUnorderedAccessView(m_PickResultBuf, NULL, &uavDesc,
+                                               GetUAVClearHandle(PICK_RESULT_CLEAR_UAV));
   }
 
   {
@@ -957,6 +970,8 @@ D3D12DebugManager::D3D12DebugManager(WrappedID3D12Device *wrapper)
     tileDesc.Format = DXGI_FORMAT_R32_UINT;
     tileDesc.Buffer.NumElements = HGRAM_NUM_BUCKETS;
     m_WrappedDevice->CreateUnorderedAccessView(m_MinMaxTileBuffer, NULL, &tileDesc, uav);
+    m_WrappedDevice->CreateUnorderedAccessView(m_MinMaxTileBuffer, NULL, &tileDesc,
+                                               GetUAVClearHandle(HISTOGRAM_UAV));
 
     D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
     srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
@@ -1317,6 +1332,7 @@ D3D12DebugManager::~D3D12DebugManager()
   SAFE_RELEASE(dsvHeap);
   SAFE_RELEASE(rtvHeap);
   SAFE_RELEASE(cbvsrvuavHeap);
+  SAFE_RELEASE(uavClearHeap);
   SAFE_RELEASE(samplerHeap);
 
   SAFE_RELEASE(m_RingConstantBuffer);
@@ -1464,10 +1480,73 @@ D3D12RootSignature D3D12DebugManager::GetRootSig(const void *data, size_t dataSi
       (PFN_D3D12_CREATE_VERSIONED_ROOT_SIGNATURE_DESERIALIZER)GetProcAddress(
           GetModuleHandleA("d3d12.dll"), "D3D12CreateVersionedRootSignatureDeserializer");
 
+  PFN_D3D12_CREATE_ROOT_SIGNATURE_DESERIALIZER deserializeRootSigOld =
+      (PFN_D3D12_CREATE_VERSIONED_ROOT_SIGNATURE_DESERIALIZER)GetProcAddress(
+          GetModuleHandleA("d3d12.dll"), "D3D12CreateRootSignatureDeserializer");
+
   if(deserializeRootSig == NULL)
   {
-    RDCERR("Can't get D3D12CreateVersionedRootSignatureDeserializer");
-    return D3D12RootSignature();
+    RDCWARN("Can't get D3D12CreateVersionedRootSignatureDeserializer - old version of windows?");
+
+    if(deserializeRootSigOld == NULL)
+    {
+      RDCERR("Can't get D3D12CreateRootSignatureDeserializer!");
+      return D3D12RootSignature();
+    }
+
+    ID3D12RootSignatureDeserializer *deser = NULL;
+    HRESULT hr = deserializeRootSigOld(data, dataSize, __uuidof(ID3D12RootSignatureDeserializer),
+                                       (void **)&deser);
+
+    if(FAILED(hr))
+    {
+      SAFE_RELEASE(deser);
+      RDCERR("Can't get deserializer");
+      return D3D12RootSignature();
+    }
+
+    D3D12RootSignature ret;
+
+    const D3D12_ROOT_SIGNATURE_DESC *desc = deser->GetRootSignatureDesc();
+    if(FAILED(hr))
+    {
+      SAFE_RELEASE(deser);
+      RDCERR("Can't get descriptor");
+      return D3D12RootSignature();
+    }
+
+    ret.Flags = desc->Flags;
+
+    ret.params.resize(desc->NumParameters);
+
+    ret.dwordLength = 0;
+
+    for(size_t i = 0; i < ret.params.size(); i++)
+    {
+      ret.params[i].MakeFrom(desc->pParameters[i], ret.numSpaces);
+
+      // Descriptor tables cost 1 DWORD each.
+      // Root constants cost 1 DWORD each, since they are 32-bit values.
+      // Root descriptors (64-bit GPU virtual addresses) cost 2 DWORDs each.
+      if(desc->pParameters[i].ParameterType == D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE)
+        ret.dwordLength++;
+      else if(desc->pParameters[i].ParameterType == D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS)
+        ret.dwordLength += desc->pParameters[i].Constants.Num32BitValues;
+      else
+        ret.dwordLength += 2;
+    }
+
+    if(desc->NumStaticSamplers > 0)
+    {
+      ret.samplers.assign(desc->pStaticSamplers, desc->pStaticSamplers + desc->NumStaticSamplers);
+
+      for(size_t i = 0; i < ret.samplers.size(); i++)
+        ret.numSpaces = RDCMAX(ret.numSpaces, ret.samplers[i].RegisterSpace + 1);
+    }
+
+    SAFE_RELEASE(deser);
+
+    return ret;
   }
 
   ID3D12VersionedRootSignatureDeserializer *deser = NULL;
@@ -1536,10 +1615,100 @@ ID3DBlob *D3D12DebugManager::MakeRootSig(const std::vector<D3D12_ROOT_PARAMETER1
       (PFN_D3D12_SERIALIZE_VERSIONED_ROOT_SIGNATURE)GetProcAddress(
           GetModuleHandleA("d3d12.dll"), "D3D12SerializeVersionedRootSignature");
 
+  PFN_D3D12_SERIALIZE_ROOT_SIGNATURE serializeRootSigOld =
+      (PFN_D3D12_SERIALIZE_ROOT_SIGNATURE)GetProcAddress(GetModuleHandleA("d3d12.dll"),
+                                                         "D3D12SerializeRootSignature");
+
   if(serializeRootSig == NULL)
   {
-    RDCERR("Can't get D3D12SerializeVersionedRootSignature");
-    return NULL;
+    RDCWARN("Can't get D3D12SerializeVersionedRootSignature - old version of windows?");
+
+    if(serializeRootSigOld == NULL)
+    {
+      RDCERR("Can't get D3D12SerializeRootSignature!");
+      return NULL;
+    }
+
+    D3D12_ROOT_SIGNATURE_DESC desc;
+    desc.Flags = Flags;
+    desc.NumStaticSamplers = NumStaticSamplers;
+    desc.pStaticSamplers = StaticSamplers;
+    desc.NumParameters = (UINT)params.size();
+
+    std::vector<D3D12_ROOT_PARAMETER> params_1_0;
+    params_1_0.resize(params.size());
+    for(size_t i = 0; i < params.size(); i++)
+    {
+      params_1_0[i].ShaderVisibility = params[i].ShaderVisibility;
+      params_1_0[i].ParameterType = params[i].ParameterType;
+
+      if(params[i].ParameterType == D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS)
+      {
+        params_1_0[i].Constants = params[i].Constants;
+      }
+      else if(params[i].ParameterType == D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE)
+      {
+        params_1_0[i].DescriptorTable.NumDescriptorRanges =
+            params[i].DescriptorTable.NumDescriptorRanges;
+
+        D3D12_DESCRIPTOR_RANGE *dst =
+            new D3D12_DESCRIPTOR_RANGE[params[i].DescriptorTable.NumDescriptorRanges];
+        params_1_0[i].DescriptorTable.pDescriptorRanges = dst;
+
+        for(UINT r = 0; r < params[i].DescriptorTable.NumDescriptorRanges; r++)
+        {
+          dst[r].BaseShaderRegister =
+              params[i].DescriptorTable.pDescriptorRanges[r].BaseShaderRegister;
+          dst[r].NumDescriptors = params[i].DescriptorTable.pDescriptorRanges[r].NumDescriptors;
+          dst[r].OffsetInDescriptorsFromTableStart =
+              params[i].DescriptorTable.pDescriptorRanges[r].OffsetInDescriptorsFromTableStart;
+          dst[r].RangeType = params[i].DescriptorTable.pDescriptorRanges[r].RangeType;
+          dst[r].RegisterSpace = params[i].DescriptorTable.pDescriptorRanges[r].RegisterSpace;
+
+          if(params[i].DescriptorTable.pDescriptorRanges[r].Flags !=
+             (D3D12_DESCRIPTOR_RANGE_FLAG_DATA_VOLATILE |
+              D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_VOLATILE))
+            RDCWARN("Losing information when reducing down to 1.0 root signature");
+        }
+      }
+      else
+      {
+        params_1_0[i].Descriptor.RegisterSpace = params[i].Descriptor.RegisterSpace;
+        params_1_0[i].Descriptor.ShaderRegister = params[i].Descriptor.ShaderRegister;
+
+        if(params[i].Descriptor.Flags != D3D12_ROOT_DESCRIPTOR_FLAG_DATA_VOLATILE)
+          RDCWARN("Losing information when reducing down to 1.0 root signature");
+      }
+    }
+
+    desc.pParameters = &params_1_0[0];
+
+    ID3DBlob *ret = NULL;
+    ID3DBlob *errBlob = NULL;
+    HRESULT hr = serializeRootSigOld(&desc, D3D_ROOT_SIGNATURE_VERSION_1, &ret, &errBlob);
+
+    for(size_t i = 0; i < params_1_0.size(); i++)
+      if(params_1_0[i].ParameterType == D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE)
+        delete[] params_1_0[i].DescriptorTable.pDescriptorRanges;
+
+    if(FAILED(hr))
+    {
+      string errors = (char *)errBlob->GetBufferPointer();
+
+      string logerror = errors;
+      if(logerror.length() > 1024)
+        logerror = logerror.substr(0, 1024) + "...";
+
+      RDCERR("Root signature serialize error:\n%s", logerror.c_str());
+
+      SAFE_RELEASE(errBlob);
+      SAFE_RELEASE(ret);
+      return NULL;
+    }
+
+    SAFE_RELEASE(errBlob);
+
+    return ret;
   }
 
   D3D12_VERSIONED_ROOT_SIGNATURE_DESC verdesc;
@@ -2090,6 +2259,13 @@ D3D12_GPU_DESCRIPTOR_HANDLE D3D12DebugManager::GetGPUHandle(DSVSlot slot)
   return ret;
 }
 
+D3D12_CPU_DESCRIPTOR_HANDLE D3D12DebugManager::GetUAVClearHandle(CBVUAVSRVSlot slot)
+{
+  D3D12_CPU_DESCRIPTOR_HANDLE ret = uavClearHeap->GetCPUDescriptorHandleForHeapStart();
+  ret.ptr += slot * sizeof(D3D12Descriptor);
+  return ret;
+}
+
 D3D12_CPU_DESCRIPTOR_HANDLE D3D12DebugManager::AllocRTV()
 {
   D3D12_CPU_DESCRIPTOR_HANDLE rtv = rtvHeap->GetCPUDescriptorHandleForHeapStart();
@@ -2259,7 +2435,9 @@ uint32_t D3D12DebugManager::PickVertex(uint32_t eventID, const MeshDisplay &cfg,
     // the derivation of the projection matrix might not be right (hell, it could be an
     // orthographic projection). But it'll be close enough likely.
     Matrix4f guessProj =
-        Matrix4f::Perspective(cfg.fov, cfg.position.nearPlane, cfg.position.farPlane, cfg.aspect);
+        cfg.position.farPlane != FLT_MAX
+            ? Matrix4f::Perspective(cfg.fov, cfg.position.nearPlane, cfg.position.farPlane, cfg.aspect)
+            : Matrix4f::ReversePerspective(cfg.fov, cfg.position.nearPlane, cfg.aspect);
 
     if(cfg.ortho)
       guessProj = Matrix4f::Orthographic(cfg.position.nearPlane, cfg.position.farPlane);
@@ -2494,8 +2672,8 @@ uint32_t D3D12DebugManager::PickVertex(uint32_t eventID, const MeshDisplay &cfg,
 
   UINT zeroes[4] = {0, 0, 0, 0};
   list->ClearUnorderedAccessViewUint(GetGPUHandle(PICK_RESULT_CLEAR_UAV),
-                                     GetCPUHandle(PICK_RESULT_CLEAR_UAV), m_PickResultBuf, zeroes,
-                                     0, NULL);
+                                     GetUAVClearHandle(PICK_RESULT_CLEAR_UAV), m_PickResultBuf,
+                                     zeroes, 0, NULL);
 
   list->Close();
 
@@ -3934,9 +4112,12 @@ void D3D12DebugManager::InitPostVSBuffers(uint32_t eventID)
     m_WrappedDevice->CreateUnorderedAccessView(m_SOBuffer, NULL, &counterDesc,
                                                GetCPUHandle(STREAM_OUT_UAV));
 
+    m_WrappedDevice->CreateUnorderedAccessView(m_SOBuffer, NULL, &counterDesc,
+                                               GetUAVClearHandle(STREAM_OUT_UAV));
+
     UINT zeroes[4] = {0, 0, 0, 0};
     m_DebugList->ClearUnorderedAccessViewUint(
-        GetGPUHandle(STREAM_OUT_UAV), GetCPUHandle(STREAM_OUT_UAV), m_SOBuffer, zeroes, 0, NULL);
+        GetGPUHandle(STREAM_OUT_UAV), GetUAVClearHandle(STREAM_OUT_UAV), m_SOBuffer, zeroes, 0, NULL);
 
     m_DebugList->Close();
 
@@ -4249,7 +4430,7 @@ void D3D12DebugManager::InitPostVSBuffers(uint32_t eventID)
 
     UINT zeroes[4] = {0, 0, 0, 0};
     m_DebugList->ClearUnorderedAccessViewUint(
-        GetGPUHandle(STREAM_OUT_UAV), GetCPUHandle(STREAM_OUT_UAV), m_SOBuffer, zeroes, 0, NULL);
+        GetGPUHandle(STREAM_OUT_UAV), GetUAVClearHandle(STREAM_OUT_UAV), m_SOBuffer, zeroes, 0, NULL);
 
     m_DebugList->Close();
 
@@ -6443,7 +6624,7 @@ bool D3D12DebugManager::GetHistogram(ResourceId texid, uint32_t sliceFace, uint3
 
     D3D12_GPU_DESCRIPTOR_HANDLE uav = GetGPUHandle(HISTOGRAM_UAV);
     D3D12_GPU_DESCRIPTOR_HANDLE srv = GetGPUHandle(FIRST_TEXDISPLAY_SRV);
-    D3D12_CPU_DESCRIPTOR_HANDLE uavcpu = GetCPUHandle(HISTOGRAM_UAV);
+    D3D12_CPU_DESCRIPTOR_HANDLE uavcpu = GetUAVClearHandle(HISTOGRAM_UAV);
 
     UINT zeroes[] = {0, 0, 0, 0};
     list->ClearUnorderedAccessViewUint(uav, uavcpu, m_MinMaxTileBuffer, zeroes, 0, NULL);
@@ -7584,6 +7765,9 @@ ResourceId D3D12DebugManager::RenderOverlay(ResourceId texid, FormatComponentTyp
       uint32_t width = uint32_t(resourceDesc.Width >> 1);
       uint32_t height = resourceDesc.Height >> 1;
 
+      width = RDCMAX(1U, width);
+      height = RDCMAX(1U, height);
+
       D3D12_RESOURCE_DESC uavTexDesc = {};
       uavTexDesc.Alignment = 0;
       uavTexDesc.DepthOrArraySize = 4;
@@ -7611,10 +7795,12 @@ ResourceId D3D12DebugManager::RenderOverlay(ResourceId texid, FormatComponentTyp
 
       m_WrappedDevice->CreateShaderResourceView(overdrawTex, NULL, GetCPUHandle(OVERDRAW_SRV));
       m_WrappedDevice->CreateUnorderedAccessView(overdrawTex, NULL, NULL, GetCPUHandle(OVERDRAW_UAV));
+      m_WrappedDevice->CreateUnorderedAccessView(overdrawTex, NULL, NULL,
+                                                 GetUAVClearHandle(OVERDRAW_UAV));
 
       UINT zeroes[4] = {0, 0, 0, 0};
-      list->ClearUnorderedAccessViewUint(GetGPUHandle(OVERDRAW_UAV), GetCPUHandle(OVERDRAW_UAV),
-                                         overdrawTex, zeroes, 0, NULL);
+      list->ClearUnorderedAccessViewUint(
+          GetGPUHandle(OVERDRAW_UAV), GetUAVClearHandle(OVERDRAW_UAV), overdrawTex, zeroes, 0, NULL);
       list->Close();
       list = NULL;
 

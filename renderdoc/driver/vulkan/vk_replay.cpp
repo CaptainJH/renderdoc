@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -1095,7 +1095,6 @@ bool VulkanReplay::RenderTexture(TextureDisplay cfg)
   if(outw.swap == VK_NULL_HANDLE)
     return false;
 
-  VkClearValue clearval = {};
   VkRenderPassBeginInfo rpbegin = {
       VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
       NULL,
@@ -1105,8 +1104,8 @@ bool VulkanReplay::RenderTexture(TextureDisplay cfg)
            0, 0,
        },
        {m_DebugWidth, m_DebugHeight}},
-      1,
-      &clearval,
+      0,
+      NULL,
   };
 
   return RenderTextureInternal(cfg, rpbegin, eTexDisplay_MipShift | eTexDisplay_BlendAlpha);
@@ -1534,7 +1533,6 @@ void VulkanReplay::RenderCheckerboard(Vec3f light, Vec3f dark)
   GetDebugManager()->m_CheckerboardUBO.Unmap();
 
   {
-    VkClearValue clearval = {};
     VkRenderPassBeginInfo rpbegin = {
         VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
         NULL,
@@ -1544,8 +1542,8 @@ void VulkanReplay::RenderCheckerboard(Vec3f light, Vec3f dark)
              0, 0,
          },
          {m_DebugWidth, m_DebugHeight}},
-        1,
-        &clearval,
+        0,
+        NULL,
     };
     vt->CmdBeginRenderPass(Unwrap(cmd), &rpbegin, VK_SUBPASS_CONTENTS_INLINE);
 
@@ -1596,7 +1594,6 @@ void VulkanReplay::RenderHighlightBox(float w, float h, float scale)
   RDCASSERTEQUAL(vkr, VK_SUCCESS);
 
   {
-    VkClearValue clearval = {};
     VkRenderPassBeginInfo rpbegin = {
         VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
         NULL,
@@ -1606,8 +1603,8 @@ void VulkanReplay::RenderHighlightBox(float w, float h, float scale)
              0, 0,
          },
          {m_DebugWidth, m_DebugHeight}},
-        1,
-        &clearval,
+        0,
+        NULL,
     };
     vt->CmdBeginRenderPass(Unwrap(cmd), &rpbegin, VK_SUBPASS_CONTENTS_INLINE);
 
@@ -1728,7 +1725,6 @@ void VulkanReplay::RenderMesh(uint32_t eventID, const vector<MeshFormat> &second
   vkr = vt->BeginCommandBuffer(Unwrap(cmd), &beginInfo);
   RDCASSERTEQUAL(vkr, VK_SUCCESS);
 
-  VkClearValue clearval = {};
   VkRenderPassBeginInfo rpbegin = {
       VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
       NULL,
@@ -1738,8 +1734,8 @@ void VulkanReplay::RenderMesh(uint32_t eventID, const vector<MeshFormat> &second
            0, 0,
        },
        {m_DebugWidth, m_DebugHeight}},
-      1,
-      &clearval,
+      0,
+      NULL,
   };
   vt->CmdBeginRenderPass(Unwrap(cmd), &rpbegin, VK_SUBPASS_CONTENTS_INLINE);
 
@@ -3184,7 +3180,7 @@ void VulkanReplay::SavePipelineState()
 
       m_VulkanPipelineState.compute.flags = p.flags;
 
-      VulkanPipelineState::ShaderStage &stage = m_VulkanPipelineState.CS;
+      VulkanPipelineState::ShaderStage &stage = m_VulkanPipelineState.m_CS;
 
       int i = 5;    // 5 is the CS idx (VS, TCS, TES, GS, FS, CS)
       {
@@ -3252,8 +3248,8 @@ void VulkanReplay::SavePipelineState()
 
       // Shader Stages
       VulkanPipelineState::ShaderStage *stages[] = {
-          &m_VulkanPipelineState.VS, &m_VulkanPipelineState.TCS, &m_VulkanPipelineState.TES,
-          &m_VulkanPipelineState.GS, &m_VulkanPipelineState.FS,
+          &m_VulkanPipelineState.m_VS, &m_VulkanPipelineState.m_TCS, &m_VulkanPipelineState.m_TES,
+          &m_VulkanPipelineState.m_GS, &m_VulkanPipelineState.m_FS,
       };
 
       for(size_t i = 0; i < ARRAY_COUNT(stages); i++)
@@ -4551,6 +4547,10 @@ struct VulkanInitPostVSCallback : public VulkanDrawcallCallback
   void PreDispatch(uint32_t eid, VkCommandBuffer cmd) {}
   bool PostDispatch(uint32_t eid, VkCommandBuffer cmd) { return false; }
   void PostRedispatch(uint32_t eid, VkCommandBuffer cmd) {}
+  // Ditto copy/etc
+  void PreMisc(uint32_t eid, DrawcallFlags flags, VkCommandBuffer cmd) {}
+  bool PostMisc(uint32_t eid, DrawcallFlags flags, VkCommandBuffer cmd) { return false; }
+  void PostRemisc(uint32_t eid, DrawcallFlags flags, VkCommandBuffer cmd) {}
   bool RecordAllCmds() { return false; }
   void AliasEvent(uint32_t primary, uint32_t alias)
   {
@@ -5630,4 +5630,14 @@ ReplayCreateStatus Vulkan_CreateReplayDevice(const char *logfile, IReplayDriver 
   return eReplayCreate_Success;
 }
 
-static DriverRegistration VkDriverRegistration(RDC_Vulkan, "Vulkan", &Vulkan_CreateReplayDevice);
+struct VulkanDriverRegistration
+{
+  VulkanDriverRegistration()
+  {
+    RenderDoc::Inst().RegisterReplayProvider(RDC_Vulkan, "Vulkan", &Vulkan_CreateReplayDevice);
+    RenderDoc::Inst().SetVulkanLayerCheck(&VulkanReplay::CheckVulkanLayer);
+    RenderDoc::Inst().SetVulkanLayerInstall(&VulkanReplay::InstallVulkanLayer);
+  }
+};
+
+static VulkanDriverRegistration VkDriverRegistration;

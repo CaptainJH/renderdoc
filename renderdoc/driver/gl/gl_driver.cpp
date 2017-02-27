@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -383,7 +383,8 @@ ReplayCreateStatus GLInitParams::Serialise()
   return eReplayCreate_Success;
 }
 
-WrappedOpenGL::WrappedOpenGL(const char *logfile, const GLHookSet &funcs) : m_Real(funcs)
+WrappedOpenGL::WrappedOpenGL(const char *logfile, const GLHookSet &funcs, GLPlatform &platform)
+    : m_Real(funcs), m_Platform(platform)
 {
   if(RenderDoc::Inst().GetCrashHandler())
     RenderDoc::Inst().GetCrashHandler()->RegisterMemoryRegion(this, sizeof(WrappedOpenGL));
@@ -717,9 +718,13 @@ WrappedOpenGL::WrappedOpenGL(const char *logfile, const GLHookSet &funcs) : m_Re
   // sorts are identical so we can do the intersection easily
   std::sort(globalExts.begin(), globalExts.end());
 
+  // by default we assume OpenGL driver
+  SetDriverType(RDC_OpenGL);
+
   m_Replay.SetDriver(this);
 
   m_FrameCounter = 0;
+  m_NoCtxFrames = 0;
   m_FailedFrame = 0;
   m_FailedReason = CaptureSucceeded;
   m_Failures = 0;
@@ -739,6 +744,8 @@ WrappedOpenGL::WrappedOpenGL(const char *logfile, const GLHookSet &funcs) : m_Re
   m_FirstEventID = 0;
   m_LastEventID = ~0U;
 
+  m_FetchCounters = false;
+
   RDCEraseEl(m_ActiveQueries);
   m_ActiveConditional = false;
   m_ActiveFeedback = false;
@@ -756,8 +763,10 @@ WrappedOpenGL::WrappedOpenGL(const char *logfile, const GLHookSet &funcs) : m_Re
       m_pSerialiser = new Serialiser(4, dummy, false);
     }
 
+    GLMarkerRegion::gl = &m_Real;
+
     // once GL driver is more tested, this can be disabled
-    if(m_Real.glDebugMessageCallback)
+    if(HasExt[KHR_debug] && m_Real.glDebugMessageCallback)
     {
       m_Real.glDebugMessageCallback(&DebugSnoopStatic, this);
 #if ENABLED(RDOC_DEVEL)
@@ -848,7 +857,7 @@ void WrappedOpenGL::Initialise(GLInitParams &params)
   gl.glGenBuffers(1, &m_FakeIdxBuf);
   gl.glBindBuffer(eGL_ELEMENT_ARRAY_BUFFER, m_FakeIdxBuf);
   m_FakeIdxSize = 1024 * 1024;    // this buffer is resized up as needed
-  gl.glNamedBufferStorageEXT(m_FakeIdxBuf, m_FakeIdxSize, NULL, GL_DYNAMIC_STORAGE_BIT);
+  gl.glNamedBufferDataEXT(m_FakeIdxBuf, m_FakeIdxSize, NULL, eGL_DYNAMIC_DRAW);
   gl.glBindBuffer(eGL_ELEMENT_ARRAY_BUFFER, 0);
 
   gl.glGenFramebuffers(1, &m_FakeBB_FBO);
@@ -870,7 +879,8 @@ void WrappedOpenGL::Initialise(GLInitParams &params)
   gl.glGenTextures(1, &m_FakeBB_Color);
   gl.glBindTexture(target, m_FakeBB_Color);
 
-  gl.glObjectLabel(eGL_TEXTURE, m_FakeBB_Color, -1, "Backbuffer Color");
+  GetResourceManager()->SetName(GetResourceManager()->GetID(TextureRes(GetCtx(), m_FakeBB_Color)),
+                                "Backbuffer Color");
 
   if(params.multiSamples > 1)
   {
@@ -879,7 +889,9 @@ void WrappedOpenGL::Initialise(GLInitParams &params)
   }
   else
   {
-    gl.glTextureStorage2DEXT(m_FakeBB_Color, target, 1, colfmt, params.width, params.height);
+    gl.glTextureImage2DEXT(m_FakeBB_Color, target, 0, colfmt, params.width, params.height, 0,
+                           eGL_RGBA, eGL_UNSIGNED_BYTE, NULL);
+    gl.glTexParameteri(target, eGL_TEXTURE_MAX_LEVEL, 0);
     gl.glTexParameteri(target, eGL_TEXTURE_MIN_FILTER, eGL_NEAREST);
     gl.glTexParameteri(target, eGL_TEXTURE_MAG_FILTER, eGL_NEAREST);
     gl.glTexParameteri(target, eGL_TEXTURE_WRAP_S, eGL_CLAMP_TO_EDGE);
@@ -924,17 +936,21 @@ void WrappedOpenGL::Initialise(GLInitParams &params)
     else
       RDCERR("Unexpected # stencil bits: %d", params.stencilBits);
 
-    if(stencil)
-      gl.glObjectLabel(eGL_TEXTURE, m_FakeBB_DepthStencil, -1, "Backbuffer Depth-stencil");
-    else
-      gl.glObjectLabel(eGL_TEXTURE, m_FakeBB_DepthStencil, -1, "Backbuffer Depth");
+    GetResourceManager()->SetName(
+        GetResourceManager()->GetID(TextureRes(GetCtx(), m_FakeBB_DepthStencil)),
+        stencil ? "Backbuffer Depth-stencil" : "Backbuffer Depth");
 
     if(params.multiSamples > 1)
+    {
       gl.glTextureStorage2DMultisampleEXT(m_FakeBB_DepthStencil, target, params.multiSamples,
                                           depthfmt, params.width, params.height, true);
+    }
     else
-      gl.glTextureStorage2DEXT(m_FakeBB_DepthStencil, target, 1, depthfmt, params.width,
-                               params.height);
+    {
+      gl.glTexParameteri(target, eGL_TEXTURE_MAX_LEVEL, 0);
+      gl.glTextureImage2DEXT(m_FakeBB_DepthStencil, target, 0, depthfmt, params.width,
+                             params.height, 0, eGL_DEPTH_COMPONENT, eGL_UNSIGNED_BYTE, NULL);
+    }
 
     if(stencil)
       gl.glFramebufferTexture(eGL_FRAMEBUFFER, eGL_DEPTH_STENCIL_ATTACHMENT, m_FakeBB_DepthStencil,
@@ -1031,12 +1047,6 @@ WrappedOpenGL::ContextData &WrappedOpenGL::GetCtxData()
 
 // defined in gl_<platform>_hooks.cpp
 Threading::CriticalSection &GetGLLock();
-void MakeContextCurrent(GLWindowingData data);
-
-// for 'backwards compatible' overlay rendering
-bool immediateBegin(GLenum mode, float width, float height);
-void immediateVert(float x, float y, float u, float v);
-void immediateEnd();
 
 ////////////////////////////////////////////////////////////////
 // Windowing/setup/etc
@@ -1196,8 +1206,13 @@ void WrappedOpenGL::ContextData::CreateDebugData(const GLHookSet &gl)
       vector<string> vs;
       vector<string> fs;
 
-      GenerateGLSLShader(vs, eShaderGLSL, "", GetEmbeddedResource(glsl_text_vert), 420);
-      GenerateGLSLShader(fs, eShaderGLSL, "", GetEmbeddedResource(glsl_text_frag), 420);
+      GenerateGLSLShader(vs, eShaderGLSL, "", GetEmbeddedResource(glsl_text_vert), 150);
+
+      GenerateGLSLShader(fs, eShaderGLSL,
+                         "#extension GL_ARB_shading_language_420pack : require\n"
+                         "#extension GL_ARB_separate_shader_objects : require\n"
+                         "#extension GL_ARB_explicit_attrib_location : require\n",
+                         GetEmbeddedResource(glsl_text_frag), 150);
 
       vector<const char *> vsc;
       vsc.reserve(vs.size());
@@ -1336,7 +1351,8 @@ void WrappedOpenGL::ActivateContext(GLWindowingData winData)
 
       const GLHookSet &gl = m_Real;
 
-      if(gl.glDebugMessageCallback && RenderDoc::Inst().GetCaptureOptions().APIValidation)
+      if(HasExt[KHR_debug] && gl.glDebugMessageCallback &&
+         RenderDoc::Inst().GetCaptureOptions().APIValidation)
       {
         gl.glDebugMessageCallback(&DebugSnoopStatic, this);
         gl.glEnable(eGL_DEBUG_OUTPUT_SYNCHRONOUS);
@@ -1409,9 +1425,16 @@ void WrappedOpenGL::ActivateContext(GLWindowingData winData)
         {
           GLCoreVersion = ver;
           GLIsCore = ctxdata.isCore;
-          DoVendorChecks(gl, winData);
+          DoVendorChecks(gl, m_Platform, winData);
         }
       }
+    }
+
+    if(m_State >= WRITING)
+    {
+      m_Internal = m_Real;
+
+      glEmulate::EmulateRequiredExtensions(&m_Real, &m_Internal);
     }
   }
 }
@@ -1462,8 +1485,16 @@ struct RenderTextState
     if(modern)
     {
       enableBits[3] = gl.glIsEnabled(eGL_DEPTH_CLAMP) != 0;
-      enableBits[4] = gl.glIsEnabledi(eGL_BLEND, 0) != 0;
-      enableBits[5] = gl.glIsEnabledi(eGL_SCISSOR_TEST, 0) != 0;
+
+      if(HasExt[ARB_draw_buffers_blend])
+        enableBits[4] = gl.glIsEnabledi(eGL_BLEND, 0) != 0;
+      else
+        enableBits[4] = gl.glIsEnabled(eGL_BLEND) != 0;
+
+      if(HasExt[ARB_viewport_array])
+        enableBits[5] = gl.glIsEnabledi(eGL_SCISSOR_TEST, 0) != 0;
+      else
+        enableBits[5] = gl.glIsEnabled(eGL_SCISSOR_TEST) != 0;
     }
     else
     {
@@ -1474,7 +1505,7 @@ struct RenderTextState
       enableBits[7] = gl.glIsEnabled(eGL_ALPHA_TEST) != 0;
     }
 
-    if(modern && (GLCoreVersion >= 45 || ExtensionSupported[ExtensionSupported_ARB_clip_control]))
+    if(modern && HasExt[ARB_clip_control])
     {
       gl.glGetIntegerv(eGL_CLIP_ORIGIN, (GLint *)&ClipOrigin);
       gl.glGetIntegerv(eGL_CLIP_DEPTH_MODE, (GLint *)&ClipDepth);
@@ -1485,7 +1516,7 @@ struct RenderTextState
       ClipDepth = eGL_NEGATIVE_ONE_TO_ONE;
     }
 
-    if(modern)
+    if(modern && HasExt[ARB_draw_buffers_blend])
     {
       gl.glGetIntegeri_v(eGL_BLEND_EQUATION_RGB, 0, (GLint *)&EquationRGB);
       gl.glGetIntegeri_v(eGL_BLEND_EQUATION_ALPHA, 0, (GLint *)&EquationAlpha);
@@ -1522,7 +1553,7 @@ struct RenderTextState
       PolygonMode = eGL_FILL;
     }
 
-    if(modern)
+    if(modern && HasExt[ARB_viewport_array])
       gl.glGetFloati_v(eGL_VIEWPORT, 0, &Viewportf[0]);
     else
       gl.glGetIntegerv(eGL_VIEWPORT, &Viewport[0]);
@@ -1533,7 +1564,8 @@ struct RenderTextState
 
     // we get the current program but only try to restore it if it's non-0
     prog = 0;
-    gl.glGetIntegerv(eGL_CURRENT_PROGRAM, (GLint *)&prog);
+    if(modern)
+      gl.glGetIntegerv(eGL_CURRENT_PROGRAM, (GLint *)&prog);
 
     drawFBO = 0;
     gl.glGetIntegerv(eGL_DRAW_FRAMEBUFFER_BINDING, (GLint *)&drawFBO);
@@ -1541,7 +1573,8 @@ struct RenderTextState
     // since we will use the fixed function pipeline, also need to check for
     // program pipeline bindings (if we weren't, our program would override)
     pipe = 0;
-    gl.glGetIntegerv(eGL_PROGRAM_PIPELINE_BINDING, (GLint *)&pipe);
+    if(modern && HasExt[ARB_separate_shader_objects])
+      gl.glGetIntegerv(eGL_PROGRAM_PIPELINE_BINDING, (GLint *)&pipe);
 
     if(modern)
     {
@@ -1574,14 +1607,36 @@ struct RenderTextState
         gl.glEnable(eGL_DEPTH_CLAMP);
       else
         gl.glDisable(eGL_DEPTH_CLAMP);
-      if(enableBits[4])
-        gl.glEnablei(eGL_BLEND, 0);
+
+      if(HasExt[ARB_draw_buffers_blend])
+      {
+        if(enableBits[4])
+          gl.glEnablei(eGL_BLEND, 0);
+        else
+          gl.glDisablei(eGL_BLEND, 0);
+      }
       else
-        gl.glDisablei(eGL_BLEND, 0);
-      if(enableBits[5])
-        gl.glEnablei(eGL_SCISSOR_TEST, 0);
+      {
+        if(enableBits[4])
+          gl.glEnable(eGL_BLEND);
+        else
+          gl.glDisable(eGL_BLEND);
+      }
+
+      if(HasExt[ARB_viewport_array])
+      {
+        if(enableBits[5])
+          gl.glEnablei(eGL_SCISSOR_TEST, 0);
+        else
+          gl.glDisablei(eGL_SCISSOR_TEST, 0);
+      }
       else
-        gl.glDisablei(eGL_SCISSOR_TEST, 0);
+      {
+        if(enableBits[5])
+          gl.glEnable(eGL_SCISSOR_TEST);
+        else
+          gl.glDisable(eGL_SCISSOR_TEST);
+      }
     }
     else
     {
@@ -1607,12 +1662,10 @@ struct RenderTextState
         gl.glDisable(eGL_ALPHA_TEST);
     }
 
-    if(modern && gl.glClipControl &&
-       (GLCoreVersion >= 45 ||
-        ExtensionSupported[ExtensionSupported_ARB_clip_control]))    // only available in 4.5+
+    if(modern && gl.glClipControl && HasExt[ARB_clip_control])
       gl.glClipControl(ClipOrigin, ClipDepth);
 
-    if(modern)
+    if(modern && HasExt[ARB_draw_buffers_blend])
     {
       gl.glBlendFuncSeparatei(0, SourceRGB, DestinationRGB, SourceAlpha, DestinationAlpha);
       gl.glBlendEquationSeparatei(0, EquationRGB, EquationAlpha);
@@ -1625,7 +1678,7 @@ struct RenderTextState
 
     gl.glPolygonMode(eGL_FRONT_AND_BACK, PolygonMode);
 
-    if(modern)
+    if(modern && HasExt[ARB_viewport_array])
       gl.glViewportIndexedf(0, Viewportf[0], Viewportf[1], Viewportf[2], Viewportf[3]);
     else
       gl.glViewport(Viewport[0], Viewport[1], (GLsizei)Viewport[2], (GLsizei)Viewport[3]);
@@ -1697,7 +1750,7 @@ void WrappedOpenGL::RenderOverlayStr(float x, float y, const char *text)
   // if it's reasonably modern context, assume we can use buffers and UBOs
   if(ctxdata.Modern())
   {
-    gl.glBindBufferBase(eGL_UNIFORM_BUFFER, 0, ctxdata.GeneralUBO);
+    gl.glBindBuffer(eGL_UNIFORM_BUFFER, ctxdata.GeneralUBO);
 
     FontUBOData *ubo = (FontUBOData *)gl.glMapBufferRange(
         eGL_UNIFORM_BUFFER, 0, sizeof(FontUBOData), GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
@@ -1731,7 +1784,7 @@ void WrappedOpenGL::RenderOverlayStr(float x, float y, const char *text)
       len = FONT_MAX_CHARS;
     }
 
-    gl.glBindBufferBase(eGL_UNIFORM_BUFFER, 0, ctxdata.StringUBO);
+    gl.glBindBuffer(eGL_UNIFORM_BUFFER, ctxdata.StringUBO);
     uint32_t *texs =
         (uint32_t *)gl.glMapBufferRange(eGL_UNIFORM_BUFFER, 0, len * 4 * sizeof(uint32_t),
                                         GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
@@ -1765,9 +1818,19 @@ void WrappedOpenGL::RenderOverlayStr(float x, float y, const char *text)
     // and pop functions above (RenderTextState)
 
     // set blend state
-    gl.glEnablei(eGL_BLEND, 0);
-    gl.glBlendFuncSeparatei(0, eGL_SRC_ALPHA, eGL_ONE_MINUS_SRC_ALPHA, eGL_SRC_ALPHA, eGL_SRC_ALPHA);
-    gl.glBlendEquationSeparatei(0, eGL_FUNC_ADD, eGL_FUNC_ADD);
+    if(HasExt[ARB_draw_buffers_blend])
+    {
+      gl.glEnablei(eGL_BLEND, 0);
+      gl.glBlendFuncSeparatei(0, eGL_SRC_ALPHA, eGL_ONE_MINUS_SRC_ALPHA, eGL_SRC_ALPHA,
+                              eGL_SRC_ALPHA);
+      gl.glBlendEquationSeparatei(0, eGL_FUNC_ADD, eGL_FUNC_ADD);
+    }
+    else
+    {
+      gl.glEnable(eGL_BLEND);
+      gl.glBlendFuncSeparate(eGL_SRC_ALPHA, eGL_ONE_MINUS_SRC_ALPHA, eGL_SRC_ALPHA, eGL_SRC_ALPHA);
+      gl.glBlendEquationSeparate(eGL_FUNC_ADD, eGL_FUNC_ADD);
+    }
 
     // set depth & stencil
     gl.glDisable(eGL_DEPTH_TEST);
@@ -1778,13 +1841,19 @@ void WrappedOpenGL::RenderOverlayStr(float x, float y, const char *text)
     gl.glBindFramebuffer(eGL_DRAW_FRAMEBUFFER, 0);
 
     // set viewport & scissor
-    gl.glViewportIndexedf(0, 0.0f, 0.0f, (float)m_InitParams.width, (float)m_InitParams.height);
-    gl.glDisablei(eGL_SCISSOR_TEST, 0);
+    if(HasExt[ARB_viewport_array])
+    {
+      gl.glViewportIndexedf(0, 0.0f, 0.0f, (float)m_InitParams.width, (float)m_InitParams.height);
+      gl.glDisablei(eGL_SCISSOR_TEST, 0);
+    }
+    else
+    {
+      gl.glViewport(0, 0, m_InitParams.width, m_InitParams.height);
+      gl.glDisable(eGL_SCISSOR_TEST);
+    }
     gl.glPolygonMode(eGL_FRONT_AND_BACK, eGL_FILL);
 
-    if(gl.glClipControl &&
-       (GLCoreVersion >= 45 ||
-        ExtensionSupported[ExtensionSupported_ARB_clip_control]))    // only available in 4.5+
+    if(gl.glClipControl && HasExt[ARB_clip_control])
       gl.glClipControl(eGL_LOWER_LEFT, eGL_NEGATIVE_ONE_TO_ONE);
 
     // bind UBOs
@@ -1803,7 +1872,7 @@ void WrappedOpenGL::RenderOverlayStr(float x, float y, const char *text)
     gl.glUseProgram(ctxdata.Program);
 
     // draw string
-    gl.glDrawArraysInstanced(eGL_TRIANGLE_STRIP, 0, 4, (GLsizei)len);
+    gl.glDrawArrays(eGL_TRIANGLES, 0, 6 * (GLsizei)len);
   }
   else
   {
@@ -1840,7 +1909,8 @@ void WrappedOpenGL::RenderOverlayStr(float x, float y, const char *text)
     gl.glBindTexture(eGL_TEXTURE_2D, ctxdata.GlyphTexture);
     gl.glEnable(eGL_TEXTURE_2D);
 
-    gl.glBindFramebuffer(eGL_DRAW_FRAMEBUFFER, 0);
+    if(gl.glBindFramebuffer)
+      gl.glBindFramebuffer(eGL_DRAW_FRAMEBUFFER, 0);
 
     // just in case, try to disable the programmable pipeline
     if(gl.glUseProgram)
@@ -1849,7 +1919,7 @@ void WrappedOpenGL::RenderOverlayStr(float x, float y, const char *text)
       gl.glBindProgramPipeline(0);
 
     // draw string (based on sample code from stb_truetype.h)
-    if(immediateBegin(eGL_QUADS, (float)m_InitParams.width, (float)m_InitParams.height))
+    vector<Vec4f> vertices;
     {
       y += 1.0f;
       y *= charPixelHeight;
@@ -1887,10 +1957,11 @@ void WrappedOpenGL::RenderOverlayStr(float x, float y, const char *text)
       y = starty;
 
       // draw black bar behind text
-      immediateVert(minx, maxy, 0.0f, 0.0f);
-      immediateVert(maxx, maxy, 0.0f, 0.0f);
-      immediateVert(maxx, miny, 0.0f, 0.0f);
-      immediateVert(minx, miny, 0.0f, 0.0f);
+
+      vertices.push_back(Vec4f(minx, maxy, 0.0f, 0.0f));
+      vertices.push_back(Vec4f(maxx, maxy, 0.0f, 0.0f));
+      vertices.push_back(Vec4f(maxx, miny, 0.0f, 0.0f));
+      vertices.push_back(Vec4f(minx, miny, 0.0f, 0.0f));
 
       while(*text)
       {
@@ -1899,10 +1970,10 @@ void WrappedOpenGL::RenderOverlayStr(float x, float y, const char *text)
         {
           stbtt_GetBakedQuad(chardata, FONT_TEX_WIDTH, FONT_TEX_HEIGHT, c - firstChar, &x, &y, &q, 1);
 
-          immediateVert(q.x0, q.y0, q.s0, q.t0);
-          immediateVert(q.x1, q.y0, q.s1, q.t0);
-          immediateVert(q.x1, q.y1, q.s1, q.t1);
-          immediateVert(q.x0, q.y1, q.s0, q.t1);
+          vertices.push_back(Vec4f(q.x0, q.y0, q.s0, q.t0));
+          vertices.push_back(Vec4f(q.x1, q.y0, q.s1, q.t0));
+          vertices.push_back(Vec4f(q.x1, q.y1, q.s1, q.t1));
+          vertices.push_back(Vec4f(q.x0, q.y1, q.s0, q.t1));
 
           maxx = RDCMAX(maxx, RDCMAX(q.x0, q.x1));
           maxy = RDCMAX(maxy, RDCMAX(q.y0, q.y1));
@@ -1913,9 +1984,8 @@ void WrappedOpenGL::RenderOverlayStr(float x, float y, const char *text)
         }
         ++text;
       }
-
-      immediateEnd();
     }
+    m_Platform.DrawQuads((float)m_InitParams.width, (float)m_InitParams.height, vertices);
   }
 }
 
@@ -2158,7 +2228,20 @@ void WrappedOpenGL::SwapBuffers(void *windowHandle)
 
   // don't do anything if no context is active.
   if(GetCtx() == NULL)
+  {
+    m_NoCtxFrames++;
+    if(m_NoCtxFrames == 100)
+    {
+      RDCERR(
+          "Seen 100 frames with no context current. RenderDoc requires a context to be current "
+          "during the call to SwapBuffers to display its overlay and start/stop captures on "
+          "default keys.\nIf your GL use is elsewhere, consider using the in-application API to "
+          "trigger captures manually");
+    }
     return;
+  }
+
+  m_NoCtxFrames = 0;
 
   m_FrameCounter++;    // first present becomes frame #1, this function is at the end of the frame
 
@@ -2224,7 +2307,7 @@ void WrappedOpenGL::SwapBuffers(void *windowHandle)
       int flags = activeWindow ? RenderDoc::eOverlay_ActiveWindow : 0;
       if(ctxdata.Legacy())
         flags |= RenderDoc::eOverlay_CaptureDisabled;
-      string overlayText = RenderDoc::Inst().GetOverlayText(RDC_OpenGL, m_FrameCounter, flags);
+      string overlayText = RenderDoc::Inst().GetOverlayText(GetDriverType(), m_FrameCounter, flags);
 
       if(ctxdata.Legacy())
       {
@@ -2270,7 +2353,7 @@ void WrappedOpenGL::SwapBuffers(void *windowHandle)
   if(!activeWindow)
     return;
 
-  RenderDoc::Inst().SetCurrentDriver(RDC_OpenGL);
+  RenderDoc::Inst().SetCurrentDriver(GetDriverType());
 
   // only allow capturing on 'modern' created contexts
   if(ctxdata.Legacy())
@@ -2322,7 +2405,7 @@ void WrappedOpenGL::MakeValidContextCurrent(GLWindowingData &prevctx, void *favo
     }
 
     m_ActiveContexts[Threading::GetCurrentID()] = prevctx;
-    MakeContextCurrent(prevctx);
+    m_Platform.MakeContextCurrent(prevctx);
   }
 }
 
@@ -2333,7 +2416,7 @@ void WrappedOpenGL::StartFrameCapture(void *dev, void *wnd)
 
   SCOPED_LOCK(GetGLLock());
 
-  RenderDoc::Inst().SetCurrentDriver(RDC_OpenGL);
+  RenderDoc::Inst().SetCurrentDriver(GetDriverType());
 
   m_State = WRITING_CAPFRAME;
 
@@ -2377,7 +2460,7 @@ void WrappedOpenGL::StartFrameCapture(void *dev, void *wnd)
 
   if(switchctx.ctx != prevctx.ctx)
   {
-    MakeContextCurrent(prevctx);
+    m_Platform.MakeContextCurrent(prevctx);
     m_ActiveContexts[Threading::GetCurrentID()] = prevctx;
   }
 
@@ -2494,7 +2577,7 @@ bool WrappedOpenGL::EndFrameCapture(void *dev, void *wnd)
 
     if(switchctx.ctx != prevctx.ctx)
     {
-      MakeContextCurrent(prevctx);
+      m_Platform.MakeContextCurrent(prevctx);
       m_ActiveContexts[Threading::GetCurrentID()] = prevctx;
     }
 
@@ -2568,7 +2651,7 @@ bool WrappedOpenGL::EndFrameCapture(void *dev, void *wnd)
 
     if(switchctx.ctx != prevctx.ctx)
     {
-      MakeContextCurrent(prevctx);
+      m_Platform.MakeContextCurrent(prevctx);
       m_ActiveContexts[Threading::GetCurrentID()] = prevctx;
     }
 
@@ -4132,18 +4215,31 @@ void WrappedOpenGL::ReplayLog(uint32_t startEventID, uint32_t endEventID, Replay
 
   if(!partial)
   {
+    GLMarkerRegion apply("ApplyInitialContents");
     GetResourceManager()->ApplyInitialContents();
     GetResourceManager()->ReleaseInFrameResources();
   }
 
+  if(replayType == eReplay_Full)
   {
-    if(replayType == eReplay_Full)
-      ContextReplayLog(EXECUTING, startEventID, endEventID, partial);
-    else if(replayType == eReplay_WithoutDraw)
-      ContextReplayLog(EXECUTING, startEventID, RDCMAX(1U, endEventID) - 1, partial);
-    else if(replayType == eReplay_OnlyDraw)
-      ContextReplayLog(EXECUTING, endEventID, endEventID, partial);
-    else
-      RDCFATAL("Unexpected replay type");
+    GLMarkerRegion exec(
+        StringFormat::Fmt("Replay: Full %u->%u (partial %u)", startEventID, endEventID, partial));
+    ContextReplayLog(EXECUTING, startEventID, endEventID, partial);
+  }
+  else if(replayType == eReplay_WithoutDraw)
+  {
+    GLMarkerRegion exec(StringFormat::Fmt("Replay: W/O Draw %u->%u (partial %u)", startEventID,
+                                          endEventID, partial));
+    ContextReplayLog(EXECUTING, startEventID, RDCMAX(1U, endEventID) - 1, partial);
+  }
+  else if(replayType == eReplay_OnlyDraw)
+  {
+    GLMarkerRegion exec(StringFormat::Fmt("Replay: Draw Only %u->%u (partial %u)", endEventID,
+                                          endEventID, partial));
+    ContextReplayLog(EXECUTING, endEventID, endEventID, partial);
+  }
+  else
+  {
+    RDCFATAL("Unexpected replay type");
   }
 }

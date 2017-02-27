@@ -1,7 +1,7 @@
 ﻿/******************************************************************************
  * The MIT License (MIT)
  * 
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -197,7 +197,7 @@ namespace renderdocui.Windows.Dialogs
                     mainTableLayout.RowStyles[1].SizeType = SizeType.Percent;
                     mainTableLayout.RowStyles[1].Height = 100.0f;
 
-                    capture.Text = "Inject";
+                    launch.Text = "Inject";
 
                     FillProcessList();
                     
@@ -213,7 +213,7 @@ namespace renderdocui.Windows.Dialogs
 
                     globalGroup.Visible = m_Core.Config.AllowGlobalHook;
 
-                    capture.Text = "Capture";
+                    launch.Text = "Launch";
                     
                     Text = "Capture Executable";
                 }
@@ -633,7 +633,7 @@ namespace renderdocui.Windows.Dialogs
                 workDirBrowser.SelectedPath = workDirPath.Text;
         }
 
-        private void capture_Click(object sender, EventArgs e)
+        private void launch_Click(object sender, EventArgs e)
         {
             TriggerCapture();
         }
@@ -729,6 +729,13 @@ namespace renderdocui.Windows.Dialogs
 
         private void exePath_TextChanged(object sender, EventArgs e)
         {
+            // This is likely due to someone pasting a full path copied using
+            // copy path. Removing the quotes is safe in any case
+            if (exePath.Text.StartsWith ("\"") && exePath.Text.EndsWith ("\"") && exePath.Text.Length > 2)
+            {
+                exePath.Text = exePath.Text.Substring(1, exePath.Text.Length - 2);
+            }
+
             UpdateWorkDirHint();
             UpdateGlobalHook();
         }
@@ -928,6 +935,8 @@ namespace renderdocui.Windows.Dialogs
 
             toggleGlobalHook.Enabled = false;
 
+            m_Core.GlobalHookEnabled = false;
+
             if (toggleGlobalHook.Checked)
             {
                 if(!Helpers.IsElevated)
@@ -973,7 +982,7 @@ namespace renderdocui.Windows.Dialogs
                 exePath.Enabled = exeBrowse.Enabled =
                     workDirPath.Enabled = workDirBrowse.Enabled =
                     cmdline.Enabled =
-                    capture.Enabled = save.Enabled = load.Enabled = false;
+                    launch.Enabled = save.Enabled = load.Enabled = false;
 
                 foreach (Control c in capOptsFlow.Controls)
                     c.Enabled = false;
@@ -1045,7 +1054,7 @@ namespace renderdocui.Windows.Dialogs
                     exePath.Enabled = exeBrowse.Enabled =
                         workDirPath.Enabled = workDirBrowse.Enabled =
                         cmdline.Enabled =
-                        capture.Enabled = save.Enabled = load.Enabled = true;
+                        launch.Enabled = save.Enabled = load.Enabled = true;
 
                     foreach (Control c in capOptsFlow.Controls)
                         c.Enabled = true;
@@ -1080,7 +1089,7 @@ namespace renderdocui.Windows.Dialogs
                     exePath.Enabled = exeBrowse.Enabled =
                         workDirPath.Enabled = workDirBrowse.Enabled =
                         cmdline.Enabled =
-                        capture.Enabled = save.Enabled = load.Enabled = true;
+                        launch.Enabled = save.Enabled = load.Enabled = true;
 
                     foreach (Control c in capOptsFlow.Controls)
                         c.Enabled = true;
@@ -1124,6 +1133,8 @@ namespace renderdocui.Windows.Dialogs
                 logfile = m_Core.TempLogFilename(logfile);
 
                 StaticExports.StartGlobalHook(exe, logfile, GetSettings().Options);
+
+                m_Core.GlobalHookEnabled = true;
             }
             else
             {
@@ -1132,7 +1143,7 @@ namespace renderdocui.Windows.Dialogs
                 exePath.Enabled = exeBrowse.Enabled =
                     workDirPath.Enabled = workDirBrowse.Enabled =
                     cmdline.Enabled =
-                    capture.Enabled = save.Enabled = load.Enabled = true;
+                    launch.Enabled = save.Enabled = load.Enabled = true;
 
                 foreach (Control c in capOptsFlow.Controls)
                     c.Enabled = true;
@@ -1244,6 +1255,11 @@ namespace renderdocui.Windows.Dialogs
 
                 mainTableLayout.MinimumSize = new Size(0, mainTableLayout.ClientRectangle.Height - margin);
             }
+        }
+
+        private void pidList_MouseDoubleClick(object sender, MouseEventArgs e)
+        {
+            TriggerCapture();
         }
     }
 }

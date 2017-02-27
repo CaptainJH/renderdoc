@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -39,7 +39,7 @@ class ConstantBufferPreviewer : public QFrame, public ILogViewerForm
   Q_OBJECT
 
 public:
-  explicit ConstantBufferPreviewer(CaptureContext *ctx, const ShaderStageType stage, uint32_t slot,
+  explicit ConstantBufferPreviewer(CaptureContext &ctx, const ShaderStageType stage, uint32_t slot,
                                    uint32_t idx, QWidget *parent = 0);
   ~ConstantBufferPreviewer();
 
@@ -47,7 +47,8 @@ public:
 
   void OnLogfileLoaded();
   void OnLogfileClosed();
-  void OnEventSelected(uint32_t eventID);
+  void OnSelectedEventChanged(uint32_t eventID) {}
+  void OnEventChanged(uint32_t eventID);
 
 private slots:
   // automatic slots
@@ -59,7 +60,7 @@ private slots:
 
 private:
   Ui::ConstantBufferPreviewer *ui;
-  CaptureContext *m_Ctx = NULL;
+  CaptureContext &m_Ctx;
 
   ResourceId m_cbuffer;
   ResourceId m_shader;

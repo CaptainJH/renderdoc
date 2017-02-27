@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -61,6 +61,7 @@ string ToStrHelper<false, RDCDriver>::Get(const RDCDriver &el)
   {
     case RDC_Unknown: return "Unknown";
     case RDC_OpenGL: return "OpenGL";
+    case RDC_OpenGLES: return "OpenGLES";
     case RDC_Mantle: return "Mantle";
     case RDC_D3D12: return "D3D12";
     case RDC_D3D11: return "D3D11";
@@ -235,6 +236,9 @@ RenderDoc::RenderDoc()
   m_ExHandler = NULL;
 
   m_Overlay = eRENDERDOC_Overlay_Default;
+
+  m_VulkanCheck = NULL;
+  m_VulkanInstall = NULL;
 
   m_TargetControlThreadShutdown = false;
   m_ControlClientThreadShutdown = false;

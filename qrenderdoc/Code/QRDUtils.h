@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -27,6 +27,7 @@
 #include <QDebug>
 #include <QFileDialog>
 #include <QMessageBox>
+#include <QProcess>
 #include <QSemaphore>
 #include <QSortFilterProxyModel>
 #include "renderdoc_replay.h"
@@ -242,11 +243,50 @@ struct ToStr
       case eResType_Texture2D: return "Texture 2D";
       case eResType_TextureRect: return "Texture Rect";
       case eResType_Texture2DArray: return "Texture 2D Array";
-      case eResType_Texture2DMS: return "Texture 2D MS Array";
+      case eResType_Texture2DMS: return "Texture 2D MS";
       case eResType_Texture2DMSArray: return "Texture 2D MS Array";
       case eResType_Texture3D: return "Texture 3D";
       case eResType_TextureCube: return "Texture Cube";
       case eResType_TextureCubeArray: return "Texture Cube Array";
+      default: break;
+    }
+    return "Unknown";
+  }
+
+  static std::string Get(const SystemAttribute &el)
+  {
+    switch(el)
+    {
+      case eAttr_None: return "None";
+      case eAttr_Position: return "Position";
+      case eAttr_PointSize: return "Point Size";
+      case eAttr_ClipDistance: return "Clip Distance";
+      case eAttr_CullDistance: return "Cull Distance";
+      case eAttr_RTIndex: return "RT Index";
+      case eAttr_ViewportIndex: return "Viewport Index";
+      case eAttr_VertexIndex: return "Vertex Index";
+      case eAttr_PrimitiveIndex: return "Primitive Index";
+      case eAttr_InstanceIndex: return "Instance Index";
+      case eAttr_InvocationIndex: return "Invocation Index";
+      case eAttr_DispatchSize: return "Dispatch Size";
+      case eAttr_DispatchThreadIndex: return "Dispatch Thread Index";
+      case eAttr_GroupIndex: return "Group Index";
+      case eAttr_GroupFlatIndex: return "Group Flat Index";
+      case eAttr_GroupThreadIndex: return "Group Thread Index";
+      case eAttr_GSInstanceIndex: return "GS Instance Index";
+      case eAttr_OutputControlPointIndex: return "Output Control Point Index";
+      case eAttr_DomainLocation: return "Domain Location";
+      case eAttr_IsFrontFace: return "Is FrontFace";
+      case eAttr_MSAACoverage: return "MSAA Coverage";
+      case eAttr_MSAASamplePosition: return "MSAA Sample Position";
+      case eAttr_MSAASampleIndex: return "MSAA Sample Index";
+      case eAttr_PatchNumVertices: return "Patch NumVertices";
+      case eAttr_OuterTessFactor: return "Outer TessFactor";
+      case eAttr_InsideTessFactor: return "Inside TessFactor";
+      case eAttr_ColourOutput: return "Colour Output";
+      case eAttr_DepthOutput: return "Depth Output";
+      case eAttr_DepthOutputGreaterEqual: return "Depth Output (GEqual)";
+      case eAttr_DepthOutputLessEqual: return "Depth Output (LEqual)";
       default: break;
     }
     return "Unknown";
@@ -266,6 +306,59 @@ struct ToStr
       case eBindType_ReadOnlyBuffer: return "Buffer";
       case eBindType_ReadWriteBuffer: return "RW Buffer";
       case eBindType_InputAttachment: return "Input";
+      default: break;
+    }
+    return "Unknown";
+  }
+
+  static std::string Get(const DebugMessageSource &el)
+  {
+    switch(el)
+    {
+      case eDbgSource_API: return "API";
+      case eDbgSource_RedundantAPIUse: return "Redundant API Use";
+      case eDbgSource_IncorrectAPIUse: return "Incorrect API Use";
+      case eDbgSource_GeneralPerformance: return "General Performance";
+      case eDbgSource_GCNPerformance: return "GCN Performance";
+      case eDbgSource_RuntimeWarning: return "Runtime Warning";
+      case eDbgSoruce_UnsupportedConfiguration: return "Unsupported Configuration";
+      default: break;
+    }
+    return "Unknown";
+  }
+
+  static std::string Get(const DebugMessageSeverity &el)
+  {
+    switch(el)
+    {
+      case eDbgSeverity_High: return "High";
+      case eDbgSeverity_Medium: return "Medium";
+      case eDbgSeverity_Low: return "Low";
+      case eDbgSeverity_Info: return "Info";
+      default: break;
+    }
+    return "Unknown";
+  }
+
+  static std::string Get(const DebugMessageCategory &el)
+  {
+    switch(el)
+    {
+      case eDbgCategory_Application_Defined: return "Application Defined";
+      case eDbgCategory_Miscellaneous: return "Miscellaneous";
+      case eDbgCategory_Initialization: return "Initialization";
+      case eDbgCategory_Cleanup: return "Cleanup";
+      case eDbgCategory_Compilation: return "Compilation";
+      case eDbgCategory_State_Creation: return "State Creation";
+      case eDbgCategory_State_Setting: return "State Setting";
+      case eDbgCategory_State_Getting: return "State Getting";
+      case eDbgCategory_Resource_Manipulation: return "Resource Manipulation";
+      case eDbgCategory_Execution: return "Execution";
+      case eDbgCategory_Shaders: return "Shaders";
+      case eDbgCategory_Deprecated: return "Deprecated";
+      case eDbgCategory_Undefined: return "Undefined";
+      case eDbgCategory_Portability: return "Portability";
+      case eDbgCategory_Performance: return "Performance";
       default: break;
     }
     return "Unknown";
@@ -293,6 +386,7 @@ struct ToStr
       case eVar_Int: return "int";
       case eVar_UInt: return "uint";
       case eVar_Double: return "double";
+      case eVar_Unknown: break;
     }
     return "Unknown";
   }
@@ -323,8 +417,8 @@ QString ToQStr(const ShaderStageType stage, const GraphicsAPI apitype);
 struct FormatElement
 {
   FormatElement();
-  FormatElement(const QString &Name, int buf, uint offs, bool pi, int ir, bool rowMat, uint matDim,
-                ResourceFormat f, bool h);
+  FormatElement(const QString &Name, int buf, uint offs, bool perInst, int instRate, bool rowMat,
+                uint matDim, ResourceFormat f, bool hexDisplay);
 
   static QList<FormatElement> ParseFormatString(const QString &formatString, uint64_t maxLen,
                                                 bool tightPacking, QString &errors);
@@ -334,7 +428,7 @@ struct FormatElement
 
   QString ElementString(const QVariant &var);
 
-  uint32_t byteSize();
+  uint32_t byteSize() const;
 
   QString name;
   int buffer;
@@ -349,22 +443,30 @@ struct FormatElement
 };
 
 QString TypeString(const ShaderVariable &v);
-QString RowString(const ShaderVariable &v, uint32_t row);
+QString RowString(const ShaderVariable &v, uint32_t row, VarType type = eVar_Unknown);
 QString VarString(const ShaderVariable &v);
 QString RowTypeString(const ShaderVariable &v);
+
+QString TypeString(const SigParameter &sig);
+QString D3DSemanticString(const SigParameter &sig);
+QString GetComponentString(byte mask);
 
 struct Formatter
 {
   static void setParams(int minFigures, int maxFigures, int expNegCutoff, int expPosCutoff);
 
   static QString Format(double f, bool hex = false);
+  static QString Format(uint64_t u, bool hex = false)
+  {
+    return QString("%1").arg(u, hex ? 16 : 0, hex ? 16 : 10, QChar('0'));
+  }
   static QString Format(uint32_t u, bool hex = false)
   {
     return QString("%1").arg(u, hex ? 8 : 0, hex ? 16 : 10, QChar('0'));
   }
   static QString Format(uint16_t u, bool hex = false)
   {
-    return QString("%1").arg(u, hex ? 8 : 0, hex ? 16 : 10, QChar('0'));
+    return QString("%1").arg(u, hex ? 4 : 0, hex ? 16 : 10, QChar('0'));
   }
   static QString Format(int32_t i, bool hex = false) { return QString::number(i); }
 private:
@@ -434,7 +536,6 @@ public slots:
   {
     m_func();
     m_Thread->quit();
-    m_Thread->deleteLater();
     m_Thread = NULL;
     if(m_SelfDelete)
       deleteLater();
@@ -450,6 +551,7 @@ public:
     m_func = f;
     moveToThread(m_Thread);
     QObject::connect(m_Thread, &QThread::started, this, &LambdaThread::process);
+    QObject::connect(m_Thread, &QThread::finished, m_Thread, &QThread::deleteLater);
   }
 
   void start(QThread::Priority prio = QThread::InheritPriority) { m_Thread->start(prio); }
@@ -460,6 +562,15 @@ public:
       return m_Thread->wait(time);
     return true;
   }
+
+  bool isCurrentThread() { return QThread::currentThread() == m_Thread; }
+};
+
+class RDProcess : public QProcess
+{
+public:
+  RDProcess(QObject *parent = NULL) : QProcess(parent) {}
+  void detach() { setProcessState(QProcess::NotRunning); }
 };
 
 class QFileFilterModel : public QSortFilterProxyModel
@@ -569,3 +680,18 @@ class QTreeWidgetItem;
 
 QTreeWidgetItem *makeTreeNode(const std::initializer_list<QVariant> &values);
 QTreeWidgetItem *makeTreeNode(const QVariantList &values);
+void deleteChildren(QTreeWidgetItem *item);
+
+class QProgressDialog;
+
+typedef std::function<float()> ProgressUpdateMethod;
+typedef std::function<bool()> ProgressFinishedMethod;
+
+QStringList ParseArgsList(const QString &args);
+bool RunProcessAsAdmin(const QString &fullExecutablePath, const QStringList &params,
+                       std::function<void()> finishedCallback = std::function<void()>());
+
+void ShowProgressDialog(QWidget *window, const QString &labelText, ProgressFinishedMethod finished,
+                        ProgressUpdateMethod update = ProgressUpdateMethod());
+
+QString GetSystemUsername();

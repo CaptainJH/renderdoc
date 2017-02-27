@@ -271,59 +271,28 @@
      <property name="minimumSize">
       <size>
        <width>0</width>
-       <height>36</height>
+       <height>40</height>
       </size>
-     </property>
-     <property name="palette">
-      <palette>
-       <active>
-        <colorrole role="Button">
-         <brush brushstyle="SolidPattern">
-          <color alpha="255">
-           <red>255</red>
-           <green>255</green>
-           <blue>220</blue>
-          </color>
-         </brush>
-        </colorrole>
-       </active>
-       <inactive>
-        <colorrole role="Button">
-         <brush brushstyle="SolidPattern">
-          <color alpha="255">
-           <red>255</red>
-           <green>255</green>
-           <blue>220</blue>
-          </color>
-         </brush>
-        </colorrole>
-       </inactive>
-       <disabled>
-        <colorrole role="Button">
-         <brush brushstyle="SolidPattern">
-          <color alpha="255">
-           <red>255</red>
-           <green>255</green>
-           <blue>220</blue>
-          </color>
-         </brush>
-        </colorrole>
-       </disabled>
-      </palette>
      </property>
      <property name="cursor">
       <cursorShape>PointingHandCursor</cursorShape>
      </property>
-     <property name="autoFillBackground">
-      <bool>true</bool>
+     <property name="styleSheet">
+      <string notr="true">QToolButton {
+background-color: #ffffdc;
+border: 1px solid black;
+}
+QToolButton:hover {
+background-color: #ddddbe;
+}</string>
      </property>
      <property name="text">
       <string>Warning: Vulkan capture is not configured.
 Click here to set up Vulkan capture.</string>
      </property>
      <property name="icon">
-      <iconset resource="../../resources.qrc">
-       <normaloff>:/Resources/information.png</normaloff>:/Resources/information.png</iconset>
+      <iconset resource="../../Resources/resources.qrc">
+       <normaloff>:/information.png</normaloff>:/information.png</iconset>
      </property>
      <property name="popupMode">
       <enum>QToolButton::DelayedPopup</enum>
@@ -696,9 +665,9 @@ Click here to set up Vulkan capture.</string>
        </spacer>
       </item>
       <item>
-       <widget class="QPushButton" name="capture">
+       <widget class="QPushButton" name="launch">
         <property name="text">
-         <string>Capture</string>
+         <string>Launch</string>
         </property>
        </widget>
       </item>
@@ -728,7 +697,7 @@ Click here to set up Vulkan capture.</string>
   </layout>
  </widget>
  <resources>
-  <include location="../../resources.qrc"/>
+  <include location="../../Resources/resources.qrc"/>
  </resources>
  <connections/>
 </ui>

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2014-2016 Baldur Karlsson
+ * Copyright (c) 2014-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -28,6 +28,12 @@
 #define VER_STR(a) VER_STR2(a)
 
 #define RENDERDOC_VERSION_MAJOR 0
-#define RENDERDOC_VERSION_MINOR 32
+#define RENDERDOC_VERSION_MINOR 33
 #define RENDERDOC_VERSION_STRING \
   VER_STR(RENDERDOC_VERSION_MAJOR) "." VER_STR(RENDERDOC_VERSION_MINOR)
+
+#if defined(GIT_COMMIT_HASH_LITERAL)
+#define GIT_COMMIT_HASH VER_STR(GIT_COMMIT_HASH_LITERAL)
+#elif !defined(GIT_COMMIT_HASH)
+#define GIT_COMMIT_HASH "NO_GIT_COMMIT_HASH_DEFINED"
+#endif

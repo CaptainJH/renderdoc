@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -28,7 +28,7 @@
 
 Q_DECLARE_METATYPE(FetchAPIEvent);
 
-APIInspector::APIInspector(CaptureContext *ctx, QWidget *parent)
+APIInspector::APIInspector(CaptureContext &ctx, QWidget *parent)
     : QFrame(parent), ui(new Ui::APIInspector), m_Ctx(ctx)
 {
   ui->setupUi(this);
@@ -39,13 +39,13 @@ APIInspector::APIInspector(CaptureContext *ctx, QWidget *parent)
   ui->splitter->setCollapsible(1, true);
   ui->splitter->setSizes({1, 0});
 
-  m_Ctx->AddLogViewer(this);
+  m_Ctx.AddLogViewer(this);
 }
 
 APIInspector::~APIInspector()
 {
-  m_Ctx->windowClosed(this);
-  m_Ctx->RemoveLogViewer(this);
+  m_Ctx.windowClosed(this);
+  m_Ctx.RemoveLogViewer(this);
   delete ui;
 }
 
@@ -59,7 +59,7 @@ void APIInspector::OnLogfileClosed()
   ui->callstack->clear();
 }
 
-void APIInspector::OnEventSelected(uint32_t eventID)
+void APIInspector::OnSelectedEventChanged(uint32_t eventID)
 {
   ui->apiEvents->clearSelection();
 
@@ -92,7 +92,7 @@ void APIInspector::on_apiEvents_itemSelectionChanged()
 
   if(ev.callstack.count > 0)
   {
-    m_Ctx->Renderer()->AsyncInvoke([this, ev](IReplayRenderer *r) {
+    m_Ctx.Renderer().AsyncInvoke([this, ev](IReplayRenderer *r) {
       rdctype::array<rdctype::str> trace;
       r->GetResolve(ev.callstack.elems, ev.callstack.count, &trace);
 
@@ -116,7 +116,7 @@ void APIInspector::fillAPIView()
   QRegularExpression rgxopen("^\\s*{");
   QRegularExpression rgxclose("^\\s*}");
 
-  const FetchDrawcall *draw = m_Ctx->CurDrawcall();
+  const FetchDrawcall *draw = m_Ctx.CurSelectedDrawcall();
 
   if(draw != NULL && draw->events.count > 0)
   {

@@ -34,7 +34,7 @@
     <Filter Include="OS\Apple">
       <UniqueIdentifier>{28fbc354-c414-4647-9ce6-0fcea2cbe845}</UniqueIdentifier>
     </Filter>
-    <Filter Include="OS\Android">
+    <Filter Include="OS\EGL">
       <UniqueIdentifier>{61304e3c-ff5e-4cb6-8c25-455f37d86b48}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
@@ -59,6 +59,9 @@
     </ClInclude>
     <ClInclude Include="gl_hookset.h">
       <Filter>Hookset</Filter>
+    </ClInclude>
+    <ClInclude Include="gl_hooks_linux_shared.h">
+      <Filter>OS\Linux</Filter>
     </ClInclude>
     <ClInclude Include="gl_resources.h">
       <Filter>Util</Filter>
@@ -125,6 +128,9 @@
     <ClCompile Include="gl_hooks_linux.cpp">
       <Filter>OS\Linux</Filter>
     </ClCompile>
+    <ClCompile Include="gl_hooks_linux_shared.cpp">
+      <Filter>OS\Linux</Filter>
+    </ClCompile>
     <ClCompile Include="gl_replay_linux.cpp">
       <Filter>OS\Linux</Filter>
     </ClCompile>
@@ -167,11 +173,11 @@
     <ClCompile Include="gl_replay_apple.cpp">
       <Filter>OS\Apple</Filter>
     </ClCompile>
-    <ClCompile Include="gl_hooks_android.cpp">
-      <Filter>OS\Android</Filter>
+    <ClCompile Include="gl_hooks_egl.cpp">
+      <Filter>OS\EGL</Filter>
     </ClCompile>
-    <ClCompile Include="gl_replay_android.cpp">
-      <Filter>OS\Android</Filter>
+    <ClCompile Include="gl_replay_egl.cpp">
+      <Filter>OS\EGL</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

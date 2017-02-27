@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -182,6 +182,21 @@ bool WrappedOpenGL::Serialise_glShaderSource(GLuint shader, GLsizei count,
       m_Shaders[liveId].sources.push_back(strings[i]);
 
     m_Real.glShaderSource(GetResourceManager()->GetLiveResource(id).name, Count, strings, NULL);
+
+    // if we've already disassembled this shader, undo all that.
+    // Note this means we don't support compiling the same shader multiple times
+    // attached to different programs, but that is *utterly crazy* and anyone
+    // who tries to actually do that should be ashamed.
+    // Doing this means we support the case of recompiling a shader different ways
+    // and relinking a program before use, which is still moderately crazy and
+    // so people who do that should be moderately ashamed.
+    if(m_Shaders[liveId].prog)
+    {
+      m_Real.glDeleteProgram(m_Shaders[liveId].prog);
+      m_Shaders[liveId].prog = 0;
+      m_Shaders[liveId].spirv = SPVModule();
+      m_Shaders[liveId].reflection = ShaderReflection();
+    }
 
     delete[] strings;
   }

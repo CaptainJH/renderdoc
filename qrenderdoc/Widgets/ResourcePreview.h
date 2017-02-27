@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -39,7 +39,7 @@ class ResourcePreview : public QFrame
   Q_OBJECT
 
 public:
-  explicit ResourcePreview(CaptureContext *c, IReplayOutput *output, QWidget *parent = 0);
+  explicit ResourcePreview(CaptureContext &c, IReplayOutput *output, QWidget *parent = 0);
   ~ResourcePreview();
 
 signals:

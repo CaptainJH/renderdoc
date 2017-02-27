@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -421,7 +421,7 @@ bool ReplayOutput::PickPixel(ResourceId tex, bool customShader, uint32_t x, uint
   return true;
 }
 
-uint32_t ReplayOutput::PickVertex(uint32_t eventID, uint32_t x, uint32_t y)
+uint32_t ReplayOutput::PickVertex(uint32_t eventID, uint32_t x, uint32_t y, uint32_t *pickedInstance)
 {
   FetchDrawcall *draw = m_pRenderer->GetDrawcallByEID(eventID);
 
@@ -442,7 +442,55 @@ uint32_t ReplayOutput::PickVertex(uint32_t eventID, uint32_t x, uint32_t y)
   cfg.second.buf = m_pDevice->GetLiveID(cfg.second.buf);
   cfg.second.idxbuf = m_pDevice->GetLiveID(cfg.second.idxbuf);
 
-  return m_pDevice->PickVertex(m_EventID, cfg, x, y);
+  *pickedInstance = 0;
+
+  // input data either doesn't vary with instance, or is trivial (all verts the same for that
+  // element), so only care about fetching the right instance for post-VS stages
+  if((draw->flags & eDraw_Instanced) && m_RenderData.meshDisplay.type != eMeshDataStage_VSIn)
+  {
+    // if no special options are enabled, just look at the current instance
+    uint32_t firstInst = m_RenderData.meshDisplay.curInstance;
+    uint32_t maxInst = m_RenderData.meshDisplay.curInstance + 1;
+
+    if(m_RenderData.meshDisplay.showPrevInstances)
+    {
+      firstInst = 0;
+      maxInst = RDCMAX(1U, m_RenderData.meshDisplay.curInstance);
+    }
+
+    if(m_RenderData.meshDisplay.showAllInstances)
+    {
+      firstInst = 0;
+      maxInst = RDCMAX(1U, draw->numInstances);
+    }
+
+    // used for post-VS output, calculate the offset of the element we're using as position,
+    // relative to 0
+    MeshFormat fmt = m_pDevice->GetPostVSBuffers(
+        draw->eventID, m_RenderData.meshDisplay.curInstance, m_RenderData.meshDisplay.type);
+    uint64_t elemOffset = cfg.position.offset - fmt.offset;
+
+    for(uint32_t inst = firstInst; inst < maxInst; inst++)
+    {
+      // find the start of this buffer, and apply the element offset, then pick in that instance
+      fmt = m_pDevice->GetPostVSBuffers(draw->eventID, inst, m_RenderData.meshDisplay.type);
+      if(fmt.buf != ResourceId())
+        cfg.position.offset = fmt.offset + elemOffset;
+
+      uint32_t ret = m_pDevice->PickVertex(m_EventID, cfg, x, y);
+      if(ret != ~0U)
+      {
+        *pickedInstance = inst;
+        return ret;
+      }
+    }
+
+    return ~0U;
+  }
+  else
+  {
+    return m_pDevice->PickVertex(m_EventID, cfg, x, y);
+  }
 }
 
 bool ReplayOutput::SetPixelContextLocation(uint32_t x, uint32_t y)
@@ -898,7 +946,8 @@ extern "C" RENDERDOC_API bool32 RENDERDOC_CC ReplayOutput_PickPixel(
 
 extern "C" RENDERDOC_API uint32_t RENDERDOC_CC ReplayOutput_PickVertex(ReplayOutput *output,
                                                                        uint32_t eventID, uint32_t x,
-                                                                       uint32_t y)
+                                                                       uint32_t y,
+                                                                       uint32_t *pickedInstance)
 {
-  return output->PickVertex(eventID, x, y);
+  return output->PickVertex(eventID, x, y, pickedInstance);
 }

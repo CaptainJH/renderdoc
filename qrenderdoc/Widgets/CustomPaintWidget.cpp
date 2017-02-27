@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -80,12 +80,17 @@ void CustomPaintWidget::keyPressEvent(QKeyEvent *e)
   emit keyPress(e);
 }
 
+void CustomPaintWidget::keyReleaseEvent(QKeyEvent *e)
+{
+  emit keyRelease(e);
+}
+
 void CustomPaintWidget::paintEvent(QPaintEvent *e)
 {
   if(m_Ctx)
   {
     if(m_Output != NULL)
-      m_Ctx->Renderer()->AsyncInvoke([this](IReplayRenderer *r) { m_Output->Display(); });
+      m_Ctx->Renderer().AsyncInvoke([this](IReplayRenderer *r) { m_Output->Display(); });
   }
   else if(m_Dark == m_Light)
   {

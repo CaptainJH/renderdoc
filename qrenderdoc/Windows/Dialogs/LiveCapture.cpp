@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -30,17 +30,18 @@
 #include <QScrollBar>
 #include <QToolBar>
 #include <QToolButton>
+#include "3rdparty/toolwindowmanager/ToolWindowManager.h"
+#include "Code/Resources.h"
 #include "Code/qprocessinfo.h"
 #include "Widgets/Extended/RDLabel.h"
 #include "Windows/MainWindow.h"
-#include "ToolWindowManager.h"
 #include "ui_LiveCapture.h"
 
 static const int PIDRole = Qt::UserRole + 1;
 static const int IdentRole = Qt::UserRole + 2;
 static const int LogPtrRole = Qt::UserRole + 3;
 
-LiveCapture::LiveCapture(CaptureContext *ctx, const QString &hostname, uint32_t ident,
+LiveCapture::LiveCapture(CaptureContext &ctx, const QString &hostname, uint32_t ident,
                          MainWindow *main, QWidget *parent)
     : QFrame(parent),
       ui(new Ui::LiveCapture),
@@ -74,7 +75,7 @@ LiveCapture::LiveCapture(CaptureContext *ctx, const QString &hostname, uint32_t 
 
   setTitle(tr("Connecting.."));
   ui->connectionStatus->setText(tr("Connecting.."));
-  ui->connectionIcon->setPixmap(QPixmap(QString::fromUtf8(":/Resources/hourglass.png")));
+  ui->connectionIcon->setPixmap(Pixmaps::hourglass());
 
   {
     QToolBar *bottomTools = new QToolBar(this);
@@ -141,7 +142,7 @@ void LiveCapture::QueueCapture(int frameNumber)
 
 void LiveCapture::showEvent(QShowEvent *event)
 {
-  if(m_ConnectThread == NULL)
+  if(!m_ConnectThread)
   {
     m_ConnectThread = new LambdaThread([this]() { this->connectionThreadEntry(); });
     m_ConnectThread->start();
@@ -244,7 +245,7 @@ void LiveCapture::openNewWindow_triggered()
   {
     CaptureLog *log = GetLog(ui->captures->selectedItems()[0]);
 
-    QString temppath = m_Ctx->TempLogFilename(log->exe);
+    QString temppath = m_Ctx.TempLogFilename(log->exe);
 
     if(!log->local)
     {
@@ -289,7 +290,7 @@ void LiveCapture::deleteCapture_triggered()
 
     if(!log->saved)
     {
-      if(log->path == m_Ctx->LogFilename())
+      if(log->path == m_Ctx.LogFilename())
       {
         m_Main->takeLogOwnership();
         m_Main->CloseLogfile();
@@ -304,7 +305,7 @@ void LiveCapture::deleteCapture_triggered()
         }
         else
         {
-          m_Ctx->Renderer()->DeleteCapture(log->path, log->local);
+          m_Ctx.Renderer().DeleteCapture(log->path, log->local);
         }
       }
     }
@@ -560,38 +561,35 @@ bool LiveCapture::checkAllowClose()
       return false;
     }
 
-    // TODO Remote
-
     // we either have to save or delete the log. Make sure that if it's remote that we are able
     // to by having an active connection or replay context on that host.
-    /*
-    if(suppressRemoteWarning == false && (m_Connection == NULL || !m_Connection->Connected()) &&
-    !log->local &&
-      (m_Core.Renderer.Remote == null ||
-        m_Core.Renderer.Remote.Hostname != m_Host ||
-        !m_Core.Renderer.Remote.Connected)
-      )
+    if(suppressRemoteWarning == false && (!m_Connection || !m_Connection->Connected()) &&
+       !log->local &&
+       (!m_Ctx.Renderer().remote() || m_Ctx.Renderer().remote()->Hostname != m_Hostname ||
+        !m_Ctx.Renderer().remote()->Connected))
     {
-      DialogResult res2 = MessageBox.Show(
-        String.Format("This capture is on remote host {0} and there is no active replay context on
-    that host.\n", m_Host) +
-        "Without an active replay context the capture cannot be " + (res == DialogResult.Yes ?
-    "saved.\n\n" : "deleted.\n\n") +
-        "Would you like to continue and discard this capture and any others, to be left in the
-    temporary folder on the remote machine?",
-        "No active replay context", MessageBoxButtons.YesNoCancel);
+      QMessageBox::StandardButton res2 = RDDialog::question(
+          this, tr("No active replay context"),
+          tr("This capture is on remote host %1 and there is no active replay context on that "
+             "host.\n")
+                  .arg(m_Hostname) +
+              tr("Without an active replay context the capture cannot be %1.\n\n")
+                  .arg(tr(res == QMessageBox::Yes ? "saved" : "deleted")) +
+              tr("Would you like to continue and discard this capture and any others, to be left "
+                 "in the temporary folder on the remote machine?"),
+          RDDialog::YesNoCancel);
 
-      if(res2 == DialogResult.Yes)
+      if(res2 == QMessageBox::Yes)
       {
         suppressRemoteWarning = true;
-        res = DialogResult.No;
+        res = QMessageBox::No;
       }
       else
       {
         m_IgnoreThreadClosed = false;
         return false;
       }
-    }*/
+    }
 
     if(res == QMessageBox::Yes)
     {
@@ -613,22 +611,17 @@ void LiveCapture::openCapture(CaptureLog *log)
 {
   log->opened = true;
 
-  // TODO Remote
-  /*
-  if(!log->local &&
-    (m_Core.Renderer.Remote == null ||
-      m_Core.Renderer.Remote.Hostname != m_Host ||
-      !m_Core.Renderer.Remote.Connected)
-    )
+  if(!log->local && (!m_Ctx.Renderer().remote() || m_Ctx.Renderer().remote()->Hostname != m_Hostname ||
+                     !m_Ctx.Renderer().remote()->Connected))
   {
-    RDDialog::critical(this,
-      tr("No active replay context"),
-      tr("This capture is on remote host %1 and there is no active replay context on that host.\n" \
-        "You can either save the log locally, or switch to a replay context on
-  %1.").arg(m_Hostname));
+    RDDialog::critical(
+        this, tr("No active replay context"),
+        tr("This capture is on remote host %1 and there is no active replay context on that "
+           "host.\n") +
+            tr("You can either save the log locally, or switch to a replay context on %1.")
+                .arg(m_Hostname));
     return;
   }
-  */
 
   m_Main->LoadLogfile(log->path, !log->saved, log->local);
 }
@@ -672,29 +665,33 @@ bool LiveCapture::saveCapture(CaptureLog *log)
     }
     else
     {
-      // TODO Remote
-      /*
-      if(m_Core.Renderer.Remote == null ||
-        m_Core.Renderer.Remote.Hostname != m_Host ||
-        !m_Core.Renderer.Remote.Connected)
+      if(!m_Ctx.Renderer().remote() || m_Ctx.Renderer().remote()->Hostname != m_Hostname ||
+         !m_Ctx.Renderer().remote()->Connected)
       {
-        MessageBox.Show(
-          String.Format("This capture is on remote host {0} and there is no active replay context on
-      that host.\n" +
-            "Without an active replay context the capture cannot be saved, try switching to a replay
-      context on {0}.\n\n", m_Host),
-          "No active replay context", MessageBoxButtons.OK);
+        RDDialog::critical(this, tr("No active replay context"),
+                           tr("This capture is on remote host %1 and there is no active replay "
+                              "context on that host.\n") +
+                               tr("Without an active replay context the capture cannot be saved, "
+                                  "try switching to a replay context on %1.")
+                                   .arg(m_Hostname));
         return false;
       }
 
-      m_Core.Renderer.CopyCaptureFromRemote(log.path, path, this);
-      m_Core.Renderer.DeleteCapture(log.path, false);
-      */
+      m_Ctx.Renderer().CopyCaptureFromRemote(log->path, path, this);
+
+      if(!QFile::exists(path))
+      {
+        RDDialog::critical(this, tr("Cannot save"),
+                           tr("File couldn't be transferred from remote host"));
+        return false;
+      }
+
+      m_Ctx.Renderer().DeleteCapture(log->path, false);
     }
 
     log->saved = true;
     log->path = path;
-    PersistantConfig::AddRecentFile(m_Ctx->Config.RecentLogFiles, path, 10);
+    PersistantConfig::AddRecentFile(m_Ctx.Config.RecentLogFiles, path, 10);
     m_Main->PopulateRecentFiles();
     return true;
   }
@@ -710,7 +707,7 @@ void LiveCapture::cleanItems()
 
     if(!log->saved)
     {
-      if(log->path == m_Ctx->LogFilename())
+      if(log->path == m_Ctx.LogFilename())
       {
         m_Main->takeLogOwnership();
       }
@@ -724,7 +721,7 @@ void LiveCapture::cleanItems()
         }
         else
         {
-          m_Ctx->Renderer()->DeleteCapture(log->path, log->local);
+          m_Ctx.Renderer().DeleteCapture(log->path, log->local);
         }
       }
     }
@@ -822,7 +819,7 @@ void LiveCapture::captureCopied(uint32_t ID, const QString &localPath)
     QListWidgetItem *item = ui->captures->item(i);
     CaptureLog *log = GetLog(ui->captures->item(i));
 
-    if(log != NULL && log->remoteID == ID)
+    if(log && log->remoteID == ID)
     {
       log->local = true;
       log->path = localPath;
@@ -874,18 +871,14 @@ void LiveCapture::connectionClosed()
     {
       CaptureLog *log = GetLog(ui->captures->item(0));
 
-      // TODO Remote
-
       // only auto-open a non-local log if we are successfully connected
       // to this machine as a remote context
-      /*
       if(!log->local)
       {
-        if(m_Core.Renderer.Remote == null ||
-          m_Host != m_Core.Renderer.Remote.Hostname ||
-          !m_Core.Renderer.Remote.Connected)
+        if(!m_Ctx.Renderer().remote() || m_Ctx.Renderer().remote()->Hostname != m_Hostname ||
+           !m_Ctx.Renderer().remote()->Connected)
           return;
-      }*/
+      }
 
       if(log->opened)
         return;
@@ -922,26 +915,20 @@ void LiveCapture::connectionClosed()
 
 void LiveCapture::connectionThreadEntry()
 {
-  QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-
-  QString username = env.value("USER");
-  if(username == QString())
-    username = env.value("USERNAME");
-  if(username == QString())
-    username = "Unknown_User";
-
   m_Connection = RENDERDOC_CreateTargetControl(m_Hostname.toUtf8().data(), m_RemoteIdent,
-                                               username.toUtf8().data(), true);
+                                               GetSystemUsername().toUtf8().data(), true);
 
-  if(m_Connection == NULL || !m_Connection->Connected())
+  if(!m_Connection || !m_Connection->Connected())
   {
     GUIInvoke::call([this]() {
       setTitle("Connection failed");
       ui->connectionStatus->setText(tr("Connection failed"));
-      ui->connectionIcon->setPixmap(QPixmap(QString::fromUtf8(":/Resources/delete.png")));
+      ui->connectionIcon->setPixmap(Pixmaps::del());
 
       connectionClosed();
     });
+
+    return;
   }
 
   GUIInvoke::call([this]() {
@@ -963,7 +950,7 @@ void LiveCapture::connectionThreadEntry()
           tr("Connection established to %1 [PID %2] (%3)").arg(target).arg(pid).arg(api));
       setTitle(QString("%1 [PID %2]").arg(target).arg(pid));
     }
-    ui->connectionIcon->setPixmap(QPixmap(QString::fromUtf8(":/Resources/connect.png")));
+    ui->connectionIcon->setPixmap(Pixmaps::connect());
   });
 
   while(m_Connection && m_Connection->Connected())
@@ -1025,7 +1012,7 @@ void LiveCapture::connectionThreadEntry()
               tr("Connection established to %1 [PID %2] (%3)").arg(target).arg(pid).arg(api));
           setTitle(QString("%1 [PID %2]").arg(target).arg(pid));
         }
-        ui->connectionIcon->setPixmap(QPixmap(QString::fromUtf8(":/Resources/connect.png")));
+        ui->connectionIcon->setPixmap(Pixmaps::connect());
       });
     }
 
@@ -1072,7 +1059,7 @@ void LiveCapture::connectionThreadEntry()
 
   GUIInvoke::call([this]() {
     ui->connectionStatus->setText(tr("Connection closed"));
-    ui->connectionIcon->setPixmap(QPixmap(QString::fromUtf8(":/Resources/disconnect.png")));
+    ui->connectionIcon->setPixmap(Pixmaps::disconnect());
 
     ui->numFrames->setEnabled(false);
     ui->captureDelay->setEnabled(false);

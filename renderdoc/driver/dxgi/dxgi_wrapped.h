@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -589,6 +589,18 @@ public:
   IMPLEMENT_IDXGIOBJECT_WITH_REFCOUNTDXGIOBJECT_CUSTOMQUERY;
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppvObject);
 
+  DXGI_SWAP_CHAIN_DESC GetDescWithHWND()
+  {
+    DXGI_SWAP_CHAIN_DESC ret = {};
+
+    m_pReal->GetDesc(&ret);
+
+    if(ret.OutputWindow == NULL)
+      ret.OutputWindow = m_Wnd;
+
+    return ret;
+  }
+
   //////////////////////////////
   // implement IDXGIDeviceSubObject
 
@@ -1170,7 +1182,16 @@ public:
       /* [annotation][out] */
       __out IDXGIAdapter1 **ppAdapter)
   {
-    HRESULT ret = m_pReal1->EnumAdapters1(Adapter, ppAdapter);
+    IDXGIFactory1 *factory = m_pReal1;
+    if(m_pReal1 == NULL)
+    {
+      // see comment in RefCountDXGIObject::HandleWrap for IDXGIFactory
+      RDCWARN("Calling EnumAdapters1 with no IDXGIFactory1 - assuming weird internal call");
+      factory = (IDXGIFactory1 *)m_pReal;
+    }
+
+    HRESULT ret = factory->EnumAdapters1(Adapter, ppAdapter);
+
     if(SUCCEEDED(ret))
       *ppAdapter = (IDXGIAdapter1 *)(new WrappedIDXGIAdapter3(*ppAdapter));
     return ret;

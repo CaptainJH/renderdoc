@@ -1,7 +1,7 @@
 ﻿/******************************************************************************
  * The MIT License (MIT)
  * 
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -236,7 +236,6 @@ namespace renderdoc
                 public float Left, Bottom;
                 public float Width, Height;
                 public double MinDepth, MaxDepth;
-                public bool Enabled;
             };
             [CustomMarshalAs(CustomUnmanagedType.TemplatedArray)]
             public Viewport[] Viewports;
@@ -336,6 +335,8 @@ namespace renderdoc
                 public ResourceId Obj;
                 public UInt32 Layer;
                 public UInt32 Mip;
+                [CustomMarshalAs(CustomUnmanagedType.FixedArray, FixedLength = 4)]
+                public TextureSwizzle[] Swizzle;
             };
 
             [StructLayout(LayoutKind.Sequential)]
@@ -345,7 +346,9 @@ namespace renderdoc
 
                 [CustomMarshalAs(CustomUnmanagedType.TemplatedArray)]
                 public Attachment[] Color;
+                [CustomMarshalAs(CustomUnmanagedType.CustomClass)]
                 public Attachment Depth;
+                [CustomMarshalAs(CustomUnmanagedType.CustomClass)]
                 public Attachment Stencil;
 
                 [CustomMarshalAs(CustomUnmanagedType.TemplatedArray)]

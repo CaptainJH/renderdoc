@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -437,7 +437,7 @@ bool WrappedID3D11DeviceContext::Serialise_ClearView(ID3D11View *pView, const FL
   m_pSerialiser->SerialisePODArray<4>("ColorRGBA", Color);
 
   SERIALISE_ELEMENT(uint32_t, numRects, NumRects);
-  SERIALISE_ELEMENT_ARR(D3D11_RECT, rects, pRect, NumRects);
+  SERIALISE_ELEMENT_ARR(D3D11_RECT, rects, pRect, numRects);
 
   if(m_State <= EXECUTING && m_pDevice->GetResourceManager()->HasLiveResource(View))
   {

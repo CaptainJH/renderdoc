@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -179,6 +179,10 @@ WrappedID3D12Device::WrappedID3D12Device(ID3D12Device *realDevice, D3D12InitPara
     m_DescriptorIncrements[i] =
         realDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE(i));
 
+  RDCEraseEl(m_D3D12Opts);
+
+  realDevice->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &m_D3D12Opts, sizeof(m_D3D12Opts));
+
   WrappedID3D12Resource::m_List = NULL;
 
   // refcounters implicitly construct with one reference, but we don't start with any soft
@@ -311,6 +315,11 @@ WrappedID3D12Device::WrappedID3D12Device(ID3D12Device *realDevice, D3D12InitPara
           // message about a NULL range to map for reading/writing the whole resource
           // which is "inefficient" but for our use cases it's almost always what we mean.
           D3D12_MESSAGE_ID_MAP_INVALID_NULLRANGE,
+
+          // D3D12_MESSAGE_ID_COMMAND_LIST_STATIC_DESCRIPTOR_RESOURCE_DIMENSION_MISMATCH
+          // message about mismatched SRV dimensions, which it seems to get wrong with the
+          // dummy NULL descriptors on the texture sampling code
+          (D3D12_MESSAGE_ID)1023,
       };
 
       D3D12_INFO_QUEUE_FILTER filter = {};
@@ -345,6 +354,11 @@ WrappedID3D12Device::~WrappedID3D12Device()
     GPUSync(m_Queues[i], m_QueueFences[i]);
 
     SAFE_RELEASE(m_QueueFences[i]);
+  }
+
+  for(auto it = m_UploadBuffers.begin(); it != m_UploadBuffers.end(); ++it)
+  {
+    SAFE_RELEASE(it->second);
   }
 
   DestroyInternalResources();
@@ -529,6 +543,43 @@ HRESULT WrappedID3D12Device::QueryInterface(REFIID riid, void **ppvObject)
   return m_RefCounter.QueryInterface(riid, ppvObject);
 }
 
+ID3D12Resource *WrappedID3D12Device::GetUploadBuffer(uint64_t chunkOffset, uint64_t byteSize)
+{
+  ID3D12Resource *buf = m_UploadBuffers[chunkOffset];
+
+  if(buf != NULL)
+    return buf;
+
+  D3D12_RESOURCE_DESC soBufDesc;
+  soBufDesc.Alignment = 0;
+  soBufDesc.DepthOrArraySize = 1;
+  soBufDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+  soBufDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+  soBufDesc.Format = DXGI_FORMAT_UNKNOWN;
+  soBufDesc.Height = 1;
+  soBufDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+  soBufDesc.MipLevels = 1;
+  soBufDesc.SampleDesc.Count = 1;
+  soBufDesc.SampleDesc.Quality = 0;
+  soBufDesc.Width = byteSize;
+
+  D3D12_HEAP_PROPERTIES heapProps;
+  heapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
+  heapProps.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+  heapProps.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+  heapProps.CreationNodeMask = 1;
+  heapProps.VisibleNodeMask = 1;
+
+  HRESULT hr = CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &soBufDesc,
+                                       D3D12_RESOURCE_STATE_GENERIC_READ, NULL,
+                                       __uuidof(ID3D12Resource), (void **)&buf);
+
+  m_UploadBuffers[chunkOffset] = buf;
+
+  RDCASSERT(hr == S_OK, hr, S_OK, byteSize);
+  return buf;
+}
+
 void WrappedID3D12Device::ApplyInitialContents()
 {
   initStateCurBatch = 0;
@@ -537,7 +588,8 @@ void WrappedID3D12Device::ApplyInitialContents()
   GetResourceManager()->ApplyInitialContents();
 
   // close the final list
-  initStateCurList->Close();
+  if(initStateCurList)
+    initStateCurList->Close();
 
   initStateCurBatch = 0;
   initStateCurList = NULL;
@@ -562,8 +614,7 @@ void WrappedID3D12Device::CheckForDeath()
 
 void WrappedID3D12Device::FirstFrame(WrappedIDXGISwapChain4 *swap)
 {
-  DXGI_SWAP_CHAIN_DESC swapdesc;
-  swap->GetDesc(&swapdesc);
+  DXGI_SWAP_CHAIN_DESC swapdesc = swap->GetDescWithHWND();
 
   // if we have to capture the first frame, begin capturing immediately
   if(m_State == WRITING_IDLE && RenderDoc::Inst().ShouldTriggerCapture(0))
@@ -603,8 +654,7 @@ void WrappedID3D12Device::ReleaseSwapchainResources(WrappedIDXGISwapChain4 *swap
 
   if(swap)
   {
-    DXGI_SWAP_CHAIN_DESC desc;
-    swap->GetDesc(&desc);
+    DXGI_SWAP_CHAIN_DESC desc = swap->GetDescWithHWND();
 
     Keyboard::RemoveInputWindow(desc.OutputWindow);
 
@@ -759,8 +809,7 @@ IUnknown *WrappedID3D12Device::WrapSwapchainBuffer(WrappedIDXGISwapChain4 *swap,
 
   if(swap)
   {
-    DXGI_SWAP_CHAIN_DESC sdesc;
-    swap->GetDesc(&sdesc);
+    DXGI_SWAP_CHAIN_DESC sdesc = swap->GetDescWithHWND();
 
     Keyboard::AddInputWindow(sdesc.OutputWindow);
 
@@ -838,20 +887,58 @@ bool WrappedID3D12Device::Serialise_MapDataWrite(Serialiser *localSerialiser,
     range.Begin = range.End = 0;
 
     mapPtr = NULL;
-    HRESULT hr = r->Map(sub, &range, (void **)&mapPtr);
 
-    if(SUCCEEDED(hr))
+    if(m_UploadResourceIds.find(res) != m_UploadResourceIds.end())
     {
-      memcpy(mapPtr + begin, data, size_t(end - begin));
+      D3D12CommandData &cmd = *m_Queue->GetCommandData();
 
-      range.Begin = (size_t)begin;
-      range.End = (size_t)end;
+      ID3D12Resource *uploadBuf = GetUploadBuffer(cmd.m_CurChunkOffset, end - begin);
 
-      r->Unmap(sub, &range);
+      // during reading, fill out the buffer itself
+      if(m_State == READING)
+      {
+        D3D12_RANGE maprange = {0, 0};
+        void *dst = NULL;
+        HRESULT hr = uploadBuf->Map(sub, &maprange, &dst);
+
+        if(SUCCEEDED(hr))
+        {
+          maprange.Begin = 0;
+          maprange.End = SIZE_T(end - begin);
+
+          memcpy(dst, data, maprange.End);
+
+          uploadBuf->Unmap(sub, &maprange);
+        }
+        else
+        {
+          RDCERR("Failed to map resource on replay %08x", hr);
+        }
+      }
+
+      // then afterwards just execute a list to copy the result
+      ID3D12GraphicsCommandList *list = GetNewList();
+      list->CopyBufferRegion(r, begin, uploadBuf, 0, end - begin);
+      list->Close();
+      ExecuteList(list);
     }
     else
     {
-      RDCERR("Failed to map resource on replay %08x", hr);
+      HRESULT hr = r->Map(sub, &range, (void **)&mapPtr);
+
+      if(SUCCEEDED(hr))
+      {
+        memcpy(mapPtr + begin, data, size_t(end - begin));
+
+        range.Begin = (size_t)begin;
+        range.End = (size_t)end;
+
+        r->Unmap(sub, &range);
+      }
+      else
+      {
+        RDCERR("Failed to map resource on replay %08x", hr);
+      }
     }
 
     SAFE_DELETE_ARRAY(data);
@@ -916,17 +1003,57 @@ bool WrappedID3D12Device::Serialise_WriteToSubresource(Serialiser *localSerialis
   {
     ID3D12Resource *r = GetResourceManager()->GetLiveAs<ID3D12Resource>(res);
 
-    HRESULT hr = r->Map(sub, NULL, NULL);
-
-    if(SUCCEEDED(hr))
+    if(m_UploadResourceIds.find(res) != m_UploadResourceIds.end())
     {
-      r->WriteToSubresource(sub, HasBox ? &box : NULL, data, rowPitch, depthPitch);
+      D3D12CommandData &cmd = *m_Queue->GetCommandData();
 
-      r->Unmap(sub, NULL);
+      ID3D12Resource *uploadBuf = GetUploadBuffer(cmd.m_CurChunkOffset, dataSize);
+
+      // during reading, fill out the buffer itself
+      if(m_State == READING)
+      {
+        D3D12_RANGE range = {0, 0};
+        void *dst = NULL;
+        HRESULT hr = uploadBuf->Map(sub, &range, &dst);
+
+        if(SUCCEEDED(hr))
+        {
+          memcpy(dst, data, dataSize);
+
+          range.Begin = 0;
+          range.End = dataSize;
+
+          uploadBuf->Unmap(sub, &range);
+        }
+        else
+        {
+          RDCERR("Failed to map resource on replay %08x", hr);
+        }
+      }
+
+      // then afterwards just execute a list to copy the result
+      ID3D12GraphicsCommandList *list = GetNewList();
+      UINT64 copySize = dataSize;
+      if(HasBox)
+        copySize = RDCMIN(copySize, UINT64(box.right - box.left));
+      list->CopyBufferRegion(r, HasBox ? box.left : 0, uploadBuf, 0, copySize);
+      list->Close();
+      ExecuteList(list);
     }
     else
     {
-      RDCERR("Failed to map resource on replay %08x", hr);
+      HRESULT hr = r->Map(sub, NULL, NULL);
+
+      if(SUCCEEDED(hr))
+      {
+        r->WriteToSubresource(sub, HasBox ? &box : NULL, data, rowPitch, depthPitch);
+
+        r->Unmap(sub, NULL);
+      }
+      else
+      {
+        RDCERR("Failed to map resource on replay %08x", hr);
+      }
     }
 
     SAFE_DELETE_ARRAY(data);
@@ -969,8 +1096,7 @@ HRESULT WrappedID3D12Device::Present(WrappedIDXGISwapChain4 *swap, UINT SyncInte
 
   m_FrameCounter++;    // first present becomes frame #1, this function is at the end of the frame
 
-  DXGI_SWAP_CHAIN_DESC swapdesc;
-  swap->GetDesc(&swapdesc);
+  DXGI_SWAP_CHAIN_DESC swapdesc = swap->GetDescWithHWND();
   bool activeWindow = RenderDoc::Inst().IsActiveWindow((ID3D12Device *)this, swapdesc.OutputWindow);
 
   m_LastSwap = swap;
@@ -1208,8 +1334,7 @@ bool WrappedID3D12Device::EndFrameCapture(void *dev, void *wnd)
   {
     for(auto it = m_SwapChains.begin(); it != m_SwapChains.end(); ++it)
     {
-      DXGI_SWAP_CHAIN_DESC swapDesc;
-      it->first->GetDesc(&swapDesc);
+      DXGI_SWAP_CHAIN_DESC swapDesc = it->first->GetDescWithHWND();
 
       if(swapDesc.OutputWindow == wnd)
       {
@@ -1594,6 +1719,35 @@ void WrappedID3D12Device::ReleaseResource(ID3D12DeviceChild *res)
     if(GetResourceManager()->HasLiveResource(id))
       GetResourceManager()->EraseLiveResource(id);
     return;
+  }
+}
+
+void WrappedID3D12Device::AddDebugMessage(DebugMessageCategory c, DebugMessageSeverity sv,
+                                          DebugMessageSource src, std::string d)
+{
+  D3D12CommandData &cmd = *m_Queue->GetCommandData();
+
+  DebugMessage msg;
+  msg.eventID = 0;
+  msg.messageID = 0;
+  msg.source = src;
+  msg.category = c;
+  msg.severity = sv;
+  msg.description = d;
+
+  if(m_State == EXECUTING)
+  {
+    // look up the EID this drawcall came from
+    D3D12CommandData::DrawcallUse use(cmd.m_CurChunkOffset, 0);
+    auto it = std::lower_bound(cmd.m_DrawcallUses.begin(), cmd.m_DrawcallUses.end(), use);
+    RDCASSERT(it != cmd.m_DrawcallUses.end());
+
+    msg.eventID = it->eventID;
+    AddDebugMessage(msg);
+  }
+  else
+  {
+    cmd.m_EventMessages.push_back(msg);
   }
 }
 

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -75,14 +75,6 @@ struct array
 
   T &operator[](size_t i) { return elems[i]; }
   const T &operator[](size_t i) const { return elems[i]; }
-  array(const T *const in)
-  {
-    elems = 0;
-    count = 0;
-    *this = in;
-  }
-  array &operator=(const T *const in);
-
   array(const std::vector<T> &in)
   {
     elems = 0;
@@ -132,6 +124,21 @@ struct array
         new(elems + i) T(o.elems[i]);
     }
     return *this;
+  }
+
+  void create(int sz)
+  {
+    Delete();
+    count = sz;
+    if(sz == 0)
+    {
+      elems = 0;
+    }
+    else
+    {
+      elems = (T *)allocate(sizeof(T) * count);
+      memset(elems, 0, sizeof(T) * count);
+    }
   }
 
   // provide some of the familiar stl interface

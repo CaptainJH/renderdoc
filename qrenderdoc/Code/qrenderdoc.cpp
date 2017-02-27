@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -30,7 +30,54 @@
 #include <QStandardPaths>
 #include "Code/CaptureContext.h"
 #include "Code/QRDUtils.h"
+#include "Code/Resources.h"
 #include "Windows/MainWindow.h"
+
+#if defined(Q_OS_LINUX)
+
+#if defined(RENDERDOC_SUPPORT_GL)
+
+// symbol defined in libGL but not librenderdoc.
+// Forces link of libGL after renderdoc (otherwise all symbols would
+// be resolved and libGL wouldn't link, meaning dlsym(RTLD_NEXT) would fai
+extern "C" void glXWaitX();
+
+#endif
+
+#if defined(RENDERDOC_SUPPORT_GLES)
+
+// symbol defined in libEGL but not in librenderdoc.
+// Forces link of libEGL.
+extern "C" int eglWaitGL(void);
+
+#endif
+
+void linuxlibGLhack()
+{
+  volatile bool never_run = false;
+
+#if defined(RENDERDOC_SUPPORT_GL)
+
+  if(never_run)
+    glXWaitX();
+
+#endif
+
+#if defined(RENDERDOC_SUPPORT_GLES)
+
+  if(never_run)
+    eglWaitGL();
+
+#endif
+}
+
+#else
+
+void linuxlibGLhack()
+{
+}
+
+#endif
 
 void sharedLogOutput(QtMsgType type, const QMessageLogContext &context, const QString &msg)
 {
@@ -52,6 +99,8 @@ int main(int argc, char *argv[])
 {
   qInstallMessageHandler(sharedLogOutput);
 
+  linuxlibGLhack();
+
   qInfo() << "QRenderDoc initialising.";
 
   QString filename = "";
@@ -63,12 +112,24 @@ int main(int argc, char *argv[])
       temp = true;
   }
 
+  for(int i = 0; i < argc; i++)
+  {
+    if(!QString::compare(argv[i], "--install_vulkan_layer") && i + 1 < argc)
+    {
+      if(!QString::compare(argv[i + 1], "root"))
+        RENDERDOC_UpdateVulkanLayerRegistration(true);
+      else
+        RENDERDOC_UpdateVulkanLayerRegistration(false);
+      return 0;
+    }
+  }
+
   QString remoteHost = "";
   uint remoteIdent = 0;
 
   for(int i = 0; i + 1 < argc; i++)
   {
-    if(!QString::compare(argv[i], "--REMOTEACCESS", Qt::CaseInsensitive))
+    if(!QString::compare(argv[i], "--remoteaccess", Qt::CaseInsensitive))
     {
       QRegularExpression regexp("^([a-zA-Z0-9_-]+:)?([0-9]+)$");
 
@@ -130,7 +191,7 @@ int main(int argc, char *argv[])
 
     QString configFilename = CaptureContext::ConfigFile("UI.config");
 
-    if(!config.Deserialize(configFilename))
+    if(!config.Load(configFilename))
     {
       RDDialog::critical(
           NULL, "Error loading config",
@@ -140,6 +201,8 @@ int main(int argc, char *argv[])
     }
 
     config.SetupFormatting();
+
+    Resources::Initialise();
 
     GUIInvoke::init();
 
@@ -151,7 +214,7 @@ int main(int argc, char *argv[])
       QCoreApplication::sendPostedEvents();
     }
 
-    config.Serialize(configFilename);
+    config.Save();
   }
 
   delete[] argv_mod;

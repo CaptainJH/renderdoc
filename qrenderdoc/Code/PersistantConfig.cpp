@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -26,6 +26,7 @@
 #include <QDebug>
 #include <QDir>
 #include "QRDUtils.h"
+#include "RemoteHost.h"
 #include "renderdoc_replay.h"
 
 #define JSON_ID "rdocConfigData"
@@ -36,6 +37,16 @@ template <typename variantType, typename origType>
 variantType convertToVariant(const origType &val)
 {
   return variantType(val);
+}
+
+template <typename variantType, typename innerType>
+variantType convertToVariant(const QList<innerType> &val)
+{
+  variantType ret;
+  ret.reserve(val.count());
+  for(const innerType &s : val)
+    ret.push_back(s);
+  return ret;
 }
 
 template <>
@@ -49,20 +60,26 @@ QVariantMap convertToVariant(const QStringMap &val)
   return ret;
 }
 
-template <>
-QVariantList convertToVariant(const QList<QString> &val)
-{
-  QVariantList ret;
-  ret.reserve(val.count());
-  for(const QString &s : val)
-    ret.push_back(s);
-  return ret;
-}
-
 template <typename origType, typename variantType>
 origType convertFromVariant(const variantType &val)
 {
   return origType(val);
+}
+
+template <>
+QString convertFromVariant(const QVariant &val)
+{
+  return val.toString();
+}
+
+template <typename listType>
+listType convertFromVariant(const QList<QVariant> &val)
+{
+  listType ret;
+  ret.reserve(val.count());
+  for(const QVariant &s : val)
+    ret.push_back(convertFromVariant<decltype(ret.value(0))>(s));
+  return ret;
 }
 
 template <>
@@ -76,19 +93,11 @@ QStringMap convertFromVariant(const QVariantMap &val)
   return ret;
 }
 
-template <>
-QList<QString> convertFromVariant(const QVariantList &val)
-{
-  QList<QString> ret;
-  ret.reserve(val.count());
-  for(const QVariant &s : val)
-    ret.push_back(s.toString());
-  return ret;
-}
-
-bool PersistantConfig::Deserialize(QString filename)
+bool PersistantConfig::Deserialize(const QString &filename)
 {
   QFile f(filename);
+
+  m_Filename = filename;
 
   // silently allow missing configs
   if(!f.exists())
@@ -113,15 +122,18 @@ bool PersistantConfig::Deserialize(QString filename)
   return false;
 }
 
-bool PersistantConfig::Serialize(QString filename)
+bool PersistantConfig::Serialize(const QString &filename)
 {
+  if(filename != "")
+    m_Filename = filename;
+
   QVariantMap values = storeValues();
 
-  QFile f(filename);
+  QFile f(m_Filename);
   if(f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text))
     return SaveToJSON(values, f, JSON_ID, JSON_VER);
 
-  qWarning() << "Couldn't write to " << filename << " " << f.errorString();
+  qWarning() << "Couldn't write to " << m_Filename << " " << f.errorString();
 
   return false;
 }
@@ -158,10 +170,86 @@ void PersistantConfig::applyValues(const QVariantMap &values)
   CONFIG_SETTINGS()
 }
 
+void PersistantConfig::AddAndroidHosts()
+{
+  for(int i = RemoteHosts.count() - 1; i >= 0; i--)
+  {
+    if(RemoteHosts[i]->Hostname.startsWith("adb:"))
+      delete RemoteHosts.takeAt(i);
+  }
+
+  QString adbExePath = QFile::exists(Android_AdbExecutablePath) ? Android_AdbExecutablePath : "";
+
+  // Set the config setting as it will be reused when we start the remoteserver etc.
+  SetConfigSetting("adbExePath", adbExePath);
+
+  if(adbExePath.isEmpty())
+    return;    // adb path must be non-empty in the Options dialog.
+
+  rdctype::str androidHosts;
+  RENDERDOC_EnumerateAndroidDevices(&androidHosts);
+  for(const QString &hostName : ToQStr(androidHosts).split(',', QString::SkipEmptyParts))
+  {
+    RemoteHost *host = new RemoteHost();
+    host->Hostname = "adb:" + hostName;
+    RemoteHosts.push_back(host);
+  }
+}
+
+PersistantConfig::~PersistantConfig()
+{
+  for(RemoteHost *h : RemoteHosts)
+    delete h;
+}
+
+bool PersistantConfig::Load(const QString &filename)
+{
+  bool ret = Deserialize(filename);
+
+  // perform some sanitisation to make sure config is always in sensible state
+  for(const QString &key : ConfigSettings.keys())
+  {
+    // redundantly set each setting so it is flushed to the core dll
+    SetConfigSetting(key, ConfigSettings[key]);
+  }
+
+  // localhost should always be available as a remote host
+  bool foundLocalhost = false;
+
+  for(RemoteHost host : RemoteHostList)
+  {
+    RemoteHosts.push_back(new RemoteHost(host));
+
+    if(host.Hostname == "localhost")
+      foundLocalhost = true;
+  }
+
+  if(!foundLocalhost)
+  {
+    RemoteHost *host = new RemoteHost();
+    host->Hostname = "localhost";
+    RemoteHosts.insert(RemoteHosts.begin(), host);
+  }
+
+  return ret;
+}
+
+bool PersistantConfig::Save()
+{
+  // update serialize list
+  RemoteHostList.clear();
+  for(RemoteHost *host : RemoteHosts)
+    RemoteHostList.push_back(*host);
+
+  return Serialize(m_Filename);
+}
+
 void PersistantConfig::SetupFormatting()
 {
   Formatter::setParams(Formatter_MinFigures, Formatter_MaxFigures, Formatter_NegExp,
                        Formatter_PosExp);
+
+  // TODO Preferred Font
   /*
             PreferredFont = Font_PreferMonospaced
                 ? new System.Drawing.Font("Consolas", 9.25F, System.Drawing.FontStyle.Regular,
@@ -188,13 +276,16 @@ void PersistantConfig::AddRecentFile(QList<QString> &recentList, const QString &
   }
 }
 
-void PersistantConfig::SetConfigSetting(QString name, QString value)
+void PersistantConfig::SetConfigSetting(const QString &name, const QString &value)
 {
+  if(name.isEmpty())
+    return;
+
   ConfigSettings[name] = value;
   RENDERDOC_SetConfigSetting(name.toUtf8().data(), value.toUtf8().data());
 }
 
-QString PersistantConfig::GetConfigSetting(QString name)
+QString PersistantConfig::GetConfigSetting(const QString &name)
 {
   if(ConfigSettings.contains(name))
     return ConfigSettings[name];

@@ -137,7 +137,9 @@ set(sources
     3rdparty/stb/stb_impl.c
     3rdparty/stb/stb_truetype.h
     3rdparty/tinyexr/tinyexr.cpp
-    3rdparty/tinyexr/tinyexr.h)
+    3rdparty/tinyexr/tinyexr.h
+    3rdparty/tinyfiledialogs/tinyfiledialogs.c
+    3rdparty/tinyfiledialogs/tinyfiledialogs.h)
 
 if(ANDROID)
     list(APPEND sources
@@ -274,7 +276,7 @@ endif()
 
 set(renderdoc_objects)
 
-if(ENABLE_GL)
+if(ENABLE_GL OR ENABLE_GLES)
     add_subdirectory(driver/gl)
     list(APPEND renderdoc_objects $<TARGET_OBJECTS:rdoc_gl>)
 endif()
@@ -284,7 +286,7 @@ if(ENABLE_VULKAN)
     list(APPEND renderdoc_objects $<TARGET_OBJECTS:rdoc_vulkan>)
 endif()
 
-if(ENABLE_GL OR ENABLE_VULKAN)
+if(ENABLE_GL OR ENABLE_GLES OR ENABLE_VULKAN)
     add_subdirectory(driver/shaders/spirv)
     list(APPEND renderdoc_objects $<TARGET_OBJECTS:rdoc_spirv>)
 endif()
@@ -300,6 +302,9 @@ target_include_directories(renderdoc ${RDOC_INCLUDES})
 target_link_libraries(renderdoc ${RDOC_LIBRARIES})
 
 install (TARGETS renderdoc DESTINATION lib)
+
+# Copy in application API header to include
+install (FILES api/app/renderdoc_app.h DESTINATION include RENAME renderdoc.h)
 
 add_custom_command(TARGET renderdoc POST_BUILD
 	COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_SOURCE_DIR}/bin/)

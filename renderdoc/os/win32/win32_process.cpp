@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -170,12 +170,6 @@ extern "C" __declspec(dllexport) void __cdecl INTERNAL_SetLogFile(const char *lo
 {
   if(log)
     RenderDoc::Inst().SetLogFile(log);
-}
-
-extern "C" __declspec(dllexport) void __cdecl INTERNAL_SetDebugLogFile(const char *log)
-{
-  if(log)
-    RDCLOGFILE(log);
 }
 
 static Process::EnvironmentModification tempEnvMod;
@@ -524,6 +518,19 @@ uint32_t Process::InjectIntoProcess(uint32_t pid, EnvironmentModification *env, 
   GetModuleFileNameW(GetModuleHandleA(STRINGIZE(RDOC_DLL_FILE) ".dll"), &renderdocPath[0],
                      MAX_PATH - 1);
 
+  wchar_t renderdocPathLower[MAX_PATH] = {0};
+  memcpy(renderdocPathLower, renderdocPath, MAX_PATH * sizeof(wchar_t));
+  for(size_t i = 0; renderdocPathLower[i] && i < MAX_PATH; i++)
+  {
+    // lowercase
+    if(renderdocPathLower[i] >= 'A' && renderdocPathLower[i] <= 'Z')
+      renderdocPathLower[i] = 'a' + char(renderdocPathLower[i] - 'A');
+
+    // normalise paths
+    if(renderdocPathLower[i] == '/')
+      renderdocPathLower[i] = '\\';
+  }
+
   BOOL isWow64 = FALSE;
   BOOL success = IsWow64Process(hProcess, &isWow64);
 
@@ -535,11 +542,14 @@ uint32_t Process::InjectIntoProcess(uint32_t pid, EnvironmentModification *env, 
     return 0;
   }
 
+  bool capalt = false;
+
 #if DISABLED(RDOC_X64)
   BOOL selfWow64 = FALSE;
 
   HANDLE hSelfProcess = GetCurrentProcess();
 
+  // check to see if we're a WoW64 process
   success = IsWow64Process(hSelfProcess, &selfWow64);
 
   CloseHandle(hSelfProcess);
@@ -551,22 +561,153 @@ uint32_t Process::InjectIntoProcess(uint32_t pid, EnvironmentModification *env, 
     return 0;
   }
 
+  // we know we're 32-bit, so if the target process is not wow64
+  // and we are, it's 64-bit. If we're both not wow64 then we're
+  // running on 32-bit windows, and if we're both wow64 then we're
+  // both 32-bit on 64-bit windows.
+  //
+  // We don't support capturing 64-bit programs from a 32-bit install
+  // because it's pointless - a 64-bit install will work for all in
+  // that case. But we do want to handle the case of:
+  // 64-bit renderdoc -> 32-bit program (via 32-bit renderdoccmd)
+  //    -> 64-bit program (going back to 64-bit renderdoccmd).
+  // so we try to see if we're an x86 invoked renderdoccmd in an
+  // otherwise 64-bit install, and 'promote' back to 64-bit.
   if(selfWow64 && !isWow64)
-  {
-    RDCERR("Can't capture x64 process with x86 renderdoc");
-    CloseHandle(hProcess);
-    return 0;
-  }
-#else
-  // farm off to x86 version
-  if(isWow64)
   {
     wchar_t *slash = wcsrchr(renderdocPath, L'\\');
 
-    if(slash)
-      *slash = 0;
+    if(slash && slash > renderdocPath + 4)
+    {
+      slash -= 4;
 
-    wcscat_s(renderdocPath, L"\\x86\\renderdoccmd.exe");
+      if(slash && !wcsncmp(slash, L"\\x86", 4))
+      {
+        RDCDEBUG("Promoting back to 64-bit");
+        capalt = true;
+      }
+    }
+
+    // if it looks like we're in the development environment, look for the alternate bitness in the
+    // corresponding folder
+    if(!capalt)
+    {
+      const wchar_t *devLocation = wcsstr(renderdocPathLower, L"\\win32\\development\\");
+      if(!devLocation)
+        devLocation = wcsstr(renderdocPathLower, L"\\win32\\release\\");
+
+      if(devLocation)
+      {
+        RDCDEBUG("Promoting back to 64-bit");
+        capalt = true;
+      }
+    }
+
+    // if we couldn't promote, then bail out.
+    if(!capalt)
+    {
+      RDCDEBUG("Running from %ls", renderdocPathLower);
+      RDCERR("Can't capture x64 process with x86 renderdoc");
+
+      CloseHandle(hProcess);
+      return 0;
+    }
+  }
+#else
+  // farm off to alternate bitness renderdoccmd.exe
+
+  // if the target process is 'wow64' that means it's 32-bit.
+  capalt = (isWow64 == TRUE);
+#endif
+
+  if(capalt)
+  {
+#if ENABLED(RDOC_X64)
+    // if it looks like we're in the development environment, look for the alternate bitness in the
+    // corresponding folder
+    const wchar_t *devLocation = wcsstr(renderdocPathLower, L"\\x64\\development\\");
+    if(devLocation)
+    {
+      size_t idx = devLocation - renderdocPathLower;
+
+      renderdocPath[idx] = 0;
+
+      wcscat_s(renderdocPath, L"\\Win32\\Development\\renderdoccmd.exe");
+    }
+
+    if(!devLocation)
+    {
+      devLocation = wcsstr(renderdocPathLower, L"\\x64\\release\\");
+
+      if(devLocation)
+      {
+        size_t idx = devLocation - renderdocPathLower;
+
+        renderdocPath[idx] = 0;
+
+        wcscat_s(renderdocPath, L"\\Win32\\Release\\renderdoccmd.exe");
+      }
+    }
+
+    if(!devLocation)
+    {
+      // look in a subfolder for x86.
+
+      // remove the filename from the path
+      wchar_t *slash = wcsrchr(renderdocPath, L'\\');
+
+      if(slash)
+        *slash = 0;
+
+      // append path
+      wcscat_s(renderdocPath, L"\\x86\\renderdoccmd.exe");
+    }
+#else
+    // if it looks like we're in the development environment, look for the alternate bitness in the
+    // corresponding folder
+    const wchar_t *devLocation = wcsstr(renderdocPathLower, L"\\win32\\development\\");
+    if(devLocation)
+    {
+      size_t idx = devLocation - renderdocPathLower;
+
+      renderdocPath[idx] = 0;
+
+      wcscat_s(renderdocPath, L"\\x64\\Development\\renderdoccmd.exe");
+    }
+
+    if(!devLocation)
+    {
+      devLocation = wcsstr(renderdocPathLower, L"\\win32\\release\\");
+
+      if(devLocation)
+      {
+        size_t idx = devLocation - renderdocPathLower;
+
+        renderdocPath[idx] = 0;
+
+        wcscat_s(renderdocPath, L"\\x64\\Release\\renderdoccmd.exe");
+      }
+    }
+
+    if(!devLocation)
+    {
+      // look upwards on 32-bit to find the parent renderdoccmd.
+      wchar_t *slash = wcsrchr(renderdocPath, L'\\');
+
+      // remove the filename
+      if(slash)
+        *slash = 0;
+
+      // remove the \\x86
+      slash = wcsrchr(renderdocPath, L'\\');
+
+      if(slash)
+        *slash = 0;
+
+      // append path
+      wcscat_s(renderdocPath, L"\\renderdoccmd.exe");
+    }
+#endif
 
     PROCESS_INFORMATION pi;
     STARTUPINFO si;
@@ -595,9 +736,14 @@ uint32_t Process::InjectIntoProcess(uint32_t pid, EnvironmentModification *env, 
 
     wchar_t *paramsAlloc = new wchar_t[2048];
 
+    std::string debugLogfile = RDCGETLOGFILE();
+    wstring wdebugLogfile = StringFormat::UTF82Wide(debugLogfile);
+
     _snwprintf_s(paramsAlloc, 2047, 2047,
-                 L"\"%ls\" cap32for64 --pid=%d --log=\"%ls\" --capopts=\"%hs\"", renderdocPath, pid,
-                 wlogfile.c_str(), optstr.c_str());
+                 L"\"%ls\" capaltbit --pid=%d --log=\"%ls\" --debuglog=\"%ls\" --capopts=\"%hs\"",
+                 renderdocPath, pid, wlogfile.c_str(), wdebugLogfile.c_str(), optstr.c_str());
+
+    RDCDEBUG("params %ls", paramsAlloc);
 
     paramsAlloc[2047] = 0;
 
@@ -671,7 +817,9 @@ uint32_t Process::InjectIntoProcess(uint32_t pid, EnvironmentModification *env, 
 
     if(!retValue)
     {
-      RDCERR("Can't spawn x86 renderdoccmd - missing files?");
+      RDCERR(
+          "Can't spawn alternate bitness renderdoccmd - have you built 32-bit and 64-bit?\n"
+          "You need to build the matching bitness for the programs you want to capture.");
       return 0;
     }
 
@@ -690,7 +838,6 @@ uint32_t Process::InjectIntoProcess(uint32_t pid, EnvironmentModification *env, 
 
     return (uint32_t)exitCode;
   }
-#endif
 
   InjectDLL(hProcess, renderdocPath);
 
@@ -711,7 +858,7 @@ uint32_t Process::InjectIntoProcess(uint32_t pid, EnvironmentModification *env, 
 
     std::string debugLogfile = RDCGETLOGFILE();
 
-    InjectFunctionCall(hProcess, loc, "INTERNAL_SetDebugLogFile", (void *)debugLogfile.c_str(),
+    InjectFunctionCall(hProcess, loc, "RENDERDOC_SetDebugLogFile", (void *)debugLogfile.c_str(),
                        debugLogfile.size() + 1);
 
     if(opts != NULL)

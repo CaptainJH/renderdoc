@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -49,6 +49,8 @@ void Serialiser::Serialise(const char *name, DirectoryFile &el)
 
   Serialise("filename", el.filename);
   Serialise("flags", el.flags);
+  Serialise("lastmod", el.lastmod);
+  Serialise("size", el.size);
 }
 
 template <>
@@ -290,6 +292,8 @@ static void ActiveRemoteClientThread(void *data)
         {
           DirectoryFile df;
           df.filename = files[i].filename;
+          df.lastmod = files[i].lastmod;
+          df.size = files[i].size;
           df.flags = files[i].flags;
           sendSer.Serialise("", df);
         }
@@ -844,6 +848,8 @@ public:
         {
           DirectoryFile package;
           package.filename = trim(tokens[1]);
+          package.size = 0;
+          package.lastmod = 0;
           package.flags = eFileProp_Executable;
           packages.push_back(package);
         }
@@ -1170,8 +1176,9 @@ extern "C" RENDERDOC_API uint32_t RENDERDOC_CC
 RemoteServer_ExecuteAndInject(RemoteServer *remote, const char *app, const char *workingDir,
                               const char *cmdLine, void *env, const CaptureOptions *opts)
 {
-  if(Android::IsHostADB(remote->hostname().c_str()))
-    return Android::StartAndroidPackageForCapture(app);
+  const char *host = remote->hostname().c_str();
+  if(Android::IsHostADB(host))
+    return Android::StartAndroidPackageForCapture(host, app);
 
   return remote->ExecuteAndInject(app, workingDir, cmdLine, env, opts);
 }

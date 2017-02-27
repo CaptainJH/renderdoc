@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -326,6 +326,8 @@ private:
   DummyID3D11Debug m_DummyDebug;
   WrappedID3D11Debug m_WrappedDebug;
 
+  ID3DUserDefinedAnnotation *m_RealAnnotations;
+
   unsigned int m_InternalRefcount;
   RefCounter m_RefCounter;
   RefCounter m_SoftRefCounter;
@@ -453,6 +455,7 @@ public:
   void StartFrameCapture(void *dev, void *wnd);
   bool EndFrameCapture(void *dev, void *wnd);
 
+  ID3DUserDefinedAnnotation *GetAnnotations() { return m_RealAnnotations; }
   // interface for DXGI
   virtual IUnknown *GetRealIUnknown() { return GetReal(); }
   virtual IID GetBackbufferUUID() { return __uuidof(ID3D11Texture2D); }

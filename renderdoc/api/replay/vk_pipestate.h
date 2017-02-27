@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -153,7 +153,7 @@ struct VulkanPipelineState
 
   struct ShaderStage
   {
-    ShaderStage() : Shader(), ShaderDetails(NULL), customName(false), stage(eShaderStage_Vertex) {}
+    ShaderStage() : Shader(), customName(false), ShaderDetails(NULL), stage(eShaderStage_Vertex) {}
     ResourceId Shader;
     rdctype::str entryPoint;
 
@@ -175,7 +175,7 @@ struct VulkanPipelineState
       rdctype::array<byte> data;
     };
     rdctype::array<SpecInfo> specialization;
-  } VS, TCS, TES, GS, FS, CS;
+  } m_VS, m_TCS, m_TES, m_GS, m_FS, m_CS;
 
   struct Tessellation
   {

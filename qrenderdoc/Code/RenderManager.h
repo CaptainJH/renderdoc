@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -33,14 +33,16 @@
 #include <QWaitCondition>
 #include <functional>
 #include "QRDUtils.h"
+#include "RemoteHost.h"
 #include "renderdoc_replay.h"
 
 struct IReplayRenderer;
 class LambdaThread;
+class RemoteHost;
 
 // simple helper for the common case of 'we just need to run this on the render thread
 #define INVOKE_MEMFN(function) \
-  m_Ctx->Renderer()->AsyncInvoke([this](IReplayRenderer *r) { function(r); });
+  m_Ctx.Renderer().AsyncInvoke([this](IReplayRenderer *r) { function(r); });
 
 struct EnvironmentModification
 {
@@ -119,6 +121,7 @@ class RenderManager
 {
 public:
   typedef std::function<void(IReplayRenderer *)> InvokeMethod;
+  typedef std::function<void(const char *, const rdctype::array<DirectoryFile> &)> DirectoryBrowseMethod;
 
   RenderManager();
   ~RenderManager();
@@ -128,24 +131,45 @@ public:
 
   bool IsRunning();
   ReplayCreateStatus GetCreateStatus() { return m_CreateStatus; }
+  // this tagged version is for cases when we might send a request - e.g. to pick a vertex or pixel
+  // - and want to pre-empt it with a new request before the first has returned. Either because some
+  // other work is taking a while or because we're sending requests faster than they can be
+  // processed.
+  // the manager processes only the request on the top of the queue, so when a new tagged invoke
+  // comes in, we remove any other requests in the queue before it that have the same tag
+  void AsyncInvoke(const QString &tag, InvokeMethod m);
   void AsyncInvoke(InvokeMethod m);
   void BlockInvoke(InvokeMethod m);
 
   void CloseThread();
 
+  ReplayCreateStatus ConnectToRemoteServer(RemoteHost *host);
+  void DisconnectFromRemoteServer();
+  void ShutdownServer();
+  void PingRemote();
+
+  const RemoteHost *remote() { return m_RemoteHost; }
   uint32_t ExecuteAndInject(const QString &exe, const QString &workingDir, const QString &cmdLine,
                             const QList<EnvironmentModification> &env, const QString &logfile,
                             CaptureOptions opts);
 
+  QStringList GetRemoteSupport();
+  void GetHomeFolder(bool synchronous, DirectoryBrowseMethod cb);
+  bool ListFolder(QString path, bool synchronous, DirectoryBrowseMethod cb);
+  QString CopyCaptureToRemote(const QString &localpath, QWidget *window);
+  void CopyCaptureFromRemote(const QString &remotepath, const QString &localpath, QWidget *window);
+
 private:
   struct InvokeHandle
   {
-    InvokeHandle(InvokeMethod m)
+    InvokeHandle(InvokeMethod m, const QString &t = QString())
     {
+      tag = t;
       method = m;
       selfdelete = false;
     }
 
+    QString tag;
     InvokeMethod method;
     QSemaphore processed;
     bool selfdelete;
@@ -163,6 +187,10 @@ private:
   QString m_ReplayHost;
   QString m_Logfile;
   float *m_Progress;
+
+  QMutex m_RemoteLock;
+  RemoteHost *m_RemoteHost = NULL;
+  IRemoteServer *m_Remote = NULL;
 
   volatile bool m_Running;
   LambdaThread *m_Thread;

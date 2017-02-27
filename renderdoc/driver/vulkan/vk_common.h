@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -32,10 +32,32 @@
 
 // SHARING - as above, for handling resource sharing between queues
 
+#include "common/common.h"
+
 #define VK_NO_PROTOTYPES
 
+#if ENABLED(RDOC_X64)
+
+#define VK_DEFINE_NON_DISPATCHABLE_HANDLE(object) typedef struct object##_T *object;
+
+#else
+
+// make handles typed even on 32-bit, by relying on C++
+#define VK_DEFINE_NON_DISPATCHABLE_HANDLE(obj)                                 \
+  struct obj                                                                   \
+  {                                                                            \
+    obj() : handle(0) {}                                                       \
+    obj(uint64_t x) : handle(x) {}                                             \
+    bool operator==(const obj &other) const { return handle == other.handle; } \
+    bool operator<(const obj &other) const { return handle < other.handle; }   \
+    bool operator!=(const obj &other) const { return handle != other.handle; } \
+    uint64_t handle;                                                           \
+  };
+#define VK_NON_DISPATCHABLE_WRAPPER_STRUCT
+
+#endif
+
 #include "api/replay/renderdoc_replay.h"
-#include "common/common.h"
 #include "core/core.h"
 #include "official/vulkan.h"
 #include "serialise/serialiser.h"
@@ -123,6 +145,12 @@ private:
   } m_Vendor;
 
   uint32_t m_Major, m_Minor, m_Patch;
+};
+
+enum
+{
+  VkCheckExt_AMD_neg_viewport,
+  VkCheckExt_Max,
 };
 
 // structure for casting to easily iterate and template specialising Serialise

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -58,6 +58,7 @@ signals:
   void resize(QResizeEvent *e);
   void mouseWheel(QWheelEvent *e);
   void keyPress(QKeyEvent *e);
+  void keyRelease(QKeyEvent *e);
 
 private:
   void mousePressEvent(QMouseEvent *e) override;
@@ -66,12 +67,13 @@ private:
   void wheelEvent(QWheelEvent *e) override;
   void resizeEvent(QResizeEvent *e) override;
   void keyPressEvent(QKeyEvent *e) override;
+  void keyReleaseEvent(QKeyEvent *e) override;
 
 public slots:
 
 protected:
-  void paintEvent(QPaintEvent *e);
-  QPaintEngine *paintEngine() const { return m_Ctx ? NULL : QWidget::paintEngine(); }
+  void paintEvent(QPaintEvent *e) override;
+  QPaintEngine *paintEngine() const override { return m_Ctx ? NULL : QWidget::paintEngine(); }
   CaptureContext *m_Ctx;
   IReplayOutput *m_Output;
   QColor m_Dark;

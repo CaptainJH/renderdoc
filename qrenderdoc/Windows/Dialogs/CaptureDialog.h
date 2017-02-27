@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -64,7 +64,7 @@ public:
                                       const QString &name, CaptureOptions opts)>
       OnInjectMethod;
 
-  explicit CaptureDialog(CaptureContext *ctx, OnCaptureMethod captureCallback,
+  explicit CaptureDialog(CaptureContext &ctx, OnCaptureMethod captureCallback,
                          OnInjectMethod injectCallback, QWidget *parent = 0);
   ~CaptureDialog();
 
@@ -73,6 +73,8 @@ public:
 
   void setExecutableFilename(QString filename);
   void loadSettings(QString filename);
+
+  void updateGlobalHook();
 
 private slots:
   // automatic slots
@@ -87,7 +89,7 @@ private slots:
   void on_saveSettings_clicked();
   void on_loadSettings_clicked();
 
-  void on_capture_clicked();
+  void on_launch_clicked();
   void on_close_clicked();
 
   void on_toggleGlobal_clicked();
@@ -98,14 +100,13 @@ private slots:
 
 private:
   Ui::CaptureDialog *ui;
-  CaptureContext *m_Ctx;
+  CaptureContext &m_Ctx;
 
   QStandardItemModel *m_ProcessModel;
 
   OnCaptureMethod m_CaptureCallback;
   OnInjectMethod m_InjectCallback;
 
-  void updateGlobalHook();
   void setEnvironmentModifications(const QList<EnvironmentModification> &modifications);
   void triggerCapture();
 

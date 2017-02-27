@@ -47,6 +47,7 @@ endfunction(get_git_hash)
 project(RenderDoc CXX C)
 
 option(ENABLE_GL "Enable GL driver" ON)
+option(ENABLE_GLES "Enable GL ES driver" OFF)
 option(ENABLE_VULKAN "Enable Vulkan driver" ON)
 option(ENABLE_RENDERDOCCMD "Enable renderdoccmd" ON)
 option(ENABLE_QRENDERDOC "Enable qrenderdoc" ON)
@@ -58,9 +59,37 @@ if(WIN32)
     message(FATAL_ERROR "CMake is not needed on Windows, just open and build renderdoc.sln")
 endif()
 
+message(STATUS "Calculating version")
+
+execute_process(
+    COMMAND awk "{ if (/_MAJOR [0-9]/) { print $3 } }" renderdoc/api/replay/version.h
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE RENDERDOC_VERSION_MAJOR
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+  )
+
+execute_process(
+    COMMAND awk "{ if (/_MINOR [0-9]/) { print $3 } }" renderdoc/api/replay/version.h
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE RENDERDOC_VERSION_MINOR
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+  )
+
+set(RENDERDOC_VERSION "${RENDERDOC_VERSION_MAJOR}.${RENDERDOC_VERSION_MINOR}")
+
+message(STATUS "Building RenderDoc version ${RENDERDOC_VERSION}")
+
+if(APPLE)
+    message(STATUS "Disabling Vulkan driver on apple")
+	set(ENABLE_VULKAN OFF CACHE BOOL "" FORCE)
+endif()
+
 if(ANDROID)
-    message(STATUS "Disabling GL driver on android - no support for EGL/GLES")
+    if(ENABLE_GL)
+        message(STATUS "Disabling GL driver on android and enabling GLES")
+    endif()
     set(ENABLE_GL OFF CACHE BOOL "" FORCE)
+    set(ENABLE_GLES OFF CACHE BOOL "" FORCE)
 
     # Android doesn't support the Qt UI for obvious reasons
     message(STATUS "Disabling qrenderdoc for android build")
@@ -92,6 +121,10 @@ if(ENABLE_GL)
     add_definitions(-DRENDERDOC_SUPPORT_GL)
 endif()
 
+if(ENABLE_GLES)
+    add_definitions(-DRENDERDOC_SUPPORT_GLES)
+endif()
+
 if(ENABLE_VULKAN)
     add_definitions(-DRENDERDOC_SUPPORT_VULKAN)
 endif()
@@ -118,12 +151,12 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         list(APPEND warning_flags -Wno-unused-but-set-variable)
     endif()
 
+    if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
+        list(APPEND warning_flags -Werror)
+    endif()
+
     string(REPLACE ";" " " warning_flags "${warning_flags}")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${warning_flags}")
-
-    if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror")
-    endif()
 endif()
 
 if(ANDROID)
@@ -151,3 +184,7 @@ endif()
 if(ENABLE_QRENDERDOC)
     add_subdirectory(qrenderdoc)
 endif()
+
+# install documentation files
+install (FILES scripts/LINUX_DIST_README DESTINATION share/doc/renderdoc RENAME README)
+install (FILES LICENSE.md DESTINATION share/doc/renderdoc)

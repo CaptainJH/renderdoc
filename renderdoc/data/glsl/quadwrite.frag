@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  * 
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -23,7 +23,9 @@
  ******************************************************************************/
 
 // outer code will hoist this up to just after the #version
-//#extension GL_ARB_derivative_control : require
+//#extension GL_ARB_derivative_control : enable
+//#extension GL_ARB_shader_image_load_store : require
+//#extension GL_ARB_gpu_shader5 : require
  
 ////////////////////////////////////////////////////////////////////////////////////////////
 // Below shaders courtesy of Stephen Hill (@self_shadow), converted to glsl trivially

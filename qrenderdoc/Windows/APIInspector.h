@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -37,19 +37,19 @@ class APIInspector : public QFrame, public ILogViewerForm
   Q_OBJECT
 
 public:
-  explicit APIInspector(CaptureContext *ctx, QWidget *parent = 0);
+  explicit APIInspector(CaptureContext &ctx, QWidget *parent = 0);
   ~APIInspector();
 
   void OnLogfileLoaded();
   void OnLogfileClosed();
-  void OnEventSelected(uint32_t eventID);
-
+  void OnSelectedEventChanged(uint32_t eventID);
+  void OnEventChanged(uint32_t eventID) {}
 public slots:
   void on_apiEvents_itemSelectionChanged();
 
 private:
   Ui::APIInspector *ui;
-  CaptureContext *m_Ctx = NULL;
+  CaptureContext &m_Ctx;
 
   void addCallstack(rdctype::array<rdctype::str> calls);
   void fillAPIView();

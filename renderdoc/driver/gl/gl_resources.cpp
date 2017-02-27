@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -25,6 +25,10 @@
 
 #include "gl_resources.h"
 #include "gl_hookset.h"
+
+byte GLResourceRecord::markerValue[32] = {
+    0xaa, 0xbb, 0xcc, 0xdd, 0x88, 0x77, 0x66, 0x55, 0x01, 0x23, 0x45, 0x67, 0x98, 0x76, 0x54, 0x32,
+};
 
 size_t GetCompressedByteSize(GLsizei w, GLsizei h, GLsizei d, GLenum internalformat, int mip)
 {
@@ -539,7 +543,7 @@ GLenum GetSizedFormat(const GLHookSet &gl, GLenum target, GLenum internalFormat)
   }
 
   GLint red, depth, stencil;
-  if(gl.glGetInternalformativ)
+  if(HasExt[ARB_internalformat_query2] && gl.glGetInternalformativ)
   {
     gl.glGetInternalformativ(target, internalFormat, eGL_INTERNALFORMAT_RED_SIZE, sizeof(GLint),
                              &red);
@@ -733,7 +737,16 @@ bool EmulateLuminanceFormat(const GLHookSet &gl, GLuint tex, GLenum target, GLen
   }
 
   if(tex)
-    gl.glTextureParameterivEXT(tex, target, eGL_TEXTURE_SWIZZLE_RGBA, (GLint *)swizzle);
+  {
+    if(HasExt[ARB_texture_swizzle] || HasExt[EXT_texture_swizzle])
+    {
+      gl.glTextureParameterivEXT(tex, target, eGL_TEXTURE_SWIZZLE_RGBA, (GLint *)swizzle);
+    }
+    else
+    {
+      RDCERR("Cannot emulate luminance format without texture swizzle extension");
+    }
+  }
 
   return true;
 }
@@ -933,6 +946,20 @@ GLenum BufferBinding(GLenum target)
     case eGL_TRANSFORM_FEEDBACK_BUFFER: return eGL_TRANSFORM_FEEDBACK_BUFFER_BINDING;
     case eGL_UNIFORM_BUFFER: return eGL_UNIFORM_BUFFER_BINDING;
     case eGL_PARAMETER_BUFFER_ARB: return eGL_PARAMETER_BUFFER_BINDING_ARB;
+    default: break;
+  }
+
+  RDCERR("Unexpected target %s", ToStr::Get(target).c_str());
+  return eGL_NONE;
+}
+
+GLenum FramebufferBinding(GLenum target)
+{
+  switch(target)
+  {
+    case eGL_FRAMEBUFFER: return eGL_FRAMEBUFFER_BINDING;
+    case eGL_DRAW_FRAMEBUFFER: return eGL_DRAW_FRAMEBUFFER_BINDING;
+    case eGL_READ_FRAMEBUFFER: return eGL_READ_FRAMEBUFFER_BINDING;
     default: break;
   }
 

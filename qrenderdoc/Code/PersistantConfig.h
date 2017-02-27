@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -29,8 +29,39 @@
 #include <QMap>
 #include <QString>
 #include <QVariant>
+#include "RemoteHost.h"
 
 typedef QMap<QString, QString> QStringMap;
+
+struct SPIRVDisassembler
+{
+  SPIRVDisassembler() {}
+  SPIRVDisassembler(const QVariant &var)
+  {
+    QVariantMap map = var.toMap();
+    if(map.contains("name"))
+      name = map["name"].toString();
+    if(map.contains("executable"))
+      executable = map["executable"].toString();
+    if(map.contains("args"))
+      args = map["args"].toString();
+  }
+
+  operator QVariant() const
+  {
+    QVariantMap map;
+
+    map["name"] = name;
+    map["executable"] = executable;
+    map["args"] = args;
+
+    return map;
+  }
+
+  QString name;
+  QString executable;
+  QString args;
+};
 
 #define CONFIG_SETTING_VAL(access, variantType, type, name, defaultValue) \
   access:                                                                 \
@@ -65,11 +96,13 @@ typedef QMap<QString, QString> QStringMap;
                                                                                            \
   CONFIG_SETTING_VAL(public, bool, bool, AlwaysReplayLocally, false)                       \
                                                                                            \
-  CONFIG_SETTING_VAL(public, int, int, LocalProxy, 0)                                      \
+  CONFIG_SETTING_VAL(public, int, int, LocalProxyAPI, -1)                                  \
                                                                                            \
   CONFIG_SETTING_VAL(public, int, TimeUnit, EventBrowser_TimeUnit, TimeUnit::Microseconds) \
                                                                                            \
   CONFIG_SETTING_VAL(public, bool, bool, EventBrowser_HideEmpty, false)                    \
+                                                                                           \
+  CONFIG_SETTING_VAL(public, bool, bool, EventBrowser_HideAPICalls, false)                 \
                                                                                            \
   CONFIG_SETTING_VAL(public, bool, bool, EventBrowser_ApplyColours, true)                  \
                                                                                            \
@@ -84,6 +117,10 @@ typedef QMap<QString, QString> QStringMap;
   CONFIG_SETTING_VAL(public, int, int, Formatter_PosExp, 7)                                \
                                                                                            \
   CONFIG_SETTING_VAL(public, bool, bool, Font_PreferMonospaced, false)                     \
+                                                                                           \
+  CONFIG_SETTING_VAL(public, QString, QString, Android_AdbExecutablePath, "")              \
+                                                                                           \
+  CONFIG_SETTING_VAL(public, int, int, Android_MaxConnectTimeout, 30)                      \
                                                                                            \
   CONFIG_SETTING_VAL(public, bool, bool, CheckUpdate_AllowChecks, true)                    \
                                                                                            \
@@ -101,7 +138,11 @@ typedef QMap<QString, QString> QStringMap;
                                                                                            \
   CONFIG_SETTING_VAL(public, bool, bool, AllowGlobalHook, false)                           \
                                                                                            \
-  CONFIG_SETTING(private, QVariantMap, QStringMap, ConfigSettings)
+  CONFIG_SETTING(public, QVariantList, QList<SPIRVDisassembler>, SPIRVDisassemblers)       \
+                                                                                           \
+  CONFIG_SETTING(private, QVariantMap, QStringMap, ConfigSettings)                         \
+                                                                                           \
+  CONFIG_SETTING(private, QVariantList, QList<RemoteHost>, RemoteHostList)
 
 class PersistantConfig
 {
@@ -112,14 +153,21 @@ public:
     Milliseconds,
     Microseconds,
     Nanoseconds,
+    Count,
   };
+
+  // Runtime list of dynamically allocated hosts.
+  // Saved to/from private RemoteHostList in CONFIG_SETTINGS()
+  QList<RemoteHost *> RemoteHosts;
+  void AddAndroidHosts();
 
   CONFIG_SETTINGS()
 
 public:
   PersistantConfig() {}
-  bool Deserialize(QString filename);
-  bool Serialize(QString filename);
+  ~PersistantConfig();
+  bool Load(const QString &filename);
+  bool Save();
 
   void SetupFormatting();
 
@@ -130,7 +178,7 @@ public:
     else if(t == TimeUnit::Milliseconds)
       return "ms";
     else if(t == TimeUnit::Microseconds)
-      return "µs";
+      return "Âµs";
     else if(t == TimeUnit::Nanoseconds)
       return "ns";
 
@@ -139,10 +187,14 @@ public:
 
   static void AddRecentFile(QList<QString> &recentList, const QString &file, int maxItems);
 
-  void SetConfigSetting(QString name, QString value);
-  QString GetConfigSetting(QString name);
+  void SetConfigSetting(const QString &name, const QString &value);
+  QString GetConfigSetting(const QString &name);
 
 private:
+  bool Deserialize(const QString &filename);
+  bool Serialize(const QString &filename);
   QVariantMap storeValues() const;
   void applyValues(const QVariantMap &values);
+
+  QString m_Filename;
 };

@@ -811,8 +811,23 @@ void ToolWindowManager::finishDrag() {
     return;
   }
   if (m_suggestions.isEmpty()) {
+    bool allowFloat = m_allowFloatingWindow;
+
+    for(QWidget *w : m_draggedToolWindows)
+      allowFloat &= !(toolWindowProperties(w) & DisallowFloatWindow);
+
     if (m_allowFloatingWindow)
+    {
+      QRect r;
+      for(QWidget *w : m_draggedToolWindows)
+        r = r.united(w->rect());
+
       moveToolWindows(m_draggedToolWindows, NewFloatingArea);
+
+      ToolWindowManagerArea *area = areaOf(m_draggedToolWindows[0]);
+
+      area->parentWidget()->resize(r.size());
+    }
   } else {
     if (m_dropCurrentSuggestionIndex >= m_suggestions.count()) {
       qWarning("invalid m_dropCurrentSuggestionIndex");

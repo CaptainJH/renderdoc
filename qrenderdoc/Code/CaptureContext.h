@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -42,7 +42,17 @@ struct ILogViewerForm
 {
   virtual void OnLogfileLoaded() = 0;
   virtual void OnLogfileClosed() = 0;
-  virtual void OnEventSelected(uint32_t eventID) = 0;
+
+  // These 2 functions distinguish between the event which is actually
+  // selected and the event which the displayed state should be taken from. In
+  // the case of an event with children, OnSelectedEventChanged receives the
+  // ID of the event itself, whereas OnEventChanged receives that of the last
+  // child. This means that selecting an event with children displays the
+  // state after all of its children have completed, the exception being that
+  // the API inspector uses the selected event ID to display the API calls of
+  // that event rather than of the last child.
+  virtual void OnSelectedEventChanged(uint32_t eventID) = 0;
+  virtual void OnEventChanged(uint32_t eventID) = 0;
 };
 
 class MainWindow;
@@ -52,7 +62,8 @@ class PipelineStateViewer;
 class BufferViewer;
 class TextureViewer;
 class CaptureDialog;
-class QProgressDialog;
+class DebugMessageView;
+class StatisticsViewer;
 
 class CaptureContext
 {
@@ -71,10 +82,12 @@ public:
   // Control functions
 
   void LoadLogfile(const QString &logFile, const QString &origFilename, bool temporary, bool local);
+
   void CloseLogfile();
 
-  void SetEventID(ILogViewerForm *exclude, uint32_t eventID, bool force = false);
-  void RefreshStatus() { SetEventID(NULL, m_EventID, true); }
+  void SetEventID(const QVector<ILogViewerForm *> &exclude, uint32_t selectedEventID,
+                  uint32_t eventID, bool force = false);
+  void RefreshStatus() { SetEventID({}, m_SelectedEventID, m_EventID, true); }
   void AddLogViewer(ILogViewerForm *f)
   {
     m_LogViewers.push_back(f);
@@ -82,7 +95,7 @@ public:
     if(LogLoaded())
     {
       f->OnLogfileLoaded();
-      f->OnEventSelected(CurEvent());
+      f->OnEventChanged(CurEvent());
     }
   }
 
@@ -90,14 +103,16 @@ public:
   //////////////////////////////////////////////////////////////////////////////
   // Accessors
 
-  RenderManager *Renderer() { return &m_Renderer; }
+  RenderManager &Renderer() { return m_Renderer; }
   bool LogLoaded() { return m_LogLoaded; }
   bool IsLogLocal() { return m_LogLocal; }
   bool LogLoading() { return m_LoadInProgress; }
   QString LogFilename() { return m_LogFile; }
   const FetchFrameInfo &FrameInfo() { return m_FrameInfo; }
   const APIProperties &APIProps() { return m_APIProps; }
+  uint32_t CurSelectedEvent() { return m_SelectedEventID; }
   uint32_t CurEvent() { return m_EventID; }
+  const FetchDrawcall *CurSelectedDrawcall() { return GetDrawcall(CurSelectedEvent()); }
   const FetchDrawcall *CurDrawcall() { return GetDrawcall(CurEvent()); }
   const rdctype::array<FetchDrawcall> &CurDrawcalls() { return m_Drawcalls; }
   FetchTexture *GetTexture(ResourceId id) { return m_Textures[id]; }
@@ -125,6 +140,9 @@ public:
   BufferViewer *meshPreview();
   PipelineStateViewer *pipelineViewer();
   CaptureDialog *captureDialog();
+  DebugMessageView *debugMessageView();
+  StatisticsViewer *statisticsViewer();
+  void setupDockWindow(QWidget *shad);
 
   bool hasEventBrowser() { return m_EventBrowser != NULL; }
   bool hasAPIInspector() { return m_APIInspector != NULL; }
@@ -132,12 +150,16 @@ public:
   bool hasPipelineViewer() { return m_PipelineViewer != NULL; }
   bool hasMeshPreview() { return m_MeshPreview != NULL; }
   bool hasCaptureDialog() { return m_CaptureDialog != NULL; }
+  bool hasDebugMessageView() { return m_DebugMessageView != NULL; }
+  bool hasStatisticsViewer() { return m_StatisticsViewer != NULL; }
   void showEventBrowser();
   void showAPIInspector();
   void showTextureViewer();
   void showMeshPreview();
   void showPipelineViewer();
   void showCaptureDialog();
+  void showDebugMessageView();
+  void showStatisticsViewer();
 
   QWidget *createToolWindow(const QString &objectName);
   void windowClosed(QWidget *window);
@@ -158,9 +180,18 @@ private:
   bool m_LogLoaded, m_LoadInProgress, m_LogLocal;
   QString m_LogFile;
 
+  bool PassEquivalent(const FetchDrawcall &a, const FetchDrawcall &b);
+  bool ContainsMarker(const rdctype::array<FetchDrawcall> &m_Drawcalls);
+  void AddFakeProfileMarkers();
+
+  float m_LoadProgress = 0.0f;
+  float m_PostloadProgress = 0.0f;
+  float UpdateLoadProgress();
+
   void LoadLogfileThreaded(const QString &logFile, const QString &origFilename, bool temporary,
                            bool local);
 
+  uint32_t m_SelectedEventID;
   uint32_t m_EventID;
 
   const FetchDrawcall *GetDrawcall(const rdctype::array<FetchDrawcall> &draws, uint32_t eventID)
@@ -201,7 +232,6 @@ private:
   QIcon *m_Icon;
 
   // Windows
-  QProgressDialog *m_Progress;
   MainWindow *m_MainWindow = NULL;
   EventBrowser *m_EventBrowser = NULL;
   APIInspector *m_APIInspector = NULL;
@@ -209,4 +239,6 @@ private:
   BufferViewer *m_MeshPreview = NULL;
   PipelineStateViewer *m_PipelineViewer = NULL;
   CaptureDialog *m_CaptureDialog = NULL;
+  DebugMessageView *m_DebugMessageView = NULL;
+  StatisticsViewer *m_StatisticsViewer = NULL;
 };

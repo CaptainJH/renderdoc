@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -110,6 +110,13 @@ class WrappedOpenGL : public IFrameCapturer
 {
 private:
   const GLHookSet &m_Real;
+  GLPlatform &m_Platform;
+
+  // Used to clarify when we're making an internal call that isn't just part of
+  // forwarding the capture, and allows us to emulate extensions like EXT_direct_state_access
+  // without interfering with the real functions for GL.
+  // Only populated during capture, on replay we force-patch the real hookset
+  GLHookSet m_Internal;
 
   friend class GLReplay;
   friend class GLResourceManager;
@@ -149,6 +156,7 @@ private:
   bool m_AppControlledCapture;
 
   GLReplay m_Replay;
+  RDCDriver m_DriverType;
 
   GLInitParams m_InitParams;
 
@@ -156,7 +164,16 @@ private:
 
   vector<GLWindowingData> m_LastContexts;
 
-  bool m_ActiveQueries[8][8];    // first index type, second index (for some, always 0)
+public:
+  enum
+  {
+    MAX_QUERIES = 17,
+    MAX_QUERY_INDICES = 8
+  };
+
+private:
+  bool m_ActiveQueries[MAX_QUERIES]
+                      [MAX_QUERY_INDICES];    // first index type, second index (for some, always 0)
   bool m_ActiveConditional;
   bool m_ActiveFeedback;
 
@@ -171,6 +188,7 @@ private:
   GLResourceManager *m_ResourceManager;
 
   uint32_t m_FrameCounter;
+  uint32_t m_NoCtxFrames;
   uint32_t m_FailedFrame;
   CaptureFailReason m_FailedReason;
   uint32_t m_Failures;
@@ -220,6 +238,8 @@ private:
   list<DrawcallTreeNode *> m_DrawcallStack;
 
   map<ResourceId, vector<EventUsage> > m_ResourceUses;
+
+  bool m_FetchCounters;
 
   // buffer used
   vector<byte> m_ScratchBuf;
@@ -474,7 +494,7 @@ private:
   WrappedOpenGL &operator=(const WrappedOpenGL &);
 
 public:
-  WrappedOpenGL(const char *logfile, const GLHookSet &funcs);
+  WrappedOpenGL(const char *logfile, const GLHookSet &funcs, GLPlatform &platform);
   virtual ~WrappedOpenGL();
 
   static const char *GetChunkName(uint32_t idx);
@@ -482,9 +502,14 @@ public:
   ResourceId GetDeviceResourceID() { return m_DeviceResourceID; }
   ResourceId GetContextResourceID() { return m_ContextResourceID; }
   GLReplay *GetReplay() { return &m_Replay; }
+  void SetDriverType(RDCDriver type) { m_DriverType = type; }
+  bool isGLESMode() { return m_DriverType == RDC_OpenGLES; }
+  RDCDriver GetDriverType() { return m_DriverType; }
   void *GetCtx();
 
+  void SetFetchCounters(bool in) { m_FetchCounters = in; };
   const GLHookSet &GetHookset() { return m_Real; }
+  const GLHookSet &GetInternalHookset() { return m_Internal; }
   void SetDebugMsgContext(const char *context) { m_DebugMsgContext = context; }
   void AddDebugMessage(DebugMessage msg)
   {

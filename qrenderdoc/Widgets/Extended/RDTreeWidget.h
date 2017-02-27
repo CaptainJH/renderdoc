@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -48,6 +48,7 @@ public:
 signals:
   void mouseMove(QMouseEvent *e);
   void leave(QEvent *e);
+  void keyPress(QKeyEvent *e);
 
 public slots:
 
@@ -56,6 +57,7 @@ private:
   void mouseReleaseEvent(QMouseEvent *e) override;
   void leaveEvent(QEvent *e) override;
   void focusOutEvent(QFocusEvent *event) override;
+  void keyPressEvent(QKeyEvent *e) override;
 
   void clearHovers(QTreeWidgetItem *root, QTreeWidgetItem *exception);
 

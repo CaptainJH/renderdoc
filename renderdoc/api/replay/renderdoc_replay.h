@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -170,7 +170,7 @@ struct IReplayOutput
   virtual ResourceId GetCustomShaderTexID() = 0;
   virtual bool PickPixel(ResourceId texID, bool customShader, uint32_t x, uint32_t y,
                          uint32_t sliceFace, uint32_t mip, uint32_t sample, PixelValue *val) = 0;
-  virtual uint32_t PickVertex(uint32_t eventID, uint32_t x, uint32_t y) = 0;
+  virtual uint32_t PickVertex(uint32_t eventID, uint32_t x, uint32_t y, uint32_t *pickedInstance) = 0;
 };
 
 #endif
@@ -224,7 +224,8 @@ extern "C" RENDERDOC_API bool32 RENDERDOC_CC ReplayOutput_PickPixel(
     uint32_t sliceFace, uint32_t mip, uint32_t sample, PixelValue *val);
 extern "C" RENDERDOC_API uint32_t RENDERDOC_CC ReplayOutput_PickVertex(ReplayOutput *output,
                                                                        uint32_t eventID, uint32_t x,
-                                                                       uint32_t y);
+                                                                       uint32_t y,
+                                                                       uint32_t *pickedInstance);
 
 // for C++ expose the interface as a virtual interface
 #ifdef __cplusplus
@@ -641,12 +642,25 @@ RENDERDOC_ExecuteAndInject(const char *app, const char *workingDir, const char *
 extern "C" RENDERDOC_API uint32_t RENDERDOC_CC RENDERDOC_InjectIntoProcess(
     uint32_t pid, void *env, const char *logfile, const CaptureOptions *opts, bool32 waitForExit);
 
+extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_StartSelfHostCapture(const char *dllname);
+extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_EndSelfHostCapture(const char *dllname);
+
+//////////////////////////////////////////////////////////////////////////
+// Vulkan layer handling
+//////////////////////////////////////////////////////////////////////////
+
+extern "C" RENDERDOC_API bool RENDERDOC_CC RENDERDOC_NeedVulkanLayerRegistration(
+    uint32_t *flags, rdctype::array<rdctype::str> *myJSONs, rdctype::array<rdctype::str> *otherJSONs);
+extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_UpdateVulkanLayerRegistration(bool systemLevel);
+
 //////////////////////////////////////////////////////////////////////////
 // Miscellaneous!
 //////////////////////////////////////////////////////////////////////////
 
 extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_TriggerExceptionHandler(void *exceptionPtrs,
                                                                              bool32 crashed);
+extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_SetDebugLogFile(const char *filename);
+extern "C" RENDERDOC_API const char *RENDERDOC_CC RENDERDOC_GetLogFile();
 extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_LogText(const char *text);
 extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_LogMessage(LogMessageType type,
                                                                 const char *project, const char *file,
@@ -667,3 +681,6 @@ extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_SetEnvironmentModification(
     EnvironmentSeparator separator);
 
 extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_FreeEnvironmentModificationList(void *mem);
+
+extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_EnumerateAndroidDevices(rdctype::str *deviceList);
+extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_StartAndroidRemoteServer();

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -26,10 +26,13 @@
 #include <float.h>
 #include <QScrollBar>
 #include "3rdparty/toolwindowmanager/ToolWindowManager.h"
+#include "Code/Resources.h"
 #include "Windows/BufferViewer.h"
 #include "Windows/ConstantBufferPreviewer.h"
 #include "Windows/MainWindow.h"
+#include "Windows/ShaderViewer.h"
 #include "Windows/TextureViewer.h"
+#include "PipelineStateViewer.h"
 #include "ui_VulkanPipelineStateViewer.h"
 
 Q_DECLARE_METATYPE(ResourceId);
@@ -89,10 +92,15 @@ struct BufferTag
 
 Q_DECLARE_METATYPE(BufferTag);
 
-VulkanPipelineStateViewer::VulkanPipelineStateViewer(CaptureContext *ctx, QWidget *parent)
-    : QFrame(parent), ui(new Ui::VulkanPipelineStateViewer), m_Ctx(ctx)
+VulkanPipelineStateViewer::VulkanPipelineStateViewer(CaptureContext &ctx,
+                                                     PipelineStateViewer &common, QWidget *parent)
+    : QFrame(parent), ui(new Ui::VulkanPipelineStateViewer), m_Ctx(ctx), m_Common(common)
 {
   ui->setupUi(this);
+
+  RDLabel *shaderLabels[] = {
+      ui->vsShader, ui->tcsShader, ui->tesShader, ui->gsShader, ui->fsShader, ui->csShader,
+  };
 
   QToolButton *viewButtons[] = {
       ui->vsShaderViewButton, ui->tcsShaderViewButton, ui->tesShaderViewButton,
@@ -120,6 +128,9 @@ VulkanPipelineStateViewer::VulkanPipelineStateViewer(CaptureContext *ctx, QWidge
 
   for(QToolButton *b : viewButtons)
     QObject::connect(b, &QToolButton::clicked, this, &VulkanPipelineStateViewer::shaderView_clicked);
+
+  for(RDLabel *b : shaderLabels)
+    QObject::connect(b, &RDLabel::clicked, this, &VulkanPipelineStateViewer::shaderView_clicked);
 
   for(QToolButton *b : editButtons)
     QObject::connect(b, &QToolButton::clicked, this, &VulkanPipelineStateViewer::shaderEdit_clicked);
@@ -277,6 +288,22 @@ VulkanPipelineStateViewer::VulkanPipelineStateViewer(CaptureContext *ctx, QWidge
   // this is often changed just because we're changing some tab in the designer.
   ui->stagesTabs->setCurrentIndex(0);
 
+  ui->stagesTabs->tabBar()->setVisible(false);
+
+  ui->pipeFlow->setStages(
+      {
+          "VTX", "VS", "TCS", "TES", "GS", "RS", "FS", "FB", "CS",
+      },
+      {
+          "Vertex Input", "Vertex Shader", "Tess. Control Shader", "Tess. Eval. Shader",
+          "Geometry Shader", "Rasterizer", "Fragment Shader", "Framebuffer Output",
+          "Compute Shader",
+      });
+
+  ui->pipeFlow->setIsolatedStage(8);    // compute shader isolated
+
+  ui->pipeFlow->setStagesEnabled({true, true, true, true, true, true, true, true, true});
+
   // reset everything back to defaults
   clearState();
 }
@@ -288,15 +315,17 @@ VulkanPipelineStateViewer::~VulkanPipelineStateViewer()
 
 void VulkanPipelineStateViewer::OnLogfileLoaded()
 {
-  OnEventSelected(m_Ctx->CurEvent());
+  OnEventChanged(m_Ctx.CurEvent());
 }
 
 void VulkanPipelineStateViewer::OnLogfileClosed()
 {
+  ui->pipeFlow->setStagesEnabled({true, true, true, true, true, true, true, true, true});
+
   clearState();
 }
 
-void VulkanPipelineStateViewer::OnEventSelected(uint32_t eventID)
+void VulkanPipelineStateViewer::OnEventChanged(uint32_t eventID)
 {
   setState();
 }
@@ -339,7 +368,7 @@ void VulkanPipelineStateViewer::setViewDetails(QTreeWidgetItem *node, const bind
   bool viewdetails = false;
 
   {
-    for(const VulkanPipelineState::ImageData &im : m_Ctx->CurVulkanPipelineState.images)
+    for(const VulkanPipelineState::ImageData &im : m_Ctx.CurVulkanPipelineState.images)
     {
       if(im.image == tex->ID)
       {
@@ -414,7 +443,7 @@ void VulkanPipelineStateViewer::setViewDetails(QTreeWidgetItem *node, const bind
   {
     text += tr("The view covers bytes %1-%2.\nThe buffer is %3 bytes in length.")
                 .arg(view.offset)
-                .arg(view.size)
+                .arg(view.offset + view.size)
                 .arg(buf->length);
   }
   else
@@ -452,29 +481,29 @@ bool VulkanPipelineStateViewer::showNode(bool usedSlot, bool filledSlot)
 
 const VulkanPipelineState::ShaderStage *VulkanPipelineStateViewer::stageForSender(QWidget *widget)
 {
-  if(!m_Ctx->LogLoaded())
+  if(!m_Ctx.LogLoaded())
     return NULL;
 
   while(widget)
   {
     if(widget == ui->stagesTabs->widget(0))
-      return &m_Ctx->CurVulkanPipelineState.VS;
+      return &m_Ctx.CurVulkanPipelineState.m_VS;
     if(widget == ui->stagesTabs->widget(1))
-      return &m_Ctx->CurVulkanPipelineState.VS;
+      return &m_Ctx.CurVulkanPipelineState.m_VS;
     if(widget == ui->stagesTabs->widget(2))
-      return &m_Ctx->CurVulkanPipelineState.TCS;
+      return &m_Ctx.CurVulkanPipelineState.m_TCS;
     if(widget == ui->stagesTabs->widget(3))
-      return &m_Ctx->CurVulkanPipelineState.TES;
+      return &m_Ctx.CurVulkanPipelineState.m_TES;
     if(widget == ui->stagesTabs->widget(4))
-      return &m_Ctx->CurVulkanPipelineState.GS;
+      return &m_Ctx.CurVulkanPipelineState.m_GS;
     if(widget == ui->stagesTabs->widget(5))
-      return &m_Ctx->CurVulkanPipelineState.FS;
+      return &m_Ctx.CurVulkanPipelineState.m_FS;
     if(widget == ui->stagesTabs->widget(6))
-      return &m_Ctx->CurVulkanPipelineState.FS;
+      return &m_Ctx.CurVulkanPipelineState.m_FS;
     if(widget == ui->stagesTabs->widget(7))
-      return &m_Ctx->CurVulkanPipelineState.FS;
+      return &m_Ctx.CurVulkanPipelineState.m_FS;
     if(widget == ui->stagesTabs->widget(8))
-      return &m_Ctx->CurVulkanPipelineState.CS;
+      return &m_Ctx.CurVulkanPipelineState.m_CS;
 
     widget = widget->parentWidget();
   }
@@ -510,7 +539,7 @@ void VulkanPipelineStateViewer::clearState()
   clearShaderState(ui->fsShader, ui->fsResources, ui->fsUBOs);
   clearShaderState(ui->csShader, ui->csResources, ui->csUBOs);
 
-  QPixmap tick(QString::fromUtf8(":/Resources/tick.png"));
+  const QPixmap &tick = Pixmaps::tick();
 
   ui->fillMode->setText(tr("Solid", "Fill Mode"));
   ui->cullMode->setText(tr("Front", "Cull Mode"));
@@ -644,8 +673,8 @@ void VulkanPipelineStateViewer::addResourceRow(ShaderReflection *shaderDetails,
   const ShaderResource *shaderRes = NULL;
   const BindpointMap *bindMap = NULL;
 
-  QIcon action(QPixmap(QString::fromUtf8(":/Resources/action.png")));
-  QIcon action_hover(QPixmap(QString::fromUtf8(":/Resources/action_hover.png")));
+  const QIcon &action = Icons::action();
+  const QIcon &action_hover = Icons::action_hover();
 
   bool isrw = false;
   uint bindPoint = 0;
@@ -798,7 +827,7 @@ void VulkanPipelineStateViewer::addResourceRow(ShaderReflection *shaderDetails,
         format = ToQStr(descriptorBind->viewfmt.strname);
 
         // check to see if it's a texture
-        tex = m_Ctx->GetTexture(descriptorBind->res);
+        tex = m_Ctx.GetTexture(descriptorBind->res);
         if(tex)
         {
           w = tex->width;
@@ -813,7 +842,7 @@ void VulkanPipelineStateViewer::addResourceRow(ShaderReflection *shaderDetails,
         }
 
         // if not a texture, it must be a buffer
-        buf = m_Ctx->GetBuffer(descriptorBind->res);
+        buf = m_Ctx.GetBuffer(descriptorBind->res);
         if(buf)
         {
           len = buf->length;
@@ -1024,8 +1053,8 @@ void VulkanPipelineStateViewer::addConstantBlockRow(ShaderReflection *shaderDeta
   const ConstantBlock *cblock = NULL;
   const BindpointMap *bindMap = NULL;
 
-  QIcon action(QPixmap(QString::fromUtf8(":/Resources/action.png")));
-  QIcon action_hover(QPixmap(QString::fromUtf8(":/Resources/action_hover.png")));
+  const QIcon &action = Icons::action();
+  const QIcon &action_hover = Icons::action_hover();
 
   uint32_t slot = ~0U;
   if(shaderDetails != NULL)
@@ -1137,7 +1166,7 @@ void VulkanPipelineStateViewer::addConstantBlockRow(ShaderReflection *shaderDeta
         name = "";
         length = descriptorBind->size;
 
-        FetchBuffer *buf = m_Ctx->GetBuffer(descriptorBind->res);
+        FetchBuffer *buf = m_Ctx.GetBuffer(descriptorBind->res);
         if(buf)
         {
           name = buf->name;
@@ -1202,8 +1231,8 @@ void VulkanPipelineStateViewer::setShaderState(const VulkanPipelineState::Shader
 {
   ShaderReflection *shaderDetails = stage.ShaderDetails;
 
-  QIcon action(QPixmap(QString::fromUtf8(":/Resources/action.png")));
-  QIcon action_hover(QPixmap(QString::fromUtf8(":/Resources/action_hover.png")));
+  const QIcon &action = Icons::action();
+  const QIcon &action_hover = Icons::action_hover();
 
   if(stage.Shader == ResourceId())
     shader->setText(tr("Unbound Shader"));
@@ -1224,7 +1253,7 @@ void VulkanPipelineStateViewer::setShaderState(const VulkanPipelineState::Shader
       if(entryFile < 0 || entryFile >= shaderDetails->DebugInfo.files.count)
         entryFile = 0;
 
-      shaderfn = ToQStr(shaderDetails->DebugInfo.files[entryFile].first);
+      shaderfn = QFileInfo(ToQStr(shaderDetails->DebugInfo.files[entryFile].first)).fileName();
 
       shader->setText(entryFunc + "() - " + shaderfn);
     }
@@ -1396,7 +1425,7 @@ void VulkanPipelineStateViewer::setShaderState(const VulkanPipelineState::Shader
 
 void VulkanPipelineStateViewer::setState()
 {
-  if(!m_Ctx->LogLoaded())
+  if(!m_Ctx.LogLoaded())
   {
     clearState();
     return;
@@ -1404,17 +1433,17 @@ void VulkanPipelineStateViewer::setState()
 
   m_CombinedImageSamplers.clear();
 
-  const VulkanPipelineState &state = m_Ctx->CurVulkanPipelineState;
-  const FetchDrawcall *draw = m_Ctx->CurDrawcall();
+  const VulkanPipelineState &state = m_Ctx.CurVulkanPipelineState;
+  const FetchDrawcall *draw = m_Ctx.CurDrawcall();
 
   bool showDisabled = ui->showDisabled->isChecked();
   bool showEmpty = ui->showEmpty->isChecked();
 
-  QPixmap tick(QString::fromUtf8(":/Resources/tick.png"));
-  QPixmap cross(QString::fromUtf8(":/Resources/cross.png"));
+  const QPixmap &tick = Pixmaps::tick();
+  const QPixmap &cross = Pixmaps::cross();
 
-  QIcon action(QPixmap(QString::fromUtf8(":/Resources/action.png")));
-  QIcon action_hover(QPixmap(QString::fromUtf8(":/Resources/action_hover.png")));
+  const QIcon &action = Icons::action();
+  const QIcon &action_hover = Icons::action_hover();
 
   bool usedBindings[128] = {};
 
@@ -1435,15 +1464,15 @@ void VulkanPipelineStateViewer::setState()
 
       QString name = tr("Attribute %1").arg(i);
 
-      if(state.VS.Shader != ResourceId())
+      if(state.m_VS.Shader != ResourceId())
       {
         int attrib = -1;
-        if((int32_t)a.location < state.VS.BindpointMapping.InputAttributes.count)
-          attrib = state.VS.BindpointMapping.InputAttributes[a.location];
+        if((int32_t)a.location < state.m_VS.BindpointMapping.InputAttributes.count)
+          attrib = state.m_VS.BindpointMapping.InputAttributes[a.location];
 
-        if(attrib >= 0 && attrib < state.VS.ShaderDetails->InputSig.count)
+        if(attrib >= 0 && attrib < state.m_VS.ShaderDetails->InputSig.count)
         {
-          name = state.VS.ShaderDetails->InputSig[attrib].varName;
+          name = state.m_VS.ShaderDetails->InputSig[attrib].varName;
           usedSlot = true;
         }
       }
@@ -1489,46 +1518,24 @@ void VulkanPipelineStateViewer::setState()
 
   switch(topo)
   {
-    case eTopology_PointList:
-      ui->topologyDiagram->setPixmap(
-          QPixmap(QString::fromUtf8(":/Resources/topologies/topo_pointlist.png")));
-      break;
-    case eTopology_LineList:
-      ui->topologyDiagram->setPixmap(
-          QPixmap(QString::fromUtf8(":/Resources/topologies/topo_linelist.png")));
-      break;
-    case eTopology_LineStrip:
-      ui->topologyDiagram->setPixmap(
-          QPixmap(QString::fromUtf8(":/Resources/topologies/topo_linestrip.png")));
-      break;
-    case eTopology_TriangleList:
-      ui->topologyDiagram->setPixmap(
-          QPixmap(QString::fromUtf8(":/Resources/topologies/topo_trilist.png")));
-      break;
-    case eTopology_TriangleStrip:
-      ui->topologyDiagram->setPixmap(
-          QPixmap(QString::fromUtf8(":/Resources/topologies/topo_tristrip.png")));
-      break;
+    case eTopology_PointList: ui->topologyDiagram->setPixmap(Pixmaps::topo_pointlist()); break;
+    case eTopology_LineList: ui->topologyDiagram->setPixmap(Pixmaps::topo_linelist()); break;
+    case eTopology_LineStrip: ui->topologyDiagram->setPixmap(Pixmaps::topo_linestrip()); break;
+    case eTopology_TriangleList: ui->topologyDiagram->setPixmap(Pixmaps::topo_trilist()); break;
+    case eTopology_TriangleStrip: ui->topologyDiagram->setPixmap(Pixmaps::topo_tristrip()); break;
     case eTopology_LineList_Adj:
-      ui->topologyDiagram->setPixmap(
-          QPixmap(QString::fromUtf8(":/Resources/topologies/topo_linelist_adj.png")));
+      ui->topologyDiagram->setPixmap(Pixmaps::topo_linelist_adj());
       break;
     case eTopology_LineStrip_Adj:
-      ui->topologyDiagram->setPixmap(
-          QPixmap(QString::fromUtf8(":/Resources/topologies/topo_linestrip_adj.png")));
+      ui->topologyDiagram->setPixmap(Pixmaps::topo_linestrip_adj());
       break;
     case eTopology_TriangleList_Adj:
-      ui->topologyDiagram->setPixmap(
-          QPixmap(QString::fromUtf8(":/Resources/topologies/topo_trilist_adj.png")));
+      ui->topologyDiagram->setPixmap(Pixmaps::topo_trilist_adj());
       break;
     case eTopology_TriangleStrip_Adj:
-      ui->topologyDiagram->setPixmap(
-          QPixmap(QString::fromUtf8(":/Resources/topologies/topo_tristrip_adj.png")));
+      ui->topologyDiagram->setPixmap(Pixmaps::topo_tristrip_adj());
       break;
-    default:
-      ui->topologyDiagram->setPixmap(
-          QPixmap(QString::fromUtf8(":/Resources/topologies/topo_patch.png")));
-      break;
+    default: ui->topologyDiagram->setPixmap(Pixmaps::topo_patch()); break;
   }
 
   vs = ui->viBuffers->verticalScrollBar()->value();
@@ -1547,7 +1554,7 @@ void VulkanPipelineStateViewer::setState()
       if(!ibufferUsed)
         length = 0;
 
-      FetchBuffer *buf = m_Ctx->GetBuffer(state.IA.ibuffer.buf);
+      FetchBuffer *buf = m_Ctx.GetBuffer(state.IA.ibuffer.buf);
 
       if(buf)
       {
@@ -1555,8 +1562,9 @@ void VulkanPipelineStateViewer::setState()
         length = buf->length;
       }
 
-      QTreeWidgetItem *node = makeTreeNode({"Index", name, "Index", (qulonglong)state.IA.ibuffer.offs,
-                                            draw->indexByteWidth, (qulonglong)length, ""});
+      QTreeWidgetItem *node =
+          makeTreeNode({"Index", name, "Index", (qulonglong)state.IA.ibuffer.offs,
+                        draw != NULL ? draw->indexByteWidth : 0, (qulonglong)length, ""});
 
       ui->viBuffers->setHoverIcons(node, action, action_hover);
 
@@ -1627,7 +1635,7 @@ void VulkanPipelineStateViewer::setState()
           name = "Buffer " + ToQStr(vbuff->buffer);
           offset = vbuff->offset;
 
-          FetchBuffer *buf = m_Ctx->GetBuffer(vbuff->buffer);
+          FetchBuffer *buf = m_Ctx.GetBuffer(vbuff->buffer);
           if(buf)
           {
             name = buf->name;
@@ -1694,12 +1702,12 @@ void VulkanPipelineStateViewer::setState()
   ui->viBuffers->setUpdatesEnabled(true);
   ui->viBuffers->verticalScrollBar()->setValue(vs);
 
-  setShaderState(state.VS, state.graphics, ui->vsShader, ui->vsResources, ui->vsUBOs);
-  setShaderState(state.GS, state.graphics, ui->gsShader, ui->gsResources, ui->gsUBOs);
-  setShaderState(state.TCS, state.graphics, ui->tcsShader, ui->tcsResources, ui->tcsUBOs);
-  setShaderState(state.TES, state.graphics, ui->tesShader, ui->tesResources, ui->tesUBOs);
-  setShaderState(state.FS, state.graphics, ui->fsShader, ui->fsResources, ui->fsUBOs);
-  setShaderState(state.CS, state.compute, ui->csShader, ui->csResources, ui->csUBOs);
+  setShaderState(state.m_VS, state.graphics, ui->vsShader, ui->vsResources, ui->vsUBOs);
+  setShaderState(state.m_GS, state.graphics, ui->gsShader, ui->gsResources, ui->gsUBOs);
+  setShaderState(state.m_TCS, state.graphics, ui->tcsShader, ui->tcsResources, ui->tcsUBOs);
+  setShaderState(state.m_TES, state.graphics, ui->tesShader, ui->tesResources, ui->tesUBOs);
+  setShaderState(state.m_FS, state.graphics, ui->fsShader, ui->fsResources, ui->fsUBOs);
+  setShaderState(state.m_CS, state.compute, ui->csShader, ui->csResources, ui->csUBOs);
 
   ////////////////////////////////////////////////
   // Rasterizer
@@ -1763,7 +1771,7 @@ void VulkanPipelineStateViewer::setState()
   ui->sampleCount->setText(QString::number(state.MSAA.rasterSamples));
   ui->sampleShading->setPixmap(state.MSAA.sampleShadingEnable ? tick : cross);
   ui->minSampleShading->setText(Formatter::Format(state.MSAA.minSampleShading));
-  ui->sampleMask->setText(QString("%1").arg(state.MSAA.sampleMask, 8, 16, QChar('0')));
+  ui->sampleMask->setText(QString("%1").arg(state.MSAA.sampleMask, 8, 16, QChar('0')).toUpper());
 
   ////////////////////////////////////////////////
   // Output Merger
@@ -1807,7 +1815,7 @@ void VulkanPipelineStateViewer::setState()
           w = h = d = a = 0;
         }
 
-        FetchTexture *tex = m_Ctx->GetTexture(p.img);
+        FetchTexture *tex = m_Ctx.GetTexture(p.img);
         if(tex)
         {
           w = tex->width;
@@ -1817,15 +1825,15 @@ void VulkanPipelineStateViewer::setState()
           name = tex->name;
           typeName = ToQStr(tex->resType);
 
-          if(!tex->customName && state.FS.ShaderDetails != NULL)
+          if(!tex->customName && state.m_FS.ShaderDetails != NULL)
           {
-            for(int s = 0; s < state.FS.ShaderDetails->OutputSig.count; s++)
+            for(int s = 0; s < state.m_FS.ShaderDetails->OutputSig.count; s++)
             {
-              if(state.FS.ShaderDetails->OutputSig[s].regIndex == (uint32_t)colIdx &&
-                 (state.FS.ShaderDetails->OutputSig[s].systemValue == eAttr_None ||
-                  state.FS.ShaderDetails->OutputSig[s].systemValue == eAttr_ColourOutput))
+              if(state.m_FS.ShaderDetails->OutputSig[s].regIndex == (uint32_t)colIdx &&
+                 (state.m_FS.ShaderDetails->OutputSig[s].systemValue == eAttr_None ||
+                  state.m_FS.ShaderDetails->OutputSig[s].systemValue == eAttr_ColourOutput))
               {
-                name = QString("<%1>").arg(ToQStr(state.FS.ShaderDetails->OutputSig[s].varName));
+                name = QString("<%1>").arg(ToQStr(state.m_FS.ShaderDetails->OutputSig[s].varName));
               }
             }
           }
@@ -1887,7 +1895,7 @@ void VulkanPipelineStateViewer::setState()
       if(showNode(usedSlot, filledSlot))
       {
         QTreeWidgetItem *node =
-            makeTreeNode({i, blend.blendEnable,
+            makeTreeNode({i, blend.blendEnable ? tr("True") : tr("False"),
 
                           ToQStr(blend.blend.Source), ToQStr(blend.blend.Destination),
                           ToQStr(blend.blend.Operation),
@@ -1948,14 +1956,14 @@ void VulkanPipelineStateViewer::setState()
     ui->stencils->addTopLevelItems(
         {makeTreeNode({"Front", ToQStr(state.DS.front.func), ToQStr(state.DS.front.failOp),
                        ToQStr(state.DS.front.depthFailOp), ToQStr(state.DS.front.passOp),
-                       QString("%1").arg(state.DS.front.writeMask, 2, 16, QChar('0')),
-                       QString("%1").arg(state.DS.front.compareMask, 2, 16, QChar('0')),
-                       QString("%1").arg(state.DS.front.ref, 2, 16, QChar('0'))}),
+                       QString("%1").arg(state.DS.front.writeMask, 2, 16, QChar('0')).toUpper(),
+                       QString("%1").arg(state.DS.front.compareMask, 2, 16, QChar('0')).toUpper(),
+                       QString("%1").arg(state.DS.front.ref, 2, 16, QChar('0')).toUpper()}),
          makeTreeNode({"Back", ToQStr(state.DS.back.func), ToQStr(state.DS.back.failOp),
                        ToQStr(state.DS.back.depthFailOp), ToQStr(state.DS.back.passOp),
-                       QString("%1").arg(state.DS.back.writeMask, 2, 16, QChar('0')),
-                       QString("%1").arg(state.DS.back.compareMask, 2, 16, QChar('0')),
-                       QString("%1").arg(state.DS.back.ref, 2, 16, QChar('0'))})});
+                       QString("%1").arg(state.DS.back.writeMask, 2, 16, QChar('0')).toUpper(),
+                       QString("%1").arg(state.DS.back.compareMask, 2, 16, QChar('0')).toUpper(),
+                       QString("%1").arg(state.DS.back.ref, 2, 16, QChar('0')).toUpper()})});
   }
   else
   {
@@ -1965,37 +1973,21 @@ void VulkanPipelineStateViewer::setState()
   ui->stencils->clearSelection();
   ui->stencils->setUpdatesEnabled(true);
 
-// highlight the appropriate stages in the flowchart
-#if 0
-  if(draw == null)
+  // highlight the appropriate stages in the flowchart
+  if(draw == NULL)
   {
-    pipeFlow.SetStagesEnabled(new bool[] { true, true, true, true, true, true, true, true, true });
+    ui->pipeFlow->setStagesEnabled({true, true, true, true, true, true, true, true, true});
   }
-  else if((draw.flags & DrawcallFlags.Dispatch) != 0)
+  else if(draw->flags & eDraw_Dispatch)
   {
-    pipeFlow.SetStagesEnabled(new bool[] { false, false, false, false, false, false, false, false, true });
+    ui->pipeFlow->setStagesEnabled({false, false, false, false, false, false, false, false, true});
   }
   else
   {
-    pipeFlow.SetStagesEnabled(new bool[] {
-      true,
-        true,
-        state.TCS.Shader != ResourceId(),
-        state.TES.Shader != ResourceId(),
-        state.GS.Shader != ResourceId(),
-        true,
-        state.FS.Shader != ResourceId(),
-        true,
-        false
-    });
-
-    // if(streamout only)
-    //{
-    //    pipeFlow.Rasterizer = false;
-    //    pipeFlow.OutputMerger = false;
-    //}
+    ui->pipeFlow->setStagesEnabled(
+        {true, true, state.m_TCS.Shader != ResourceId(), state.m_TES.Shader != ResourceId(),
+         state.m_GS.Shader != ResourceId(), true, state.m_FS.Shader != ResourceId(), true, false});
   }
-#endif
 }
 
 QString VulkanPipelineStateViewer::formatMembers(int indent, const QString &nameprefix,
@@ -2044,22 +2036,28 @@ void VulkanPipelineStateViewer::resource_itemActivated(QTreeWidgetItem *item, in
 
   if(tag.canConvert<ResourceId>())
   {
-    FetchTexture *tex = m_Ctx->GetTexture(tag.value<ResourceId>());
+    FetchTexture *tex = m_Ctx.GetTexture(tag.value<ResourceId>());
 
     if(tex)
     {
       if(tex->resType == eResType_Buffer)
       {
-        // TODO Buffer viewer
-        // var viewer = new BufferViewer(m_Core, false);
-        // viewer.ViewRawBuffer(false, 0, ulong.MaxValue, tex.ID);
-        // viewer.Show(m_DockContent.DockPanel);
+        BufferViewer *viewer = new BufferViewer(m_Ctx, false, m_Ctx.mainWindow());
+
+        viewer->ViewTexture(0, 0, tex->ID);
+
+        m_Ctx.setupDockWindow(viewer);
+
+        ToolWindowManager *manager = ToolWindowManager::managerOf(this);
+
+        ToolWindowManager::AreaReference ref(ToolWindowManager::AddTo, manager->areaOf(this));
+        manager->addToolWindow(viewer, ref);
       }
       else
       {
-        if(!m_Ctx->hasTextureViewer())
-          m_Ctx->showTextureViewer();
-        TextureViewer *viewer = m_Ctx->textureViewer();
+        if(!m_Ctx.hasTextureViewer())
+          m_Ctx.showTextureViewer();
+        TextureViewer *viewer = m_Ctx.textureViewer();
         viewer->ViewTexture(tex->ID, true);
       }
 
@@ -2113,10 +2111,16 @@ void VulkanPipelineStateViewer::resource_itemActivated(QTreeWidgetItem *item, in
 
     if(buf.ID != ResourceId())
     {
-      // TODO Buffer viewer
-      // var viewer = new BufferViewer(m_Core, false);
-      // viewer.ViewRawBuffer(true, buf.offset, buf.size, buf.ID, format);
-      // viewer.Show(m_DockContent.DockPanel);
+      BufferViewer *viewer = new BufferViewer(m_Ctx, false, m_Ctx.mainWindow());
+
+      viewer->ViewBuffer(buf.offset, buf.size, buf.ID, format);
+
+      m_Ctx.setupDockWindow(viewer);
+
+      ToolWindowManager *manager = ToolWindowManager::managerOf(this);
+
+      ToolWindowManager::AreaReference ref(ToolWindowManager::AddTo, manager->areaOf(this));
+      manager->addToolWindow(viewer, ref);
     }
   }
 }
@@ -2144,7 +2148,9 @@ void VulkanPipelineStateViewer::ubo_itemActivated(QTreeWidgetItem *item, int col
   }
 
   ConstantBufferPreviewer *prev =
-      new ConstantBufferPreviewer(m_Ctx, stage->stage, cb.slotIdx, cb.arrayIdx, m_Ctx->mainWindow());
+      new ConstantBufferPreviewer(m_Ctx, stage->stage, cb.slotIdx, cb.arrayIdx, m_Ctx.mainWindow());
+
+  m_Ctx.setupDockWindow(prev);
 
   ToolWindowManager *manager = ToolWindowManager::managerOf(this);
 
@@ -2167,10 +2173,16 @@ void VulkanPipelineStateViewer::on_viBuffers_itemActivated(QTreeWidgetItem *item
 
     if(buf.id != ResourceId())
     {
-      // TODO Buffer Viewer
-      // var viewer = new BufferViewer(m_Core, false);
-      // viewer.ViewRawBuffer(true, buf.offset, ulong.MaxValue, buf.id);
-      // viewer.Show(m_DockContent.DockPanel);
+      BufferViewer *viewer = new BufferViewer(m_Ctx, false, m_Ctx.mainWindow());
+
+      viewer->ViewBuffer(buf.offset, UINT64_MAX, buf.id);
+
+      m_Ctx.setupDockWindow(viewer);
+
+      ToolWindowManager *manager = ToolWindowManager::managerOf(this);
+
+      ToolWindowManager::AreaReference ref(ToolWindowManager::AddTo, manager->areaOf(this));
+      manager->addToolWindow(viewer, ref);
     }
   }
 }
@@ -2179,10 +2191,12 @@ void VulkanPipelineStateViewer::highlightIABind(int slot)
 {
   int idx = ((slot + 1) * 21) % 32;    // space neighbouring colours reasonably distinctly
 
-  const VulkanPipelineState::VertexInput &VI = m_Ctx->CurVulkanPipelineState.VI;
+  const VulkanPipelineState::VertexInput &VI = m_Ctx.CurVulkanPipelineState.VI;
 
   QColor col = QColor::fromHslF(float(idx) / 32.0f, 1.0f, 0.95f);
 
+  ui->viAttrs->model()->blockSignals(true);
+  ui->viBuffers->model()->blockSignals(true);
   if(slot < m_VBNodes.count())
   {
     QTreeWidgetItem *item = m_VBNodes[(int)slot];
@@ -2211,18 +2225,32 @@ void VulkanPipelineStateViewer::highlightIABind(int slot)
     for(int c = 0; c < item->columnCount(); c++)
       item->setBackground(c, itemBrush);
   }
+  ui->viAttrs->model()->blockSignals(false);
+  ui->viBuffers->model()->blockSignals(false);
+
+  if(ui->viAttrs->topLevelItemCount() > 0)
+  {
+    ui->viAttrs->topLevelItem(0)->setDisabled(true);
+    ui->viAttrs->topLevelItem(0)->setDisabled(false);
+  }
+
+  if(ui->viBuffers->topLevelItemCount() > 0)
+  {
+    ui->viBuffers->topLevelItem(0)->setDisabled(true);
+    ui->viBuffers->topLevelItem(0)->setDisabled(false);
+  }
 }
 
 void VulkanPipelineStateViewer::on_viAttrs_mouseMove(QMouseEvent *e)
 {
-  if(!m_Ctx->LogLoaded())
+  if(!m_Ctx.LogLoaded())
     return;
 
   QModelIndex idx = ui->viAttrs->indexAt(e->pos());
 
   vertex_leave(NULL);
 
-  const VulkanPipelineState::VertexInput &VI = m_Ctx->CurVulkanPipelineState.VI;
+  const VulkanPipelineState::VertexInput &VI = m_Ctx.CurVulkanPipelineState.VI;
 
   if(idx.isValid())
   {
@@ -2237,13 +2265,15 @@ void VulkanPipelineStateViewer::on_viAttrs_mouseMove(QMouseEvent *e)
 
 void VulkanPipelineStateViewer::on_viBuffers_mouseMove(QMouseEvent *e)
 {
-  if(!m_Ctx->LogLoaded())
+  if(!m_Ctx.LogLoaded())
     return;
 
   QTreeWidgetItem *item = ui->viBuffers->itemAt(e->pos());
 
   vertex_leave(NULL);
 
+  ui->viAttrs->model()->blockSignals(true);
+  ui->viBuffers->model()->blockSignals(true);
   if(item)
   {
     int idx = m_VBNodes.indexOf(item);
@@ -2257,10 +2287,26 @@ void VulkanPipelineStateViewer::on_viBuffers_mouseMove(QMouseEvent *e)
         item->setBackground(c, QBrush(ui->viBuffers->palette().color(QPalette::Window)));
     }
   }
+  ui->viAttrs->model()->blockSignals(false);
+  ui->viBuffers->model()->blockSignals(false);
+
+  if(ui->viAttrs->topLevelItemCount() > 0)
+  {
+    ui->viAttrs->topLevelItem(0)->setDisabled(true);
+    ui->viAttrs->topLevelItem(0)->setDisabled(false);
+  }
+
+  if(ui->viBuffers->topLevelItemCount() > 0)
+  {
+    ui->viBuffers->topLevelItem(0)->setDisabled(true);
+    ui->viBuffers->topLevelItem(0)->setDisabled(false);
+  }
 }
 
 void VulkanPipelineStateViewer::vertex_leave(QEvent *e)
 {
+  ui->viAttrs->model()->blockSignals(true);
+  ui->viBuffers->model()->blockSignals(true);
   for(int i = 0; i < ui->viAttrs->topLevelItemCount(); i++)
   {
     QTreeWidgetItem *item = ui->viAttrs->topLevelItem(i);
@@ -2274,14 +2320,172 @@ void VulkanPipelineStateViewer::vertex_leave(QEvent *e)
     for(int c = 0; c < item->columnCount(); c++)
       item->setBackground(c, QBrush());
   }
+  ui->viAttrs->model()->blockSignals(false);
+  ui->viBuffers->model()->blockSignals(false);
+
+  if(ui->viAttrs->topLevelItemCount() > 0)
+  {
+    ui->viAttrs->topLevelItem(0)->setDisabled(true);
+    ui->viAttrs->topLevelItem(0)->setDisabled(false);
+  }
+
+  if(ui->viBuffers->topLevelItemCount() > 0)
+  {
+    ui->viBuffers->topLevelItem(0)->setDisabled(true);
+    ui->viBuffers->topLevelItem(0)->setDisabled(false);
+  }
+}
+
+void VulkanPipelineStateViewer::on_pipeFlow_stageSelected(int index)
+{
+  ui->stagesTabs->setCurrentIndex(index);
 }
 
 void VulkanPipelineStateViewer::shaderView_clicked()
 {
+  const VulkanPipelineState::ShaderStage *stage =
+      stageForSender(qobject_cast<QWidget *>(QObject::sender()));
+
+  if(stage == NULL || stage->Shader == ResourceId())
+    return;
+
+  ShaderReflection *shaderDetails = stage->ShaderDetails;
+
+  ShaderViewer *shad = ShaderViewer::viewShader(m_Ctx, &stage->BindpointMapping, shaderDetails,
+                                                stage->stage, m_Ctx.mainWindow());
+
+  m_Ctx.setupDockWindow(shad);
+
+  ToolWindowManager *manager = ToolWindowManager::managerOf(this);
+
+  ToolWindowManager::AreaReference ref(ToolWindowManager::AddTo, manager->areaOf(this));
+  manager->addToolWindow(shad, ref);
 }
 
 void VulkanPipelineStateViewer::shaderEdit_clicked()
 {
+  QWidget *sender = qobject_cast<QWidget *>(QObject::sender());
+  const VulkanPipelineState::ShaderStage *stage = stageForSender(sender);
+
+  if(!stage || stage->Shader == ResourceId())
+    return;
+
+  const ShaderReflection *shaderDetails = stage->ShaderDetails;
+
+  if(!shaderDetails)
+    return;
+
+  QString entryFunc = QString("EditedShader%1S").arg(ToQStr(stage->stage, eGraphicsAPI_Vulkan)[0]);
+
+  QString mainfile = "";
+
+  QStringMap files;
+
+  bool hasOrigSource = m_Common.PrepareShaderEditing(shaderDetails, entryFunc, files, mainfile);
+
+  if(!hasOrigSource)
+  {
+    QString glsl;
+
+    if(!m_Ctx.Config.SPIRVDisassemblers.isEmpty())
+      glsl = disassembleSPIRV(shaderDetails);
+
+    if(glsl.isEmpty())
+      glsl = ToQStr(shaderDetails->Disassembly);
+
+    mainfile = "generated.glsl";
+
+    files[mainfile] = glsl;
+  }
+
+  if(files.empty())
+    return;
+
+  m_Common.EditShader(stage->stage, stage->Shader, shaderDetails, entryFunc, files, mainfile);
+}
+
+QString VulkanPipelineStateViewer::disassembleSPIRV(const ShaderReflection *shaderDetails)
+{
+  QString glsl;
+
+  const SPIRVDisassembler &disasm = m_Ctx.Config.SPIRVDisassemblers[0];
+
+  if(disasm.executable.isEmpty())
+    return "";
+
+  QString spv_bin_file = QDir(QDir::tempPath()).absoluteFilePath("spv_bin.spv");
+
+  QFile binHandle(spv_bin_file);
+  if(binHandle.open(QFile::WriteOnly | QIODevice::Truncate))
+  {
+    binHandle.write(
+        QByteArray((const char *)shaderDetails->RawBytes.elems, shaderDetails->RawBytes.count));
+    binHandle.close();
+  }
+  else
+  {
+    RDDialog::critical(this, tr("Error writing temp file"),
+                       tr("Couldn't write temporary SPIR-V file %1.").arg(spv_bin_file));
+    return "";
+  }
+
+  if(!disasm.args.contains("{spv_bin}"))
+  {
+    RDDialog::critical(
+        this, tr("Wrongly configured disassembler"),
+        tr("Please use {spv_bin} in the disassembler arguments to specify the input file."));
+    return "";
+  }
+
+  LambdaThread *thread = new LambdaThread([this, &glsl, &disasm, spv_bin_file]() {
+    QString spv_disas_file = QDir(QDir::tempPath()).absoluteFilePath("spv_disas.txt");
+
+    QString args = disasm.args;
+
+    bool writesToFile = disasm.args.contains("{spv_disas}");
+
+    args.replace(QString::fromUtf8("{spv_bin}"), spv_bin_file);
+    args.replace(QString::fromUtf8("{spv_disas}"), spv_disas_file);
+
+    QStringList argList = ParseArgsList(args);
+
+    QProcess process;
+    process.start(disasm.executable, argList);
+    process.waitForFinished();
+
+    if(process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0)
+    {
+      GUIInvoke::call([this]() {
+        RDDialog::critical(this, tr("Error running disassembler"),
+                           tr("There was an error invoking the external SPIR-V disassembler."));
+      });
+    }
+
+    if(writesToFile)
+    {
+      QFile outputHandle(spv_disas_file);
+      if(outputHandle.open(QFile::ReadOnly | QIODevice::Text))
+      {
+        glsl = QString::fromUtf8(outputHandle.readAll());
+        outputHandle.close();
+      }
+    }
+    else
+    {
+      glsl = QString::fromUtf8(process.readAll());
+    }
+
+    QFile::remove(spv_bin_file);
+    QFile::remove(spv_disas_file);
+  });
+  thread->start();
+
+  ShowProgressDialog(this, tr("Please wait - running external disassembler"),
+                     [thread]() { return !thread->isRunning(); });
+
+  thread->deleteLater();
+
+  return glsl;
 }
 
 void VulkanPipelineStateViewer::shaderSave_clicked()
@@ -2297,32 +2501,7 @@ void VulkanPipelineStateViewer::shaderSave_clicked()
   if(stage->Shader == ResourceId())
     return;
 
-  QString filename =
-      RDDialog::getSaveFileName(this, tr("Save Shader As"), QString(), "SPIR-V files (*.spv)");
-
-  if(filename != "")
-  {
-    QDir dirinfo = QFileInfo(filename).dir();
-    if(dirinfo.exists())
-    {
-      QFile f(filename);
-      if(f.open(QIODevice::WriteOnly | QIODevice::Truncate))
-      {
-        f.write((const char *)shaderDetails->RawBytes.elems, (qint64)shaderDetails->RawBytes.count);
-      }
-      else
-      {
-        RDDialog::critical(
-            this, tr("Error saving shader"),
-            tr("Couldn't open path %1 for write.\n%2").arg(filename).arg(f.errorString()));
-      }
-    }
-    else
-    {
-      RDDialog::critical(this, tr("Invalid directory"),
-                         tr("Cannot find target directory to save to"));
-    }
-  }
+  m_Common.SaveShaderFile(shaderDetails);
 }
 
 void VulkanPipelineStateViewer::on_exportHTML_clicked()
@@ -2331,7 +2510,7 @@ void VulkanPipelineStateViewer::on_exportHTML_clicked()
 
 void VulkanPipelineStateViewer::on_meshView_clicked()
 {
-  if(!m_Ctx->hasMeshPreview())
-    m_Ctx->showMeshPreview();
-  ToolWindowManager::raiseToolWindow(m_Ctx->meshPreview());
+  if(!m_Ctx.hasMeshPreview())
+    m_Ctx.showMeshPreview();
+  ToolWindowManager::raiseToolWindow(m_Ctx.meshPreview());
 }

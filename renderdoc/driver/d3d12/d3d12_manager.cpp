@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -957,13 +957,13 @@ bool D3D12ResourceManager::Serialise_InitialState(ResourceId resid, ID3D12Device
       HRESULT hr = m_Device->GetReal()->CreateDescriptorHeap(&desc, __uuidof(ID3D12DescriptorHeap),
                                                              (void **)&copyheap);
 
-      copyheap = new WrappedID3D12DescriptorHeap(copyheap, m_Device, desc);
-
       if(FAILED(hr))
       {
         RDCERR("Failed to create CPU descriptor heap for initial state: 0x%08x", hr);
         return false;
       }
+
+      copyheap = new WrappedID3D12DescriptorHeap(copyheap, m_Device, desc);
 
       D3D12_CPU_DESCRIPTOR_HANDLE handle = copyheap->GetCPUDescriptorHandleForHeapStart();
 
@@ -1268,6 +1268,7 @@ void D3D12ResourceManager::Apply_InitialState(ID3D12DeviceChild *live, InitialCo
           list->ResourceBarrier((UINT)barriers.size(), &barriers[0]);
 
 #if ENABLED(SINGLE_FLUSH_VALIDATE)
+        m_Device->CloseInitialStateList();
         m_Device->ExecuteLists();
         m_Device->FlushLists(true);
 #endif

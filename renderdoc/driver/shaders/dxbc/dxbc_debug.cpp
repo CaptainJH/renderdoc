@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -276,6 +276,8 @@ ShaderVariable sat(const ShaderVariable &v, const VarType type)
           type);
   }
 
+  r.type = type;
+
   return r;
 }
 
@@ -319,6 +321,8 @@ ShaderVariable abs(const ShaderVariable &v, const VarType type)
           type);
   }
 
+  r.type = type;
+
   return r;
 }
 
@@ -361,6 +365,8 @@ ShaderVariable neg(const ShaderVariable &v, const VarType type)
           "fxc.",
           type);
   }
+
+  r.type = type;
 
   return r;
 }
@@ -410,6 +416,8 @@ ShaderVariable mul(const ShaderVariable &a, const ShaderVariable &b, const VarTy
           type);
   }
 
+  r.type = type;
+
   return r;
 }
 
@@ -458,6 +466,8 @@ ShaderVariable div(const ShaderVariable &a, const ShaderVariable &b, const VarTy
           type);
   }
 
+  r.type = type;
+
   return r;
 }
 
@@ -505,6 +515,8 @@ ShaderVariable add(const ShaderVariable &a, const ShaderVariable &b, const VarTy
           "fxc.",
           type);
   }
+
+  r.type = type;
 
   return r;
 }
@@ -571,6 +583,25 @@ void State::Init()
 bool State::Finished() const
 {
   return dxbc && (done || nextInstruction >= (int)dxbc->GetNumInstructions());
+}
+
+void State::AssignValue(ShaderVariable &dst, uint32_t dstIndex, const ShaderVariable &src,
+                        uint32_t srcIndex)
+{
+  if(src.type == eVar_Float)
+  {
+    float ft = src.value.fv[srcIndex];
+    if(!_finite(ft) || _isnan(ft))
+      flags |= eShaderDbg_GeneratedNanOrInf;
+  }
+  else if(src.type == eVar_Double)
+  {
+    double dt = src.value.dv[srcIndex];
+    if(!_finite(dt) || _isnan(dt))
+      flags |= eShaderDbg_GeneratedNanOrInf;
+  }
+
+  dst.value.uv[dstIndex] = src.value.uv[srcIndex];
 }
 
 void State::SetDst(const ASMOperand &dstoper, const ASMOperation &op, const ShaderVariable &val)
@@ -689,7 +720,7 @@ void State::SetDst(const ASMOperand &dstoper, const ASMOperation &op, const Shad
     {
       RDCASSERT(dstoper.comps[0] != 0xff);
 
-      v->value.uv[dstoper.comps[0]] = right.value.u.x;
+      AssignValue(*v, dstoper.comps[0], right, 0);
     }
     else
     {
@@ -700,13 +731,13 @@ void State::SetDst(const ASMOperand &dstoper, const ASMOperation &op, const Shad
         if(dstoper.comps[i] != 0xff)
         {
           RDCASSERT(dstoper.comps[i] < v->columns);
-          v->value.uv[dstoper.comps[i]] = right.value.uv[dstoper.comps[i]];
+          AssignValue(*v, dstoper.comps[i], right, dstoper.comps[i]);
           compsWritten++;
         }
       }
 
       if(compsWritten == 0)
-        v->value.uv[0] = right.value.uv[0];
+        AssignValue(*v, 0, right, 0);
     }
   }
 }
@@ -1070,6 +1101,7 @@ State State::GetNext(GlobalState &global, State quad[4]) const
   const ASMOperation &op = s.dxbc->GetInstruction((size_t)s.nextInstruction);
 
   s.nextInstruction++;
+  s.flags = 0;
 
   vector<ShaderVariable> srcOpers;
 
@@ -1489,12 +1521,6 @@ State State::GetNext(GlobalState &global, State quad[4]) const
       break;
     }
 
-    case OPCODE_ISHL:
-      s.SetDst(op.operands[0], op, ShaderVariable("", srcOpers[0].value.i.x << srcOpers[1].value.i.x,
-                                                  srcOpers[0].value.i.y << srcOpers[1].value.i.y,
-                                                  srcOpers[0].value.i.z << srcOpers[1].value.i.z,
-                                                  srcOpers[0].value.i.w << srcOpers[1].value.i.w));
-      break;
     case OPCODE_IBFE:
     {
       // bottom 5 bits
@@ -1584,20 +1610,63 @@ State State::GetNext(GlobalState &global, State quad[4]) const
       s.SetDst(op.operands[0], op, dest);
       break;
     }
+    case OPCODE_ISHL:
+    {
+      uint32_t shifts[] = {
+          srcOpers[1].value.u.x & 0x1f, srcOpers[1].value.u.y & 0x1f, srcOpers[1].value.u.z & 0x1f,
+          srcOpers[1].value.u.w & 0x1f,
+      };
+
+      // if we were only given a single component, it's the form that shifts all components
+      // by the same amount
+      if(op.operands[2].numComponents == NUMCOMPS_1 ||
+         (op.operands[2].comps[2] < 4 && op.operands[2].comps[2] == 0xff))
+        shifts[3] = shifts[2] = shifts[1] = shifts[0];
+
+      s.SetDst(
+          op.operands[0], op,
+          ShaderVariable("", srcOpers[0].value.i.x << shifts[0], srcOpers[0].value.i.y << shifts[1],
+                         srcOpers[0].value.i.z << shifts[2], srcOpers[0].value.i.w << shifts[3]));
+      break;
+    }
     case OPCODE_USHR:
-      s.SetDst(op.operands[0], op,
-               ShaderVariable("", srcOpers[0].value.u.x >> (srcOpers[1].value.u.x & 0x1f),
-                              srcOpers[0].value.u.y >> (srcOpers[1].value.u.y & 0x1f),
-                              srcOpers[0].value.u.z >> (srcOpers[1].value.u.z & 0x1f),
-                              srcOpers[0].value.u.w >> (srcOpers[1].value.u.w & 0x1f)));
+    {
+      uint32_t shifts[] = {
+          srcOpers[1].value.u.x & 0x1f, srcOpers[1].value.u.y & 0x1f, srcOpers[1].value.u.z & 0x1f,
+          srcOpers[1].value.u.w & 0x1f,
+      };
+
+      // if we were only given a single component, it's the form that shifts all components
+      // by the same amount
+      if(op.operands[2].numComponents == NUMCOMPS_1 ||
+         (op.operands[2].comps[2] < 4 && op.operands[2].comps[2] == 0xff))
+        shifts[3] = shifts[2] = shifts[1] = shifts[0];
+
+      s.SetDst(
+          op.operands[0], op,
+          ShaderVariable("", srcOpers[0].value.u.x >> shifts[0], srcOpers[0].value.u.y >> shifts[1],
+                         srcOpers[0].value.u.z >> shifts[2], srcOpers[0].value.u.w >> shifts[3]));
       break;
+    }
     case OPCODE_ISHR:
-      s.SetDst(op.operands[0], op,
-               ShaderVariable("", srcOpers[0].value.i.x >> (srcOpers[1].value.u.x & 0x1f),
-                              srcOpers[0].value.i.y >> (srcOpers[1].value.u.y & 0x1f),
-                              srcOpers[0].value.i.z >> (srcOpers[1].value.u.z & 0x1f),
-                              srcOpers[0].value.i.w >> (srcOpers[1].value.u.w & 0x1f)));
+    {
+      uint32_t shifts[] = {
+          srcOpers[1].value.u.x & 0x1f, srcOpers[1].value.u.y & 0x1f, srcOpers[1].value.u.z & 0x1f,
+          srcOpers[1].value.u.w & 0x1f,
+      };
+
+      // if we were only given a single component, it's the form that shifts all components
+      // by the same amount
+      if(op.operands[2].numComponents == NUMCOMPS_1 ||
+         (op.operands[2].comps[2] < 4 && op.operands[2].comps[2] == 0xff))
+        shifts[3] = shifts[2] = shifts[1] = shifts[0];
+
+      s.SetDst(
+          op.operands[0], op,
+          ShaderVariable("", srcOpers[0].value.i.x >> shifts[0], srcOpers[0].value.i.y >> shifts[1],
+                         srcOpers[0].value.i.z >> shifts[2], srcOpers[0].value.i.w >> shifts[3]));
       break;
+    }
     case OPCODE_AND:
       s.SetDst(op.operands[0], op, ShaderVariable("", srcOpers[0].value.i.x & srcOpers[1].value.i.x,
                                                   srcOpers[0].value.i.y & srcOpers[1].value.i.y,
@@ -2334,6 +2403,9 @@ State State::GetNext(GlobalState &global, State quad[4]) const
         load = false;
       }
 
+      if(load)
+        s.flags = eShaderDbg_SampleLoadGather;
+
       if(op.operation == OPCODE_LD_STRUCTURED || op.operation == OPCODE_STORE_STRUCTURED)
       {
         if(load)
@@ -2529,7 +2601,7 @@ State State::GetNext(GlobalState &global, State quad[4]) const
           for(int i = 0; i < 4; i++)
           {
             uint8_t comp = op.operands[srcIdx + 1].comps[i];
-            if(op.operands[srcIdx + 1].comps[i] == 0xff || i >= maxIndex)
+            if(op.operands[srcIdx + 1].comps[i] == 0xff || comp >= maxIndex)
               comp = 0;
 
             fetch.value.uv[i] = datau32[comp];
@@ -2550,7 +2622,7 @@ State State::GetNext(GlobalState &global, State quad[4]) const
           {
             uint8_t comp = op.operands[0].comps[i];
             // masks must be contiguous from x, if we reach the 'end' we're done
-            if(comp == 0xff || i >= maxIndex)
+            if(comp == 0xff || comp >= maxIndex)
               break;
 
             datau32[i] = srcOpers[srcIdx].value.uv[i];
@@ -2595,7 +2667,7 @@ State State::GetNext(GlobalState &global, State quad[4]) const
               eDbgCategory_Shaders, eDbgSeverity_Medium, eDbgSource_RuntimeWarning,
               StringFormat::Fmt(
                   "Shader debugging %d: %s\nNo targets bound for sampleinfo on rasterizer",
-                  s.nextInstruction - 1, op.str));
+                  s.nextInstruction - 1, op.str.c_str()));
         }
 
         SAFE_RELEASE(rtv);
@@ -2631,7 +2703,7 @@ State State::GetNext(GlobalState &global, State quad[4]) const
           device->AddDebugMessage(
               eDbgCategory_Shaders, eDbgSeverity_Medium, eDbgSource_RuntimeWarning,
               StringFormat::Fmt("Shader debugging %d: %s\nSRV is NULL being queried by sampleinfo",
-                                s.nextInstruction - 1, op.str));
+                                s.nextInstruction - 1, op.str.c_str()));
         }
 
         SAFE_RELEASE(srv);
@@ -2665,7 +2737,7 @@ State State::GetNext(GlobalState &global, State quad[4]) const
         device->AddDebugMessage(
             eDbgCategory_Shaders, eDbgSeverity_Medium, eDbgSource_RuntimeWarning,
             StringFormat::Fmt("Shader debugging %d: %s\nSRV is NULL being queried by sampleinfo",
-                              s.nextInstruction - 1, op.str));
+                              s.nextInstruction - 1, op.str.c_str()));
       }
 
       // "If there is no resource bound to the specified slot, 0 is returned."
@@ -2700,7 +2772,7 @@ State State::GetNext(GlobalState &global, State quad[4]) const
                 eDbgCategory_Shaders, eDbgSeverity_Medium, eDbgSource_RuntimeWarning,
                 StringFormat::Fmt(
                     "Shader debugging %d: %s\nNon-multisampled texture being passed to sample_pos",
-                    s.nextInstruction - 1, op.str));
+                    s.nextInstruction - 1, op.str.c_str()));
 
             sample_pattern = NULL;
           }
@@ -2849,7 +2921,7 @@ State State::GetNext(GlobalState &global, State quad[4]) const
                   eDbgCategory_Shaders, eDbgSeverity_High, eDbgSource_RuntimeWarning,
                   StringFormat::Fmt(
                       "Shader debugging %d: %s\nUAV being queried by bufinfo is not a buffer",
-                      s.nextInstruction - 1, op.str));
+                      s.nextInstruction - 1, op.str.c_str()));
             }
           }
           else
@@ -2859,7 +2931,7 @@ State State::GetNext(GlobalState &global, State quad[4]) const
             device->AddDebugMessage(
                 eDbgCategory_Shaders, eDbgSeverity_Medium, eDbgSource_RuntimeWarning,
                 StringFormat::Fmt("Shader debugging %d: %s\nUAV being queried by bufinfo is NULL",
-                                  s.nextInstruction - 1, op.str));
+                                  s.nextInstruction - 1, op.str.c_str()));
           }
 
           SAFE_RELEASE(uav);
@@ -2903,7 +2975,7 @@ State State::GetNext(GlobalState &global, State quad[4]) const
                   eDbgCategory_Shaders, eDbgSeverity_High, eDbgSource_RuntimeWarning,
                   StringFormat::Fmt(
                       "Shader debugging %d: %s\nSRV being queried by bufinfo is not a buffer",
-                      s.nextInstruction - 1, op.str));
+                      s.nextInstruction - 1, op.str.c_str()));
             }
           }
           else
@@ -2913,7 +2985,7 @@ State State::GetNext(GlobalState &global, State quad[4]) const
             device->AddDebugMessage(
                 eDbgCategory_Shaders, eDbgSeverity_Medium, eDbgSource_RuntimeWarning,
                 StringFormat::Fmt("Shader debugging %d: %s\nSRV being queried by bufinfo is NULL",
-                                  s.nextInstruction - 1, op.str));
+                                  s.nextInstruction - 1, op.str.c_str()));
           }
 
           SAFE_RELEASE(srv);
@@ -3396,6 +3468,11 @@ State State::GetNext(GlobalState &global, State quad[4]) const
       string funcRet = "";
       DXGI_FORMAT retFmt = DXGI_FORMAT_UNKNOWN;
 
+      if(op.operation != OPCODE_LOD)
+      {
+        s.flags = eShaderDbg_SampleLoadGather;
+      }
+
       if(op.operation == OPCODE_SAMPLE_C || op.operation == OPCODE_SAMPLE_C_LZ ||
          op.operation == OPCODE_GATHER4_C || op.operation == OPCODE_GATHER4_PO_C ||
          op.operation == OPCODE_LOD)
@@ -3786,10 +3863,10 @@ State State::GetNext(GlobalState &global, State quad[4]) const
       // serious printf abuse below!
 
       char *formats[4][2] = {
-          {"float(%f)", "int(%d)"},
-          {"float2(%f, %f)", "int2(%d, %d)"},
-          {"float3(%f, %f, %f)", "int3(%d, %d, %d)"},
-          {"float4(%f, %f, %f, %f)", "int4(%d, %d, %d, %d)"},
+          {"float(%.10f)", "int(%d)"},
+          {"float2(%.10f, %.10f)", "int2(%d, %d)"},
+          {"float3(%.10f, %.10f, %.10f)", "int3(%d, %d, %d)"},
+          {"float4(%.10f, %.10f, %.10f, %.10f)", "int4(%d, %d, %d, %d)"},
       };
 
       int texcoordType = 0;
@@ -3970,7 +4047,7 @@ State State::GetNext(GlobalState &global, State quad[4]) const
       else if(op.operation == OPCODE_SAMPLE_L)
       {
         // lod selection
-        StringFormat::snprintf(buf, 255, "%f", srcOpers[3].value.f.x);
+        StringFormat::snprintf(buf, 255, "%.10f", srcOpers[3].value.f.x);
 
         sampleProgram = texture + " : register(t0);\n" + sampler + " : register(s0);\n\n";
         sampleProgram += funcRet + " main() : SV_Target0\n{\nreturn ";
@@ -4015,7 +4092,7 @@ State State::GetNext(GlobalState &global, State quad[4]) const
         if(op.operation == OPCODE_SAMPLE_C)
         {
           // comparison value
-          StringFormat::snprintf(buf, 255, "%f", srcOpers[3].value.f.x);
+          StringFormat::snprintf(buf, 255, "%.10f", srcOpers[3].value.f.x);
 
           sampleProgram = texture + " : register(t0);\n" + sampler + " : register(s0);\n\n";
           sampleProgram += funcRet + " main(float4 pos : SV_Position, float" + uvDim +
@@ -4038,7 +4115,7 @@ State State::GetNext(GlobalState &global, State quad[4]) const
       else if(op.operation == OPCODE_SAMPLE_C_LZ)
       {
         // comparison value
-        StringFormat::snprintf(buf, 255, "%f", srcOpers[3].value.f.x);
+        StringFormat::snprintf(buf, 255, "%.10f", srcOpers[3].value.f.x);
 
         sampleProgram = texture + " : register(t0);\n" + sampler + " : register(s0);\n\n";
         sampleProgram += funcRet + " main() : SV_Target0\n{\nreturn ";
@@ -4072,9 +4149,9 @@ State State::GetNext(GlobalState &global, State quad[4]) const
       {
         // comparison value
         if(op.operation == OPCODE_GATHER4_C)
-          StringFormat::snprintf(buf, 255, ", %f", srcOpers[3].value.f.x);
+          StringFormat::snprintf(buf, 255, ", %.10f", srcOpers[3].value.f.x);
         else if(op.operation == OPCODE_GATHER4_PO_C)
-          StringFormat::snprintf(buf, 255, ", %f", srcOpers[4].value.f.x);
+          StringFormat::snprintf(buf, 255, ", %.10f", srcOpers[4].value.f.x);
 
         sampleProgram = texture + " : register(t0);\n" + sampler + " : register(s0);\n\n";
         sampleProgram += funcRet + " main() : SV_Target0\n{\nreturn ";

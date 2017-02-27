@@ -1,7 +1,7 @@
 ﻿/******************************************************************************
  * The MIT License (MIT)
  * 
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -175,6 +175,7 @@ namespace renderdocui.Code
         public string LastCaptureExe = "";
         public List<string> RecentCaptureSettings = new List<string>();
         public string AdbExecutablePath = "";
+        public uint MaxConnectTimeout = 30;
 
         // for historical reasons, this was named CaptureSavePath
         [XmlElement("CaptureSavePath")]
@@ -262,6 +263,7 @@ namespace renderdocui.Code
 
         public TimeUnit EventBrowser_TimeUnit = TimeUnit.Microseconds;
         public bool EventBrowser_HideEmpty = false;
+        public bool EventBrowser_HideAPICalls = false;
 
         public bool EventBrowser_ApplyColours = true;
         public bool EventBrowser_ColourEventRow = true;

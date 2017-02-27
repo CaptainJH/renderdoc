@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -286,9 +286,11 @@ enum
 struct FoundFile
 {
   FoundFile() : flags(0) {}
-  FoundFile(string fn, uint32_t f) : filename(fn), flags(f) {}
+  FoundFile(string fn, uint32_t f) : filename(fn), flags(f), lastmod(0), size(0) {}
   string filename;
   uint32_t flags;
+  uint32_t lastmod;
+  uint64_t size;
 };
 
 vector<FoundFile> GetFilesInDirectory(const char *path);
@@ -453,6 +455,6 @@ inline uint64_t CountLeadingZeroes(uint64_t value);
 namespace Android
 {
 bool IsHostADB(const char *hostname);
-uint32_t StartAndroidPackageForCapture(const char *package);
+uint32_t StartAndroidPackageForCapture(const char *host, const char *package);
 string adbExecCommand(const string &args);
 }

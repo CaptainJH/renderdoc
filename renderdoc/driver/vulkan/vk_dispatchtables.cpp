@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -115,7 +115,7 @@ void InitInstanceExtensionTables(VkInstance instance)
 
 #undef HookInitExtension
 #define HookInitExtension(ext, func) \
-  if(info->ext)                      \
+  if(info->ext_##ext)                \
   {                                  \
     InstanceGPA(func);               \
   }
@@ -150,7 +150,7 @@ void InitDeviceExtensionTables(VkDevice device)
 
 #undef HookInitExtension
 #define HookInitExtension(ext, func) \
-  if(info->ext)                      \
+  if(info->ext_##ext)                \
   {                                  \
     DeviceGPA(func);                 \
   }

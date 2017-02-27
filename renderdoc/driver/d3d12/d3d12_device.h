@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -249,6 +249,9 @@ private:
   D3D12Replay m_Replay;
   D3D12DebugManager *m_DebugManager;
 
+  set<ResourceId> m_UploadResourceIds;
+  map<uint64_t, ID3D12Resource *> m_UploadBuffers;
+
   Threading::CriticalSection m_MapsLock;
   vector<MapState> m_Maps;
 
@@ -330,6 +333,7 @@ private:
 
   WrappedIDXGISwapChain4 *m_LastSwap;
 
+  D3D12_FEATURE_DATA_D3D12_OPTIONS m_D3D12Opts;
   UINT m_DescriptorIncrements[D3D12_DESCRIPTOR_HEAP_TYPE_NUM_TYPES];
 
   void Serialise_CaptureScope(uint64_t offset);
@@ -362,6 +366,8 @@ public:
   FetchFrameRecord &GetFrameRecord() { return m_FrameRecord; }
   const FetchDrawcall *GetDrawcall(uint32_t eventID);
 
+  void AddDebugMessage(DebugMessageCategory c, DebugMessageSeverity sv, DebugMessageSource src,
+                       std::string d);
   void AddDebugMessage(const DebugMessage &msg) { m_DebugMessages.push_back(msg); }
   vector<DebugMessage> GetDebugMessages();
 
@@ -425,6 +431,7 @@ public:
   ID3D12GraphicsCommandList *GetNewList();
   ID3D12GraphicsCommandList *GetInitialStateList();
   void CloseInitialStateList();
+  ID3D12Resource *GetUploadBuffer(uint64_t chunkOffset, uint64_t byteSize);
   void ApplyInitialContents();
 
   void ExecuteList(ID3D12GraphicsCommandList *list, ID3D12CommandQueue *queue = NULL);

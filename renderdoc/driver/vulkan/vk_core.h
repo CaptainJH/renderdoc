@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -144,6 +144,11 @@ struct VulkanDrawcallCallback
   virtual bool PostDispatch(uint32_t eid, VkCommandBuffer cmd) = 0;
   virtual void PostRedispatch(uint32_t eid, VkCommandBuffer cmd) = 0;
 
+  // finally, these are for copy/blit/resolve/clear/etc
+  virtual void PreMisc(uint32_t eid, DrawcallFlags flags, VkCommandBuffer cmd) = 0;
+  virtual bool PostMisc(uint32_t eid, DrawcallFlags flags, VkCommandBuffer cmd) = 0;
+  virtual void PostRemisc(uint32_t eid, DrawcallFlags flags, VkCommandBuffer cmd) = 0;
+
   // should we re-record all command buffers? this needs to be true if the range
   // being replayed is larger than one command buffer (which usually means the
   // whole frame).
@@ -242,7 +247,7 @@ private:
 
   // util function to handle fetching the right eventID, calling any
   // aliases then calling PreDraw/PreDispatch.
-  uint32_t HandlePreCallback(VkCommandBuffer commandBuffer, bool dispatch = false,
+  uint32_t HandlePreCallback(VkCommandBuffer commandBuffer, DrawcallFlags type = eDraw_Drawcall,
                              uint32_t multiDrawOffset = 0);
 
   vector<WindowingSystem> m_SupportedWindowSystems;
@@ -613,6 +618,8 @@ private:
 
   VulkanDrawcallTreeNode m_ParentDrawcall;
 
+  bool m_ExtensionsEnabled[VkCheckExt_Max];
+
   // in vk_<platform>.cpp
   bool AddRequiredExtensions(bool instance, vector<string> &extensionList,
                              const std::set<string> &supportedExtensions);
@@ -714,6 +721,7 @@ public:
 
   VulkanRenderState &GetRenderState() { return m_RenderState; }
   void SetDrawcallCB(VulkanDrawcallCallback *cb) { m_DrawcallCallback = cb; }
+  bool IsSupportedExtension(const char *extName);
   VkResult FilterDeviceExtensionProperties(VkPhysicalDevice physDev, uint32_t *pPropertyCount,
                                            VkExtensionProperties *pProperties);
   static VkResult GetProvidedExtensionProperties(uint32_t *pPropertyCount,
@@ -1316,21 +1324,28 @@ public:
                            const VkAllocationCallbacks *pAllocator);
 
 #if defined(VK_USE_PLATFORM_WIN32_KHR)
+  // VK_KHR_win32_surface
   VkResult vkCreateWin32SurfaceKHR(VkInstance instance,
                                    const VkWin32SurfaceCreateInfoKHR *pCreateInfo,
                                    const VkAllocationCallbacks *pAllocator, VkSurfaceKHR *pSurface);
 
   VkBool32 vkGetPhysicalDeviceWin32PresentationSupportKHR(VkPhysicalDevice physicalDevice,
                                                           uint32_t queueFamilyIndex);
+
+  // VK_NV_external_memory_win32
+  VkResult vkGetMemoryWin32HandleNV(VkDevice device, VkDeviceMemory memory,
+                                    VkExternalMemoryHandleTypeFlagsNV handleType, HANDLE *pHandle);
 #endif
 
 #if defined(VK_USE_PLATFORM_ANDROID_KHR)
+  // VK_KHR_android_surface
   VkResult vkCreateAndroidSurfaceKHR(VkInstance instance,
                                      const VkAndroidSurfaceCreateInfoKHR *pCreateInfo,
                                      const VkAllocationCallbacks *pAllocator, VkSurfaceKHR *pSurface);
 #endif
 
 #if defined(VK_USE_PLATFORM_XCB_KHR)
+  // VK_KHR_xcb_surface
   VkResult vkCreateXcbSurfaceKHR(VkInstance instance, const VkXcbSurfaceCreateInfoKHR *pCreateInfo,
                                  const VkAllocationCallbacks *pAllocator, VkSurfaceKHR *pSurface);
 
@@ -1341,12 +1356,20 @@ public:
 #endif
 
 #if defined(VK_USE_PLATFORM_XLIB_KHR)
+  // VK_KHR_xlib_surface
   VkResult vkCreateXlibSurfaceKHR(VkInstance instance, const VkXlibSurfaceCreateInfoKHR *pCreateInfo,
                                   const VkAllocationCallbacks *pAllocator, VkSurfaceKHR *pSurface);
 
   VkBool32 vkGetPhysicalDeviceXlibPresentationSupportKHR(VkPhysicalDevice physicalDevice,
                                                          uint32_t queueFamilyIndex, Display *dpy,
                                                          VisualID visualID);
+
+  // VK_EXT_acquire_xlib_display
+  VkResult vkAcquireXlibDisplayEXT(VkPhysicalDevice physicalDevice, Display *dpy,
+                                   VkDisplayKHR display);
+  VkResult vkGetRandROutputDisplayEXT(VkPhysicalDevice physicalDevice, Display *dpy,
+                                      RROutput rrOutput, VkDisplayKHR *pDisplay);
+
 #endif
 
   // VK_KHR_display and VK_KHR_display_swapchain. These have no library or include dependencies so
@@ -1384,4 +1407,52 @@ public:
                                        const VkSwapchainCreateInfoKHR *pCreateInfos,
                                        const VkAllocationCallbacks *pAllocator,
                                        VkSwapchainKHR *pSwapchains);
+
+  // VK_NV_external_memory_capabilities
+  VkResult vkGetPhysicalDeviceExternalImageFormatPropertiesNV(
+      VkPhysicalDevice physicalDevice, VkFormat format, VkImageType type, VkImageTiling tiling,
+      VkImageUsageFlags usage, VkImageCreateFlags flags,
+      VkExternalMemoryHandleTypeFlagsNV externalHandleType,
+      VkExternalImageFormatPropertiesNV *pExternalImageFormatProperties);
+
+  // VK_KHR_maintenance1
+  void vkTrimCommandPoolKHR(VkDevice device, VkCommandPool commandPool,
+                            VkCommandPoolTrimFlagsKHR flags);
+
+  // VK_KHR_get_physical_device_properties2
+  void vkGetPhysicalDeviceFeatures2KHR(VkPhysicalDevice physicalDevice,
+                                       VkPhysicalDeviceFeatures2KHR *pFeatures);
+  void vkGetPhysicalDeviceProperties2KHR(VkPhysicalDevice physicalDevice,
+                                         VkPhysicalDeviceProperties2KHR *pProperties);
+  void vkGetPhysicalDeviceFormatProperties2KHR(VkPhysicalDevice physicalDevice, VkFormat format,
+                                               VkFormatProperties2KHR *pFormatProperties);
+  VkResult vkGetPhysicalDeviceImageFormatProperties2KHR(
+      VkPhysicalDevice physicalDevice, const VkPhysicalDeviceImageFormatInfo2KHR *pImageFormatInfo,
+      VkImageFormatProperties2KHR *pImageFormatProperties);
+  void vkGetPhysicalDeviceQueueFamilyProperties2KHR(VkPhysicalDevice physicalDevice, uint32_t *pCount,
+                                                    VkQueueFamilyProperties2KHR *pQueueFamilyProperties);
+  void vkGetPhysicalDeviceMemoryProperties2KHR(VkPhysicalDevice physicalDevice,
+                                               VkPhysicalDeviceMemoryProperties2KHR *pMemoryProperties);
+  void vkGetPhysicalDeviceSparseImageFormatProperties2KHR(
+      VkPhysicalDevice physicalDevice, const VkPhysicalDeviceSparseImageFormatInfo2KHR *pFormatInfo,
+      uint32_t *pPropertyCount, VkSparseImageFormatProperties2KHR *pProperties);
+
+  // VK_EXT_display_surface_counter
+  VkResult vkGetPhysicalDeviceSurfaceCapabilities2EXT(VkPhysicalDevice physicalDevice,
+                                                      VkSurfaceKHR surface,
+                                                      VkSurfaceCapabilities2EXT *pSurfaceCapabilities);
+
+  // VK_EXT_display_control
+  VkResult vkDisplayPowerControlEXT(VkDevice device, VkDisplayKHR display,
+                                    const VkDisplayPowerInfoEXT *pDisplayPowerInfo);
+  VkResult vkRegisterDeviceEventEXT(VkDevice device, const VkDeviceEventInfoEXT *pDeviceEventInfo,
+                                    const VkAllocationCallbacks *pAllocator, VkFence *pFence);
+  VkResult vkRegisterDisplayEventEXT(VkDevice device, VkDisplayKHR display,
+                                     const VkDisplayEventInfoEXT *pDisplayEventInfo,
+                                     const VkAllocationCallbacks *pAllocator, VkFence *pFence);
+  VkResult vkGetSwapchainCounterEXT(VkDevice device, VkSwapchainKHR swapchain,
+                                    VkSurfaceCounterFlagBitsEXT counter, uint64_t *pCounterValue);
+
+  // VK_EXT_direct_mode_display
+  VkResult vkReleaseDisplayEXT(VkPhysicalDevice physicalDevice, VkDisplayKHR display);
 };

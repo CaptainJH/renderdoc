@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -189,7 +189,7 @@ void Serialiser::Serialise(const char *name, TextureStateInitialData &el)
 
 void GLResourceManager::MarkVAOReferenced(GLResource res, FrameRefType ref, bool allowFake0)
 {
-  const GLHookSet &gl = m_GL->m_Real;
+  const GLHookSet &gl = m_GL->GetInternalHookset();
 
   if(res.name || allowFake0)
   {
@@ -218,7 +218,7 @@ void GLResourceManager::MarkFBOReferenced(GLResource res, FrameRefType ref)
 
   MarkResourceFrameReferenced(res, ref == eFrameRef_Unknown ? eFrameRef_Unknown : eFrameRef_Read);
 
-  const GLHookSet &gl = m_GL->m_Real;
+  const GLHookSet &gl = m_GL->GetInternalHookset();
 
   GLint numCols = 8;
   gl.glGetIntegerv(eGL_MAX_COLOR_ATTACHMENTS, &numCols);
@@ -282,7 +282,7 @@ bool GLResourceManager::Need_InitialStateChunk(GLResource res)
 
 bool GLResourceManager::Prepare_InitialState(GLResource res, byte *blob)
 {
-  const GLHookSet &gl = m_GL->m_Real;
+  const GLHookSet &gl = m_State < WRITING ? m_GL->GetHookset() : m_GL->GetInternalHookset();
 
   if(res.Namespace == eResFramebuffer)
   {
@@ -311,22 +311,25 @@ bool GLResourceManager::Prepare_InitialState(GLResource res, byte *blob)
       gl.glGetNamedFramebufferAttachmentParameterivEXT(
           res.name, data->attachmentNames[i], eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, (GLint *)&type);
 
-      if(object)
+      a.renderbuffer = (type == eGL_RENDERBUFFER);
+
+      layered = 0;
+      a.level = 0;
+      a.layer = 0;
+
+      if(object && !a.renderbuffer)
       {
-        a.level = 0;
         gl.glGetNamedFramebufferAttachmentParameterivEXT(
             res.name, data->attachmentNames[i], eGL_FRAMEBUFFER_ATTACHMENT_TEXTURE_LEVEL, &a.level);
         gl.glGetNamedFramebufferAttachmentParameterivEXT(
             res.name, data->attachmentNames[i], eGL_FRAMEBUFFER_ATTACHMENT_LAYERED, &layered);
 
-        a.layer = 0;
         if(layered == 0)
           gl.glGetNamedFramebufferAttachmentParameterivEXT(
               res.name, data->attachmentNames[i], eGL_FRAMEBUFFER_ATTACHMENT_TEXTURE_LAYER, &a.layer);
       }
 
       a.layered = (layered != 0);
-      a.renderbuffer = (type == eGL_RENDERBUFFER);
       a.obj = GetID(a.renderbuffer ? RenderbufferRes(res.Context, object)
                                    : TextureRes(res.Context, object));
 
@@ -433,7 +436,7 @@ bool GLResourceManager::Prepare_InitialState(GLResource res)
 
   ResourceId Id = GetID(res);
 
-  const GLHookSet &gl = m_GL->m_Real;
+  const GLHookSet &gl = m_State < WRITING ? m_GL->GetHookset() : m_GL->GetInternalHookset();
 
   if(res.Namespace == eResBuffer)
   {
@@ -450,7 +453,7 @@ bool GLResourceManager::Prepare_InitialState(GLResource res)
     GLuint buf = 0;
     gl.glGenBuffers(1, &buf);
     gl.glBindBuffer(eGL_COPY_WRITE_BUFFER, buf);
-    gl.glBufferStorage(eGL_COPY_WRITE_BUFFER, (GLsizeiptr)length, NULL, GL_MAP_READ_BIT);
+    gl.glNamedBufferData(buf, (GLsizeiptr)length, NULL, eGL_STATIC_READ);
 
     // bind the live buffer for copying
     gl.glBindBuffer(eGL_COPY_READ_BUFFER, res.name);
@@ -561,7 +564,7 @@ bool GLResourceManager::Prepare_InitialState(GLResource res)
 void GLResourceManager::PrepareTextureInitialContents(ResourceId liveid, ResourceId origid,
                                                       GLResource res)
 {
-  const GLHookSet &gl = m_GL->m_Real;
+  const GLHookSet &gl = m_State < WRITING ? m_GL->GetHookset() : m_GL->GetInternalHookset();
 
   WrappedOpenGL::TextureData &details = m_GL->m_Textures[liveid];
 
@@ -585,8 +588,13 @@ void GLResourceManager::PrepareTextureInitialContents(ResourceId liveid, Resourc
 
     state->depthMode = eGL_NONE;
     if(IsDepthStencilFormat(details.internalFormat))
-      gl.glGetTextureParameterivEXT(res.name, details.curType, eGL_DEPTH_STENCIL_TEXTURE_MODE,
-                                    (GLint *)&state->depthMode);
+    {
+      if(HasExt[ARB_stencil_texturing])
+        gl.glGetTextureParameterivEXT(res.name, details.curType, eGL_DEPTH_STENCIL_TEXTURE_MODE,
+                                      (GLint *)&state->depthMode);
+      else
+        state->depthMode = eGL_DEPTH_COMPONENT;
+    }
 
     state->seamless = GL_FALSE;
     if(details.curType == eGL_TEXTURE_CUBE_MAP || details.curType == eGL_TEXTURE_CUBE_MAP_ARRAY)
@@ -597,8 +605,19 @@ void GLResourceManager::PrepareTextureInitialContents(ResourceId liveid, Resourc
                                   (GLint *)&state->baseLevel);
     gl.glGetTextureParameterivEXT(res.name, details.curType, eGL_TEXTURE_MAX_LEVEL,
                                   (GLint *)&state->maxLevel);
-    gl.glGetTextureParameterivEXT(res.name, details.curType, eGL_TEXTURE_SWIZZLE_RGBA,
-                                  (GLint *)&state->swizzle[0]);
+
+    if(HasExt[ARB_texture_swizzle] || HasExt[EXT_texture_swizzle])
+    {
+      gl.glGetTextureParameterivEXT(res.name, details.curType, eGL_TEXTURE_SWIZZLE_RGBA,
+                                    (GLint *)&state->swizzle[0]);
+    }
+    else
+    {
+      state->swizzle[0] = eGL_RED;
+      state->swizzle[1] = eGL_GREEN;
+      state->swizzle[2] = eGL_BLUE;
+      state->swizzle[3] = eGL_ALPHA;
+    }
 
     // only non-ms textures have sampler state
     if(!ms)
@@ -656,6 +675,14 @@ void GLResourceManager::PrepareTextureInitialContents(ResourceId liveid, Resourc
       int mips =
           GetNumMips(gl, details.curType, res.name, details.width, details.height, details.depth);
 
+      GLenum baseFormat = eGL_RGBA;
+      GLenum dataType = eGL_UNSIGNED_BYTE;
+      if(!IsCompressedFormat(details.internalFormat))
+      {
+        baseFormat = GetBaseFormat(details.internalFormat);
+        dataType = GetDataType(details.internalFormat);
+      }
+
       // create texture of identical format/size to store initial contents
       if(details.curType == eGL_TEXTURE_2D_MULTISAMPLE)
       {
@@ -673,17 +700,62 @@ void GLResourceManager::PrepareTextureInitialContents(ResourceId liveid, Resourc
       }
       else if(details.dimension == 1)
       {
-        gl.glTextureStorage1DEXT(tex, details.curType, mips, details.internalFormat, details.width);
+        gl.glTextureParameteriEXT(tex, details.curType, eGL_TEXTURE_MAX_LEVEL, mips - 1);
+
+        int w = details.width;
+        for(int i = 0; i < mips; i++)
+        {
+          gl.glTextureImage1DEXT(tex, details.curType, i, details.internalFormat, w, 0, baseFormat,
+                                 dataType, NULL);
+          w = RDCMAX(1, w >> 1);
+        }
       }
       else if(details.dimension == 2)
       {
-        gl.glTextureStorage2DEXT(tex, details.curType, mips, details.internalFormat, details.width,
-                                 details.height);
+        GLenum targets[] = {
+            eGL_TEXTURE_CUBE_MAP_POSITIVE_X, eGL_TEXTURE_CUBE_MAP_NEGATIVE_X,
+            eGL_TEXTURE_CUBE_MAP_POSITIVE_Y, eGL_TEXTURE_CUBE_MAP_NEGATIVE_Y,
+            eGL_TEXTURE_CUBE_MAP_POSITIVE_Z, eGL_TEXTURE_CUBE_MAP_NEGATIVE_Z,
+        };
+
+        gl.glTextureParameteriEXT(tex, details.curType, eGL_TEXTURE_MAX_LEVEL, mips - 1);
+
+        int w = details.width;
+        int h = details.height;
+        for(int i = 0; i < mips; i++)
+        {
+          if(details.curType != eGL_TEXTURE_CUBE_MAP)
+          {
+            gl.glTextureImage2DEXT(tex, details.curType, i, details.internalFormat, w, h, 0,
+                                   baseFormat, dataType, NULL);
+          }
+          else
+          {
+            for(size_t t = 0; t < ARRAY_COUNT(targets); t++)
+              gl.glTextureImage2DEXT(tex, targets[t], i, details.internalFormat, w, h, 0,
+                                     baseFormat, dataType, NULL);
+          }
+          w = RDCMAX(1, w >> 1);
+          if(details.curType != eGL_TEXTURE_1D_ARRAY)
+            h = RDCMAX(1, h >> 1);
+        }
       }
       else if(details.dimension == 3)
       {
-        gl.glTextureStorage3DEXT(tex, details.curType, mips, details.internalFormat, details.width,
-                                 details.height, details.depth);
+        gl.glTextureParameteriEXT(tex, details.curType, eGL_TEXTURE_MAX_LEVEL, mips - 1);
+
+        int w = details.width;
+        int h = details.height;
+        int d = details.depth;
+        for(int i = 0; i < mips; i++)
+        {
+          gl.glTextureImage3DEXT(tex, details.curType, i, details.internalFormat, w, h, d, 0,
+                                 baseFormat, dataType, NULL);
+          w = RDCMAX(1, w >> 1);
+          h = RDCMAX(1, h >> 1);
+          if(details.curType == eGL_TEXTURE_3D)
+            d = RDCMAX(1, d >> 1);
+        }
       }
 
       // we need to set maxlevel appropriately for number of mips to force the texture to be
@@ -793,17 +865,7 @@ void GLResourceManager::PrepareTextureInitialContents(ResourceId liveid, Resourc
 
           for(int trg = 0; trg < count; trg++)
           {
-            GLint compSize;
-            gl.glGetTextureLevelParameterivEXT(res.name, targets[trg], i,
-                                               eGL_TEXTURE_COMPRESSED_IMAGE_SIZE, &compSize);
-
-            size_t size = compSize;
-
-            // sometimes cubemaps return the compressed image size for the whole texture, but we
-            // read it face by face
-            if(VendorCheck[VendorCheck_EXT_compressed_cube_size] &&
-               details.curType == eGL_TEXTURE_CUBE_MAP)
-              size /= 6;
+            size_t size = GetCompressedByteSize(w, h, d, details.internalFormat, i);
 
             byte *buf = new byte[size];
 
@@ -938,7 +1000,7 @@ bool GLResourceManager::Serialise_InitialState(ResourceId resid, GLResource res)
       res = GLResource(MakeNullResource);
   }
 
-  const GLHookSet &gl = m_GL->m_Real;
+  const GLHookSet &gl = m_State < WRITING ? m_GL->GetHookset() : m_GL->GetInternalHookset();
 
   if(res.Namespace == eResBuffer)
   {
@@ -998,7 +1060,7 @@ bool GLResourceManager::Serialise_InitialState(ResourceId resid, GLResource res)
       GLuint buf = 0;
       gl.glGenBuffers(1, &buf);
       gl.glBindBuffer(eGL_COPY_WRITE_BUFFER, buf);
-      gl.glBufferStorage(eGL_COPY_WRITE_BUFFER, (GLsizeiptr)len, data, 0);
+      gl.glNamedBufferData(buf, (GLsizeiptr)len, data, eGL_STATIC_DRAW);
 
       SAFE_DELETE_ARRAY(data);
 
@@ -1147,17 +1209,8 @@ bool GLResourceManager::Serialise_InitialState(ResourceId resid, GLResource res)
 
             for(int trg = 0; trg < count; trg++)
             {
-              GLint compSize;
-              gl.glGetTextureLevelParameterivEXT(tex, targets[trg], i,
-                                                 eGL_TEXTURE_COMPRESSED_IMAGE_SIZE, &compSize);
-
-              size_t size = compSize;
-
-              // sometimes cubemaps return the compressed image size for the whole texture, but we
-              // read it
-              // face by face
-              if(VendorCheck[VendorCheck_EXT_compressed_cube_size] && t == eGL_TEXTURE_CUBE_MAP)
-                size /= 6;
+              size_t size = GetCompressedByteSize(details.width, details.height, details.depth,
+                                                  details.internalFormat, i);
 
               byte *buf = new byte[size];
 
@@ -1389,6 +1442,14 @@ bool GLResourceManager::Serialise_InitialState(ResourceId resid, GLResource res)
         GLenum dummy;
         EmulateLuminanceFormat(gl, tex, textype, internalformat, dummy);
 
+        GLenum baseFormat = eGL_RGBA;
+        GLenum dataType = eGL_UNSIGNED_BYTE;
+        if(!IsCompressedFormat(internalformat))
+        {
+          baseFormat = GetBaseFormat(internalformat);
+          dataType = GetDataType(internalformat);
+        }
+
         // create texture of identical format/size to store initial contents
         if(textype == eGL_TEXTURE_BUFFER || details.view)
         {
@@ -1408,15 +1469,62 @@ bool GLResourceManager::Serialise_InitialState(ResourceId resid, GLResource res)
         }
         else if(dim == 1)
         {
-          gl.glTextureStorage1DEXT(tex, textype, mips, internalformat, width);
+          gl.glTextureParameteriEXT(tex, textype, eGL_TEXTURE_MAX_LEVEL, mips - 1);
+
+          int w = width;
+          for(int i = 0; i < mips; i++)
+          {
+            gl.glTextureImage1DEXT(tex, textype, i, internalformat, w, 0, baseFormat, dataType, NULL);
+            w = RDCMAX(1, w >> 1);
+          }
         }
         else if(dim == 2)
         {
-          gl.glTextureStorage2DEXT(tex, textype, mips, internalformat, width, height);
+          GLenum targets[] = {
+              eGL_TEXTURE_CUBE_MAP_POSITIVE_X, eGL_TEXTURE_CUBE_MAP_NEGATIVE_X,
+              eGL_TEXTURE_CUBE_MAP_POSITIVE_Y, eGL_TEXTURE_CUBE_MAP_NEGATIVE_Y,
+              eGL_TEXTURE_CUBE_MAP_POSITIVE_Z, eGL_TEXTURE_CUBE_MAP_NEGATIVE_Z,
+          };
+
+          gl.glTextureParameteriEXT(tex, textype, eGL_TEXTURE_MAX_LEVEL, mips - 1);
+
+          int w = width;
+          int h = height;
+          for(int i = 0; i < mips; i++)
+          {
+            if(textype != eGL_TEXTURE_CUBE_MAP)
+            {
+              gl.glTextureImage2DEXT(tex, textype, i, internalformat, w, h, 0, baseFormat, dataType,
+                                     NULL);
+            }
+            else
+            {
+              for(size_t t = 0; t < ARRAY_COUNT(targets); t++)
+                gl.glTextureImage2DEXT(tex, targets[t], i, internalformat, w, h, 0, baseFormat,
+                                       dataType, NULL);
+            }
+
+            w = RDCMAX(1, w >> 1);
+            if(textype != eGL_TEXTURE_1D_ARRAY)
+              h = RDCMAX(1, h >> 1);
+          }
         }
         else if(dim == 3)
         {
-          gl.glTextureStorage3DEXT(tex, textype, mips, internalformat, width, height, depth);
+          gl.glTextureParameteriEXT(tex, textype, eGL_TEXTURE_MAX_LEVEL, mips - 1);
+
+          int w = width;
+          int h = height;
+          int d = depth;
+          for(int i = 0; i < mips; i++)
+          {
+            gl.glTextureImage3DEXT(tex, textype, i, internalformat, w, h, d, 0, baseFormat,
+                                   dataType, NULL);
+            w = RDCMAX(1, w >> 1);
+            h = RDCMAX(1, h >> 1);
+            if(textype == eGL_TEXTURE_3D)
+              d = RDCMAX(1, d >> 1);
+          }
         }
 
         if(textype == eGL_TEXTURE_BUFFER || details.view)
@@ -1650,7 +1758,7 @@ void GLResourceManager::Create_InitialState(ResourceId id, GLResource live, bool
 
 void GLResourceManager::Apply_InitialState(GLResource live, InitialContentData initial)
 {
-  const GLHookSet &gl = m_GL->m_Real;
+  const GLHookSet &gl = m_GL->GetHookset();
 
   if(live.Namespace == eResBuffer)
   {
@@ -1788,16 +1896,9 @@ void GLResourceManager::Apply_InitialState(GLResource live, InitialContentData i
 
             for(int trg = 0; trg < count; trg++)
             {
-              GLint compSize;
-              gl.glGetTextureLevelParameterivEXT(tex, targets[trg], i,
-                                                 eGL_TEXTURE_COMPRESSED_IMAGE_SIZE, &compSize);
+              size_t size = GetCompressedByteSize(w, h, d, details.internalFormat, i);
 
-              size_t size = compSize;
-
-              // sometimes cubemaps return the compressed image size for the whole texture, but we
-              // read it face by face
-              if(VendorCheck[VendorCheck_EXT_compressed_cube_size] &&
-                 details.curType == eGL_TEXTURE_CUBE_MAP)
+              if(details.curType == eGL_TEXTURE_CUBE_MAP)
                 size /= 6;
 
               byte *buf = new byte[size];
@@ -1860,7 +1961,8 @@ void GLResourceManager::Apply_InitialState(GLResource live, InitialContentData i
       bool ms = (details.curType == eGL_TEXTURE_2D_MULTISAMPLE ||
                  details.curType == eGL_TEXTURE_2D_MULTISAMPLE_ARRAY);
 
-      if(state->depthMode == eGL_DEPTH_COMPONENT || state->depthMode == eGL_STENCIL_INDEX)
+      if((state->depthMode == eGL_DEPTH_COMPONENT || state->depthMode == eGL_STENCIL_INDEX) &&
+         HasExt[ARB_stencil_texturing])
         gl.glTextureParameterivEXT(live.name, details.curType, eGL_DEPTH_STENCIL_TEXTURE_MODE,
                                    (GLint *)&state->depthMode);
 
@@ -1874,7 +1976,7 @@ void GLResourceManager::Apply_InitialState(GLResource live, InitialContentData i
                                  (GLint *)&state->maxLevel);
 
       // assume that emulated (luminance, alpha-only etc) textures are not swizzled
-      if(!details.emulated)
+      if(!details.emulated && (HasExt[ARB_texture_swizzle] || HasExt[EXT_texture_swizzle]))
         gl.glTextureParameterivEXT(live.name, details.curType, eGL_TEXTURE_SWIZZLE_RGBA,
                                    (GLint *)state->swizzle);
 

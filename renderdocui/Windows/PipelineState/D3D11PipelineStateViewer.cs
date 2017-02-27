@@ -1,7 +1,7 @@
 ﻿/******************************************************************************
  * The MIT License (MIT)
  * 
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -2551,7 +2551,7 @@ namespace renderdocui.Windows.PipelineState
                         // if not, try and find the same filename (this is not proper include handling!)
                         foreach (var k in updatedfiles.Keys)
                         {
-                            if (renderdocui.Code.Helpers.SafeGetFileName(k) == search)
+                            if (String.Compare(renderdocui.Code.Helpers.SafeGetFileName(k), search, true) == 0)
                             {
                                 fileText = updatedfiles[k];
                                 break;

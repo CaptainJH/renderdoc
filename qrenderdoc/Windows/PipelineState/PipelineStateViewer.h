@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -44,19 +44,26 @@ class PipelineStateViewer : public QFrame, public ILogViewerForm
   Q_PROPERTY(QVariant persistData READ persistData WRITE setPersistData DESIGNABLE false SCRIPTABLE false)
 
 public:
-  explicit PipelineStateViewer(CaptureContext *ctx, QWidget *parent = 0);
+  explicit PipelineStateViewer(CaptureContext &ctx, QWidget *parent = 0);
   ~PipelineStateViewer();
 
   void OnLogfileLoaded();
   void OnLogfileClosed();
-  void OnEventSelected(uint32_t eventID);
+  void OnSelectedEventChanged(uint32_t eventID) {}
+  void OnEventChanged(uint32_t eventID);
 
   QVariant persistData();
   void setPersistData(const QVariant &persistData);
 
+  bool SaveShaderFile(const ShaderReflection *shader);
+  bool PrepareShaderEditing(const ShaderReflection *shaderDetails, QString &entryFunc,
+                            QStringMap &files, QString &mainfile);
+  void EditShader(ShaderStageType shaderType, ResourceId id, const ShaderReflection *shaderDetails,
+                  const QString &entryFunc, const QStringMap &files, const QString &mainfile);
+
 private:
   Ui::PipelineStateViewer *ui;
-  CaptureContext *m_Ctx;
+  CaptureContext &m_Ctx;
 
   void setToD3D11();
   void setToD3D12();

@@ -1,7 +1,7 @@
 ﻿/******************************************************************************
  * The MIT License (MIT)
  * 
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -1391,8 +1391,13 @@ namespace renderdocui.Windows.PipelineState
                 foreach (var db in state.m_FB.m_DrawFBO.DrawBuffers)
                 {
                     ResourceId p = ResourceId.Null;
+                    GLPipelineState.FrameBuffer.Attachment r = null;
 
-                    if (db >= 0) p = state.m_FB.m_DrawFBO.Color[db].Obj;
+                    if (db >= 0)
+                    {
+                        p = state.m_FB.m_DrawFBO.Color[db].Obj;
+                        r = state.m_FB.m_DrawFBO.Color[db];
+                    }
 
                     if (p != ResourceId.Null || showEmpty.Checked)
                     {
@@ -1427,6 +1432,21 @@ namespace renderdocui.Windows.PipelineState
 
                                 if (texs[t].format.srgbCorrected && !state.m_FB.FramebufferSRGB)
                                     name += " (GL_FRAMEBUFFER_SRGB = 0)";
+
+                                if (r != null)
+                                {
+                                    if (r.Swizzle[0] != TextureSwizzle.Red ||
+                                        r.Swizzle[1] != TextureSwizzle.Green ||
+                                        r.Swizzle[2] != TextureSwizzle.Blue ||
+                                        r.Swizzle[3] != TextureSwizzle.Alpha)
+                                    {
+                                        format += String.Format(" swizzle[{0}{1}{2}{3}]",
+                                            r.Swizzle[0].Str(),
+                                            r.Swizzle[1].Str(),
+                                            r.Swizzle[2].Str(),
+                                            r.Swizzle[3].Str());
+                                    }
+                                }
                             }
                         }
 
@@ -1705,7 +1725,15 @@ namespace renderdocui.Windows.PipelineState
                         viewer.ViewTexture(tex.ID, true);
                 }
             }
-            else if(tag is ReadWriteTag)
+            else if (tag is FetchBuffer)
+            {
+                FetchBuffer buf = (FetchBuffer)tag;
+
+                var viewer = new BufferViewer(m_Core, false);
+                viewer.ViewRawBuffer(true, 0, ulong.MaxValue, buf.ID);
+                viewer.Show(m_DockContent.DockPanel);
+            }
+            else if (tag is ReadWriteTag)
             {
                 ReadWriteTag rwtag = (ReadWriteTag)tag;
                 FetchBuffer buf = rwtag.buf;
@@ -3110,12 +3138,12 @@ namespace renderdocui.Windows.PipelineState
                 int i = 0;
                 foreach (var v in rs.Viewports)
                 {
-                    rows.Add(new object[] { i, v.Enabled, v.Left, v.Bottom, v.Width, v.Height, v.MinDepth, v.MaxDepth });
+                    rows.Add(new object[] { i, v.Left, v.Bottom, v.Width, v.Height, v.MinDepth, v.MaxDepth });
 
                     i++;
                 }
 
-                ExportHTMLTable(writer, new string[] { "Slot", "Enabled", "Left", "Bottom", "Width", "Height", "Min Depth", "Max Depth" }, rows.ToArray());
+                ExportHTMLTable(writer, new string[] { "Slot", "Left", "Bottom", "Width", "Height", "Min Depth", "Max Depth" }, rows.ToArray());
             }
 
             {

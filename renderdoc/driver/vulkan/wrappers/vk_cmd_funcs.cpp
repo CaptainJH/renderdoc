@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -377,6 +377,12 @@ VkResult WrappedVulkan::vkResetCommandPool(VkDevice device, VkCommandPool cmdPoo
   return ObjDisp(device)->ResetCommandPool(Unwrap(device), Unwrap(cmdPool), flags);
 }
 
+void WrappedVulkan::vkTrimCommandPoolKHR(VkDevice device, VkCommandPool commandPool,
+                                         VkCommandPoolTrimFlagsKHR flags)
+{
+  return ObjDisp(device)->TrimCommandPoolKHR(Unwrap(device), Unwrap(commandPool), flags);
+}
+
 // Command buffer functions
 
 VkResult WrappedVulkan::vkAllocateCommandBuffers(VkDevice device,
@@ -730,7 +736,7 @@ bool WrappedVulkan::Serialise_vkEndCommandBuffer(Serialiser *localSerialiser,
     {
       FetchDrawcall draw;
       draw.name = "API Calls";
-      draw.flags |= eDraw_SetMarker;
+      draw.flags |= eDraw_SetMarker | eDraw_APICalls;
 
       AddDrawcall(draw, true);
 
@@ -2440,6 +2446,12 @@ bool WrappedVulkan::Serialise_vkCmdExecuteCommands(Serialiser *localSerialiser,
       {
         // do nothing, don't bother with the logic below
       }
+      else if(m_FirstEventID == m_LastEventID)
+      {
+#if ENABLED(VERBOSE_PARTIAL_REPLAY)
+        RDCDEBUG("ExecuteCommands no OnlyDraw %u", m_FirstEventID);
+#endif
+      }
       else if(m_LastEventID <= startEID)
       {
 #if ENABLED(VERBOSE_PARTIAL_REPLAY)
@@ -2660,7 +2672,7 @@ bool WrappedVulkan::Serialise_vkCmdDebugMarkerEndEXT(Serialiser *localSerialiser
   {
     FetchDrawcall draw;
     draw.name = "API Calls";
-    draw.flags = eDraw_SetMarker;
+    draw.flags = eDraw_SetMarker | eDraw_APICalls;
 
     AddDrawcall(draw, true);
   }

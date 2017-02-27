@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -38,6 +38,8 @@ struct DirectoryFile
 {
   rdctype::str filename;
   uint32_t flags;
+  uint32_t lastmod;
+  uint64_t size;
 };
 
 struct ResourceFormat
@@ -513,4 +515,10 @@ struct PixelModification
   bool32 shaderDiscarded;
   bool32 depthTestFailed;
   bool32 stencilTestFailed;
+
+  bool passed() const
+  {
+    return !sampleMasked && !backfaceCulled && !depthClipped && !viewClipped && !scissorClipped &&
+           !shaderDiscarded && !depthTestFailed && !stencilTestFailed;
+  }
 };

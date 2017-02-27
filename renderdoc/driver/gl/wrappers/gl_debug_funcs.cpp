@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -83,14 +83,7 @@ bool WrappedOpenGL::Serialise_glObjectLabel(GLenum identifier, GLuint name, GLsi
   m_pSerialiser->SerialiseString("label", Label);
 
   if(m_State == READING && GetResourceManager()->HasLiveResource(id))
-  {
-    GLResource res = GetResourceManager()->GetLiveResource(id);
-
-    if(extvariant && m_Real.glLabelObjectEXT)
-      m_Real.glLabelObjectEXT(Identifier, res.name, Length, HasLabel ? Label.c_str() : NULL);
-    else
-      m_Real.glObjectLabel(Identifier, res.name, Length, HasLabel ? Label.c_str() : NULL);
-  }
+    GetResourceManager()->SetName(id, HasLabel ? Label : "");
 
   return true;
 }
@@ -272,7 +265,7 @@ bool WrappedOpenGL::Serialise_glPopDebugGroup()
   {
     FetchDrawcall draw;
     draw.name = "API Calls";
-    draw.flags |= eDraw_SetMarker;
+    draw.flags |= eDraw_SetMarker | eDraw_APICalls;
 
     AddDrawcall(draw, true);
   }

@@ -1,7 +1,7 @@
 ﻿/******************************************************************************
  * The MIT License (MIT)
  * 
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -350,6 +350,13 @@ namespace renderdoc
         All          = (Vertex | Hull | Domain | Geometry | Pixel | Fragment | Compute),
     };
 
+    [Flags]
+    public enum ShaderDebugStateFlags
+    {
+        SampleLoadGather = 0x1,
+        GeneratedNanOrInf = 0x2,
+    };
+
     public enum DebugMessageSource
     {
         API = 0,
@@ -467,6 +474,7 @@ namespace renderdoc
         ClearDepthStencil = 0x200000,
         BeginPass         = 0x400000,
         EndPass           = 0x800000,
+        APICalls          = 0x1000000,
     };
 
     public enum SolidShadeMode
@@ -492,15 +500,23 @@ namespace renderdoc
         FrontAndBack,
     };
 
-    public enum GPUCounters
+    public enum GPUCounters : uint
     {
         FirstGeneric = 1,
         EventGPUDuration = FirstGeneric,
         InputVerticesRead,
-        VSInvocations,
-        PSInvocations,
+        IAPrimitives,
+        GSPrimitives,
+        RasterizerInvocations,
         RasterizedPrimitives,
         SamplesWritten,
+        VSInvocations,
+        HSInvocations,
+        DSInvocations,
+        TESInvocations = DSInvocations,
+        GSInvocations,
+        PSInvocations,
+        CSInvocations,
 
         FirstAMD = 1000000,
 

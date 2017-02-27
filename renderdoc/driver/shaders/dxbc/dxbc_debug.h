@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -121,6 +121,7 @@ public:
   {
     quadIndex = 0;
     nextInstruction = 0;
+    flags = 0;
     done = false;
     trace = NULL;
     dxbc = NULL;
@@ -131,6 +132,7 @@ public:
   {
     quadIndex = quadIdx;
     nextInstruction = 0;
+    flags = 0;
     done = false;
     trace = t;
     dxbc = f;
@@ -165,6 +167,9 @@ private:
 
   bool done;
 
+  // validates assignment for generation of non-normal values
+  void AssignValue(ShaderVariable &dst, uint32_t dstIndex, const ShaderVariable &src,
+                   uint32_t srcIndex);
   // sets the destination operand by looking up in the register
   // file and applying any masking or swizzling
   void SetDst(const DXBC::ASMOperand &dstoper, const DXBC::ASMOperation &op,

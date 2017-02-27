@@ -1,7 +1,7 @@
 ﻿/******************************************************************************
  * The MIT License (MIT)
  * 
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -175,6 +175,23 @@ namespace renderdocui.Windows
         private void MainWindow_Load(object sender, EventArgs e)
         {
             bool loaded = LoadLayout(0);
+
+            if (Win32PInvoke.GetModuleHandle("rdocself.dll") != IntPtr.Zero)
+            {
+                ToolStripMenuItem beginSelfCap = new ToolStripMenuItem();
+                beginSelfCap.Text = "Start Self-hosted Capture";
+                beginSelfCap.Click += new EventHandler((object o, EventArgs a) => { StaticExports.StartSelfHostCapture("rdocself.dll"); });
+
+                ToolStripMenuItem endSelfCap = new ToolStripMenuItem();
+                endSelfCap.Text = "End Self-hosted Capture";
+                endSelfCap.Click += new EventHandler((object o, EventArgs a) => { StaticExports.EndSelfHostCapture("rdocself.dll"); });
+
+                toolsToolStripMenuItem.DropDownItems.AddRange(new ToolStripItem[] {
+                    new System.Windows.Forms.ToolStripSeparator(),
+                    beginSelfCap,
+                    endSelfCap,
+                });
+            }
 
             CheckUpdates();
 
@@ -1009,6 +1026,8 @@ namespace renderdocui.Windows
 
             string logfile = m_Core.TempLogFilename(Path.GetFileNameWithoutExtension(exe));
 
+            StaticExports.SetConfigSetting("MaxConnectTimeout", m_Core.Config.MaxConnectTimeout.ToString());
+
             UInt32 ret = m_Core.Renderer.ExecuteAndInject(exe, workingDir, cmdLine, env, logfile, opts);
 
             if (ret == 0)
@@ -1688,6 +1707,14 @@ namespace renderdocui.Windows
                     e.Cancel = true;
                     return;
                 }
+            }
+
+            if (m_Core.GlobalHookEnabled)
+            {
+                MessageBox.Show("Cannot close RenderDoc while global hook is active.", "Global hook active",
+                                MessageBoxButtons.OK, MessageBoxIcon.Error);
+                e.Cancel = true;
+                return;
             }
 
             if (!PromptCloseLog())

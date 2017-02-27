@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -199,6 +199,8 @@ private:
   D3D12_GPU_DESCRIPTOR_HANDLE GetGPUHandle(RTVSlot slot);
   D3D12_GPU_DESCRIPTOR_HANDLE GetGPUHandle(DSVSlot slot);
 
+  D3D12_CPU_DESCRIPTOR_HANDLE GetUAVClearHandle(CBVUAVSRVSlot slot);
+
   // indices for the pipelines, for the three possible backbuffer formats
   enum BackBufferFormat
   {
@@ -241,6 +243,7 @@ private:
   } m_Font;
 
   ID3D12DescriptorHeap *cbvsrvuavHeap;
+  ID3D12DescriptorHeap *uavClearHeap;
   ID3D12DescriptorHeap *samplerHeap;
   ID3D12DescriptorHeap *rtvHeap;
   ID3D12DescriptorHeap *dsvHeap;

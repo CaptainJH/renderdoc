@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -28,26 +28,353 @@
 #include "serialise/string_utils.h"
 #include "gl_driver.h"
 
-bool ExtensionSupported[ExtensionSupported_Count];
-bool VendorCheck[VendorCheck_Count];
+bool HasExt[GLExtension_Count] = {};
+bool VendorCheck[VendorCheck_Count] = {};
 
 int GLCoreVersion = 0;
 bool GLIsCore = false;
 
-// simple wrapper for OS functions to make/delete a context
-GLWindowingData MakeContext(GLWindowingData share);
-void DeleteContext(GLWindowingData context);
+bool CheckReplayContext(PFNGLGETSTRINGPROC getStr, PFNGLGETINTEGERVPROC getInt,
+                        PFNGLGETSTRINGIPROC getStri)
+{
+// we can't do without these extensions, but they should be present on any reasonable driver
+// as they should have minimal or no hardware requirement. They were present on mesa 10.6
+// for all drivers which dates to mid 2015.
+#undef EXT_TO_CHECK
+#define EXT_TO_CHECK(ver, ext) ext,
+  enum
+  {
+    EXTENSION_CHECKS() ext_count,
+  };
+  bool exts[ext_count] = {};
 
-void MakeContextCurrent(GLWindowingData data);
+  if(getStr)
+    RDCLOG("Running GL replay on: %s / %s / %s", getStr(eGL_VENDOR), getStr(eGL_RENDERER),
+           getStr(eGL_VERSION));
 
-void DoVendorChecks(const GLHookSet &gl, GLWindowingData context)
+  string extensionString = "";
+
+  GLint numExts = 0;
+  getInt(eGL_NUM_EXTENSIONS, &numExts);
+  for(GLint e = 0; e < numExts; e++)
+  {
+    const char *ext = (const char *)getStri(eGL_EXTENSIONS, (GLuint)e);
+
+    extensionString += StringFormat::Fmt("[%d]: %s, ", e, ext);
+
+    if(e > 0 && (e % 100) == 0)
+    {
+      RDCLOG("%s", extensionString.c_str());
+      extensionString = "";
+    }
+
+    // skip the "GL_"
+    ext += 3;
+
+#undef EXT_TO_CHECK
+#define EXT_TO_CHECK(ver, extname)                             \
+  if(GLCoreVersion >= ver || !strcmp(ext, STRINGIZE(extname))) \
+    exts[extname] = true;
+
+    EXTENSION_CHECKS()
+  }
+
+  if(!extensionString.empty())
+    RDCLOG("%s", extensionString.c_str());
+
+  string missingExts = "";
+
+#define REQUIRE_EXTENSION(extname) \
+  if(!exts[extname])               \
+    missingExts += STRINGIZE(extname) " ";
+
+  // we require the below extensions on top of a 3.2 context. Some of these we could in theory
+  // do without, but support for them is so widespread it's not worthwhile
+
+  // used for reflecting out vertex bindings with most generality and remapping from old-style
+  // Pointer functions
+  // Should be possible to remove by falling back to reflecting vertex bindings the old way only and
+  // remapping to 'fake' new-style bindings for representing in the UI
+  REQUIRE_EXTENSION(ARB_vertex_attrib_binding);
+  // for program introspection, needed for shader reflection.
+  // Possible to remove by compiling shaders to SPIR-V and reflecting ourselves.
+  REQUIRE_EXTENSION(ARB_program_interface_query);
+  // strangely, this is the extension needed for layout(binding = X) on uniforms, textures, etc.
+  // Possible to remove by #defining out the layout specifiers and manually setting the uniform
+  // values.
+  REQUIRE_EXTENSION(ARB_shading_language_420pack);
+  // needed for program pipelines, glProgramUniform*, and reflecting shaders on their own
+  // Possible to remove this with self-compiled SPIR-V for reflection - see above. Likewise
+  // convenience for our own pipelines when replacing single shaders or such.
+  REQUIRE_EXTENSION(ARB_separate_shader_objects);
+  // needed for layout(location = X) on fragment shader outputs
+  // similar to ARB_shading_language_420pack we could do without this by assigning locations in code
+  REQUIRE_EXTENSION(ARB_explicit_attrib_location);
+  // adds sampler objects so we can swap sampling behaviour when sampling from the capture's
+  // textures
+  // Possible to remove by manually pushing and popping all of the sampler state that we're
+  // interested in on each texture instead of binding sampler objects.
+  REQUIRE_EXTENSION(ARB_sampler_objects);
+
+  if(!missingExts.empty())
+  {
+    RDCERR("RenderDoc requires these missing extensions: %s. Try updating your drivers.",
+           missingExts.c_str());
+    return true;
+  }
+
+  return false;
+}
+
+bool ValidateFunctionPointers(const GLHookSet &real)
+{
+  PFNGLGETSTRINGPROC *ptrs = (PFNGLGETSTRINGPROC *)&real;
+  size_t num = sizeof(real) / sizeof(PFNGLGETSTRINGPROC);
+
+  RDCLOG("Function pointers available:");
+  for(size_t ptr = 0; ptr < num;)
+  {
+    uint64_t ptrmask = 0;
+
+    for(size_t j = 0; j < 64; j++)
+      if(ptr + j < num && ptrs[ptr + j])
+        ptrmask |= 1ULL << (63 - j);
+
+    ptr += 64;
+
+    RDCLOG("%064llb", ptrmask);
+  }
+
+  // check for the presence of GL functions we will call unconditionally as part of the replay
+  // process.
+  // Other functions that are only called to deserialise are checked for presence separately
+
+  bool ret = true;
+
+#define CHECK_PRESENT(func)                                                            \
+  if(!real.func)                                                                       \
+  {                                                                                    \
+    RDCERR(                                                                            \
+        "Missing function %s, required for replay. RenderDoc requires a 3.2 context, " \
+        "and a handful of extensions, see the Documentation.",                         \
+        #func);                                                                        \
+    ret = false;                                                                       \
+  }
+
+  // these functions should all be present as part of a 3.2 context plus the extensions we require,
+  // but let's just be extra-careful
+  CHECK_PRESENT(glActiveTexture)
+  CHECK_PRESENT(glAttachShader)
+  CHECK_PRESENT(glBeginQuery)
+  CHECK_PRESENT(glBindAttribLocation)
+  CHECK_PRESENT(glBindBuffer)
+  CHECK_PRESENT(glBindBufferBase)
+  CHECK_PRESENT(glBindBufferRange)
+  CHECK_PRESENT(glBindFragDataLocation)
+  CHECK_PRESENT(glBindFramebuffer)
+  CHECK_PRESENT(glBindProgramPipeline)
+  CHECK_PRESENT(glBindSampler)
+  CHECK_PRESENT(glBindTexture)
+  CHECK_PRESENT(glBindVertexArray)
+  CHECK_PRESENT(glBindVertexBuffer)
+  CHECK_PRESENT(glBlendColor)
+  CHECK_PRESENT(glBlendEquationSeparate)
+  CHECK_PRESENT(glBlendFunc)
+  CHECK_PRESENT(glBlendFuncSeparate)
+  CHECK_PRESENT(glBlitFramebuffer)
+  CHECK_PRESENT(glBufferData)
+  CHECK_PRESENT(glBufferSubData)
+  CHECK_PRESENT(glClearBufferData)
+  CHECK_PRESENT(glClearBufferfi)
+  CHECK_PRESENT(glClearBufferfv)
+  CHECK_PRESENT(glClearBufferiv)
+  CHECK_PRESENT(glClearBufferuiv)
+  CHECK_PRESENT(glClearColor)
+  CHECK_PRESENT(glClearDepth)
+  CHECK_PRESENT(glColorMaski)
+  CHECK_PRESENT(glCompileShader)
+  CHECK_PRESENT(glCopyImageSubData)
+  CHECK_PRESENT(glCreateProgram)
+  CHECK_PRESENT(glCreateShader)
+  CHECK_PRESENT(glCreateShaderProgramv)
+  CHECK_PRESENT(glCullFace)
+  CHECK_PRESENT(glDeleteBuffers)
+  CHECK_PRESENT(glDeleteFramebuffers)
+  CHECK_PRESENT(glDeleteProgram)
+  CHECK_PRESENT(glDeleteProgramPipelines)
+  CHECK_PRESENT(glDeleteQueries)
+  CHECK_PRESENT(glDeleteSamplers)
+  CHECK_PRESENT(glDeleteShader)
+  CHECK_PRESENT(glDeleteTextures)
+  CHECK_PRESENT(glDeleteVertexArrays)
+  CHECK_PRESENT(glDepthFunc)
+  CHECK_PRESENT(glDepthMask)
+  CHECK_PRESENT(glDetachShader)
+  CHECK_PRESENT(glDisable)
+  CHECK_PRESENT(glDisablei)
+  CHECK_PRESENT(glDisableVertexAttribArray)
+  CHECK_PRESENT(glDrawArrays)
+  CHECK_PRESENT(glDrawArraysInstanced)
+  CHECK_PRESENT(glDrawBuffers)
+  CHECK_PRESENT(glDrawElements)
+  CHECK_PRESENT(glDrawElementsBaseVertex)
+  CHECK_PRESENT(glEnable)
+  CHECK_PRESENT(glEnablei)
+  CHECK_PRESENT(glEnableVertexAttribArray)
+  CHECK_PRESENT(glEndConditionalRender)
+  CHECK_PRESENT(glEndQuery)
+  CHECK_PRESENT(glFramebufferTexture)
+  CHECK_PRESENT(glFramebufferTexture2D)
+  CHECK_PRESENT(glFramebufferTexture3D)
+  CHECK_PRESENT(glFramebufferTextureLayer)
+  CHECK_PRESENT(glFrontFace)
+  CHECK_PRESENT(glGenBuffers)
+  CHECK_PRESENT(glGenFramebuffers)
+  CHECK_PRESENT(glGenProgramPipelines)
+  CHECK_PRESENT(glGenQueries)
+  CHECK_PRESENT(glGenSamplers)
+  CHECK_PRESENT(glGenTextures)
+  CHECK_PRESENT(glGenVertexArrays)
+  CHECK_PRESENT(glGetActiveUniformBlockiv)
+  CHECK_PRESENT(glGetAttribLocation)
+  CHECK_PRESENT(glGetBooleani_v)
+  CHECK_PRESENT(glGetBooleanv)
+  CHECK_PRESENT(glGetBufferParameteriv)
+  CHECK_PRESENT(glGetBufferSubData)
+  CHECK_PRESENT(glGetCompressedTexImage)
+  CHECK_PRESENT(glGetDoublev)
+  CHECK_PRESENT(glGetError)
+  CHECK_PRESENT(glGetFloatv)
+  CHECK_PRESENT(glGetFragDataLocation)
+  CHECK_PRESENT(glGetFramebufferAttachmentParameteriv)
+  CHECK_PRESENT(glGetInteger64i_v)
+  CHECK_PRESENT(glGetIntegeri_v)
+  CHECK_PRESENT(glGetIntegerv)
+  CHECK_PRESENT(glGetInternalformativ)
+  CHECK_PRESENT(glGetProgramInfoLog)
+  CHECK_PRESENT(glGetProgramInterfaceiv)
+  CHECK_PRESENT(glGetProgramiv)
+  CHECK_PRESENT(glGetProgramPipelineiv)
+  CHECK_PRESENT(glGetProgramResourceIndex)
+  CHECK_PRESENT(glGetProgramResourceiv)
+  CHECK_PRESENT(glGetProgramResourceName)
+  CHECK_PRESENT(glGetQueryObjectuiv)
+  CHECK_PRESENT(glGetSamplerParameterfv)
+  CHECK_PRESENT(glGetSamplerParameteriv)
+  CHECK_PRESENT(glGetShaderInfoLog)
+  CHECK_PRESENT(glGetShaderiv)
+  CHECK_PRESENT(glGetString)
+  CHECK_PRESENT(glGetStringi)
+  CHECK_PRESENT(glGetTexImage)
+  CHECK_PRESENT(glGetTexLevelParameteriv)
+  CHECK_PRESENT(glGetTexParameterfv)
+  CHECK_PRESENT(glGetTexParameteriv)
+  CHECK_PRESENT(glGetUniformBlockIndex)
+  CHECK_PRESENT(glGetUniformdv)
+  CHECK_PRESENT(glGetUniformfv)
+  CHECK_PRESENT(glGetUniformiv)
+  CHECK_PRESENT(glGetUniformLocation)
+  CHECK_PRESENT(glGetUniformuiv)
+  CHECK_PRESENT(glGetVertexAttribfv)
+  CHECK_PRESENT(glGetVertexAttribiv)
+  CHECK_PRESENT(glHint)
+  CHECK_PRESENT(glIsEnabled)
+  CHECK_PRESENT(glIsEnabledi)
+  CHECK_PRESENT(glLineWidth)
+  CHECK_PRESENT(glLinkProgram)
+  CHECK_PRESENT(glLogicOp)
+  CHECK_PRESENT(glMapBufferRange)
+  CHECK_PRESENT(glPixelStorei)
+  CHECK_PRESENT(glPointParameterf)
+  CHECK_PRESENT(glPointParameteri)
+  CHECK_PRESENT(glPointSize)
+  CHECK_PRESENT(glPolygonMode)
+  CHECK_PRESENT(glPolygonOffset)
+  CHECK_PRESENT(glPrimitiveRestartIndex)
+  CHECK_PRESENT(glProgramParameteri)
+  CHECK_PRESENT(glProgramUniform1dv)
+  CHECK_PRESENT(glProgramUniform1fv)
+  CHECK_PRESENT(glProgramUniform1iv)
+  CHECK_PRESENT(glProgramUniform1ui)
+  CHECK_PRESENT(glProgramUniform1uiv)
+  CHECK_PRESENT(glProgramUniform2dv)
+  CHECK_PRESENT(glProgramUniform2fv)
+  CHECK_PRESENT(glProgramUniform2iv)
+  CHECK_PRESENT(glProgramUniform2uiv)
+  CHECK_PRESENT(glProgramUniform3dv)
+  CHECK_PRESENT(glProgramUniform3fv)
+  CHECK_PRESENT(glProgramUniform3iv)
+  CHECK_PRESENT(glProgramUniform3uiv)
+  CHECK_PRESENT(glProgramUniform4dv)
+  CHECK_PRESENT(glProgramUniform4fv)
+  CHECK_PRESENT(glProgramUniform4iv)
+  CHECK_PRESENT(glProgramUniform4ui)
+  CHECK_PRESENT(glProgramUniform4uiv)
+  CHECK_PRESENT(glProgramUniformMatrix2dv)
+  CHECK_PRESENT(glProgramUniformMatrix2fv)
+  CHECK_PRESENT(glProgramUniformMatrix2x3dv)
+  CHECK_PRESENT(glProgramUniformMatrix2x3fv)
+  CHECK_PRESENT(glProgramUniformMatrix2x4dv)
+  CHECK_PRESENT(glProgramUniformMatrix2x4fv)
+  CHECK_PRESENT(glProgramUniformMatrix3dv)
+  CHECK_PRESENT(glProgramUniformMatrix3fv)
+  CHECK_PRESENT(glProgramUniformMatrix3x2dv)
+  CHECK_PRESENT(glProgramUniformMatrix3x2fv)
+  CHECK_PRESENT(glProgramUniformMatrix3x4dv)
+  CHECK_PRESENT(glProgramUniformMatrix3x4fv)
+  CHECK_PRESENT(glProgramUniformMatrix4dv)
+  CHECK_PRESENT(glProgramUniformMatrix4fv)
+  CHECK_PRESENT(glProgramUniformMatrix4x2dv)
+  CHECK_PRESENT(glProgramUniformMatrix4x2fv)
+  CHECK_PRESENT(glProgramUniformMatrix4x3dv)
+  CHECK_PRESENT(glProgramUniformMatrix4x3fv)
+  CHECK_PRESENT(glProvokingVertex)
+  CHECK_PRESENT(glReadBuffer)
+  CHECK_PRESENT(glReadPixels)
+  CHECK_PRESENT(glSampleCoverage)
+  CHECK_PRESENT(glSampleMaski)
+  CHECK_PRESENT(glSamplerParameteri)
+  CHECK_PRESENT(glShaderSource)
+  CHECK_PRESENT(glStencilFuncSeparate)
+  CHECK_PRESENT(glStencilMask)
+  CHECK_PRESENT(glStencilMaskSeparate)
+  CHECK_PRESENT(glStencilOpSeparate)
+  CHECK_PRESENT(glTexImage2D)
+  CHECK_PRESENT(glTexParameteri)
+  CHECK_PRESENT(glUniform1i)
+  CHECK_PRESENT(glUniform1ui)
+  CHECK_PRESENT(glUniform2f)
+  CHECK_PRESENT(glUniform2fv)
+  CHECK_PRESENT(glUniform4fv)
+  CHECK_PRESENT(glUniformBlockBinding)
+  CHECK_PRESENT(glUniformMatrix4fv)
+  CHECK_PRESENT(glUnmapBuffer)
+  CHECK_PRESENT(glUseProgram)
+  CHECK_PRESENT(glUseProgramStages)
+  CHECK_PRESENT(glVertexAttrib4fv)
+  CHECK_PRESENT(glVertexAttribBinding)
+  CHECK_PRESENT(glVertexAttribFormat)
+  CHECK_PRESENT(glVertexAttribIFormat)
+  CHECK_PRESENT(glVertexAttribLFormat)
+  CHECK_PRESENT(glVertexAttribPointer)
+  CHECK_PRESENT(glVertexBindingDivisor)
+  CHECK_PRESENT(glViewport)
+
+  // other functions are either checked for presence explicitly (like
+  // depth bounds or polygon offset clamp EXT functions), or they are
+  // only called when such a call is serialised from the logfile, and
+  // so they are checked for validity separately.
+
+  return ret;
+}
+
+void CheckExtensions(const GLHookSet &gl)
 {
   GLint numExts = 0;
   if(gl.glGetIntegerv)
     gl.glGetIntegerv(eGL_NUM_EXTENSIONS, &numExts);
 
-  RDCEraseEl(ExtensionSupported);
-  RDCEraseEl(VendorCheck);
+  RDCEraseEl(HasExt);
 
   if(gl.glGetString)
   {
@@ -69,22 +396,18 @@ void DoVendorChecks(const GLHookSet &gl, GLWindowingData context)
 
       ext += 3;
 
-#define EXT_CHECK(extname)             \
-  if(!strcmp(ext, STRINGIZE(extname))) \
-    ExtensionSupported[CONCAT(ExtensionSupported_, extname)] = true;
+#undef EXT_TO_CHECK
+#define EXT_TO_CHECK(ver, extname)                             \
+  if(GLCoreVersion >= ver || !strcmp(ext, STRINGIZE(extname))) \
+    HasExt[extname] = true;
 
-      EXT_CHECK(ARB_clip_control);
-      EXT_CHECK(ARB_enhanced_layouts);
-      EXT_CHECK(EXT_polygon_offset_clamp);
-      EXT_CHECK(KHR_blend_equation_advanced_coherent);
-      EXT_CHECK(EXT_raster_multisample);
-      EXT_CHECK(ARB_indirect_parameters);
-      EXT_CHECK(EXT_depth_bounds_test);
-
-#undef EXT_CHECK
+      EXTENSION_CHECKS()
     }
   }
+}
 
+void DoVendorChecks(const GLHookSet &gl, GLPlatform &platform, GLWindowingData context)
+{
   //////////////////////////////////////////////////////////
   // version/driver/vendor specific hacks and checks go here
   // doing these in a central place means they're all documented and
@@ -99,6 +422,8 @@ void DoVendorChecks(const GLHookSet &gl, GLWindowingData context)
   // the i'th
   // vertex buffer which is exactly what we wanted from GL_VERTEX_BINDING_BUFFER!
   // see: http://devgurus.amd.com/message/1306745#1306745
+
+  RDCEraseEl(VendorCheck);
 
   if(gl.glGetError && gl.glGetIntegeri_v)
   {
@@ -117,56 +442,6 @@ void DoVendorChecks(const GLHookSet &gl, GLWindowingData context)
 
       RDCWARN("Using AMD hack to avoid GL_VERTEX_BINDING_BUFFER");
     }
-  }
-
-  if(gl.glGetIntegerv && gl.glGenTextures && gl.glBindTexture && gl.glTextureStorage2DEXT &&
-     gl.glGetTextureLevelParameterivEXT && gl.glDeleteTextures)
-  {
-    // We need to determine if GL_TEXTURE_COMPRESSED_IMAGE_SIZE for a compressed cubemap face target
-    // will return the size of the whole cubemap, or just one face. Since we fetch the cubemap
-    // data face-by-face the distinction is important.
-    // So we create a 4x4 cubemap with no mips that's DXT1 (BC1) compressed, which is 0.5 bytes per
-    // pixel.
-    // So 4*4*0.5 = 8 bytes per face. If the returned size is 8 or 48 we can determine which result
-    // the
-    // query returns. It's probably safe to assume it's consistent then for all sizes and formats of
-    // cubemaps.
-    // I'm not sure what the correct answer is, intuitively it feels like when you query for the
-    // size of
-    // a single face target, it should give you the size of that face. The spec doesn't seem to say
-    // though
-
-    GLuint prevtex = 0;    // should almost certainly be 0, but let's be careful anyway.
-    gl.glGetIntegerv(eGL_TEXTURE_BINDING_CUBE_MAP, (GLint *)&prevtex);
-
-    GLuint dummy = 0;
-    gl.glGenTextures(1, &dummy);
-    gl.glBindTexture(eGL_TEXTURE_CUBE_MAP, dummy);
-
-    gl.glBindTexture(eGL_TEXTURE_CUBE_MAP, prevtex);
-
-    gl.glTextureStorage2DEXT(dummy, eGL_TEXTURE_CUBE_MAP, 1, eGL_COMPRESSED_RGBA_S3TC_DXT1_EXT, 4, 4);
-
-    GLint compSize = 0;
-    gl.glGetTextureLevelParameterivEXT(dummy, eGL_TEXTURE_CUBE_MAP_POSITIVE_X, 0,
-                                       eGL_TEXTURE_COMPRESSED_IMAGE_SIZE, &compSize);
-
-    if(compSize == 8)
-    {
-      VendorCheck[VendorCheck_EXT_compressed_cube_size] = false;
-    }
-    else if(compSize == 48)
-    {
-      VendorCheck[VendorCheck_EXT_compressed_cube_size] = true;
-      RDCWARN("Compressed cubemap size returns whole cubemap");
-    }
-    else
-    {
-      RDCERR("Unexpected compressed size of +X face of BC1 compressed 4x4 cubemap mip 0! %d",
-             compSize);
-    }
-
-    gl.glDeleteTextures(1, &dummy);
   }
 
   if(gl.glGetIntegerv && gl.glGetError)
@@ -190,18 +465,19 @@ void DoVendorChecks(const GLHookSet &gl, GLWindowingData context)
 
   // AMD throws an error if we try to copy the mips that are smaller than 4x4,
   if(gl.glGetError && gl.glGenTextures && gl.glBindTexture && gl.glCopyImageSubData &&
-     gl.glTexStorage2D && gl.glTexSubImage2D && gl.glTexParameteri && gl.glDeleteTextures)
+     gl.glTexStorage2D && gl.glTexSubImage2D && gl.glTexParameteri && gl.glDeleteTextures &&
+     HasExt[ARB_copy_image] && HasExt[ARB_texture_storage])
   {
     GLuint texs[2];
     gl.glGenTextures(2, texs);
 
     gl.glBindTexture(eGL_TEXTURE_2D, texs[0]);
     gl.glTexStorage2D(eGL_TEXTURE_2D, 1, eGL_COMPRESSED_RGBA_S3TC_DXT1_EXT, 1, 1);
-    gl.glTexParameteri(eGL_TEXTURE_2D, eGL_TEXTURE_MAX_LEVEL, 1);
+    gl.glTexParameteri(eGL_TEXTURE_2D, eGL_TEXTURE_MAX_LEVEL, 0);
 
     gl.glBindTexture(eGL_TEXTURE_2D, texs[1]);
     gl.glTexStorage2D(eGL_TEXTURE_2D, 1, eGL_COMPRESSED_RGBA_S3TC_DXT1_EXT, 1, 1);
-    gl.glTexParameteri(eGL_TEXTURE_2D, eGL_TEXTURE_MAX_LEVEL, 1);
+    gl.glTexParameteri(eGL_TEXTURE_2D, eGL_TEXTURE_MAX_LEVEL, 0);
 
     // clear all error flags.
     GLenum err = eGL_NONE;
@@ -236,7 +512,7 @@ void DoVendorChecks(const GLHookSet &gl, GLWindowingData context)
 
     gl.glBindTexture(eGL_TEXTURE_CUBE_MAP, texs[0]);
     gl.glTexStorage2D(eGL_TEXTURE_CUBE_MAP, 1, eGL_COMPRESSED_RGBA_S3TC_DXT1_EXT, dim, dim);
-    gl.glTexParameteri(eGL_TEXTURE_CUBE_MAP, eGL_TEXTURE_MAX_LEVEL, 1);
+    gl.glTexParameteri(eGL_TEXTURE_CUBE_MAP, eGL_TEXTURE_MAX_LEVEL, 0);
 
     for(int i = 0; i < 6; i++)
     {
@@ -247,7 +523,7 @@ void DoVendorChecks(const GLHookSet &gl, GLWindowingData context)
 
     gl.glBindTexture(eGL_TEXTURE_CUBE_MAP, texs[1]);
     gl.glTexStorage2D(eGL_TEXTURE_CUBE_MAP, 1, eGL_COMPRESSED_RGBA_S3TC_DXT1_EXT, dim, dim);
-    gl.glTexParameteri(eGL_TEXTURE_CUBE_MAP, eGL_TEXTURE_MAX_LEVEL, 1);
+    gl.glTexParameteri(eGL_TEXTURE_CUBE_MAP, eGL_TEXTURE_MAX_LEVEL, 0);
 
     gl.glCopyImageSubData(texs[0], eGL_TEXTURE_CUBE_MAP, 0, 0, 0, 0, texs[1], eGL_TEXTURE_CUBE_MAP,
                           0, 0, 0, 0, dim, dim, 6);
@@ -297,7 +573,7 @@ void DoVendorChecks(const GLHookSet &gl, GLWindowingData context)
   }
 
   if(gl.glGetError && gl.glGenProgramPipelines && gl.glDeleteProgramPipelines &&
-     gl.glGetProgramPipelineiv)
+     gl.glGetProgramPipelineiv && HasExt[ARB_compute_shader] && HasExt[ARB_program_interface_query])
   {
     GLuint pipe = 0;
     gl.glGenProgramPipelines(1, &pipe);
@@ -337,12 +613,12 @@ void DoVendorChecks(const GLHookSet &gl, GLWindowingData context)
     gl.glBindVertexArray(vao);
 
     // make a context that shares with the current one, and switch to it
-    GLWindowingData child = MakeContext(context);
+    GLWindowingData child = platform.MakeContext(context);
 
     if(child.ctx)
     {
       // switch to child
-      MakeContextCurrent(child);
+      platform.MakeContextCurrent(child);
 
       // these shouldn't be visible
       VendorCheck[VendorCheck_EXT_fbo_shared] = (gl.glIsFramebuffer(fbo) != GL_FALSE);
@@ -354,9 +630,9 @@ void DoVendorChecks(const GLHookSet &gl, GLWindowingData context)
         RDCWARN("VAOs are shared on this implementation");
 
       // switch back to context
-      MakeContextCurrent(context);
+      platform.MakeContextCurrent(context);
 
-      DeleteContext(child);
+      platform.DeleteContext(child);
     }
 
     gl.glDeleteFramebuffers(1, &fbo);
@@ -374,6 +650,39 @@ void DoVendorChecks(const GLHookSet &gl, GLWindowingData context)
   // so we have to do this unconditionally, this value isn't checked anywhere.
   // Search for where this is applied in gl_emulated.cpp
   VendorCheck[VendorCheck_NV_ClearNamedFramebufferfiBugs] = true;
+
+  // glVertexArrayElementBuffer doesn't update the GL_ELEMENT_ARRAY_BUFFER_BINDING global query,
+  // when binding the VAO subsequently *will*.
+  // I'm not sure if that's correct (weird) behaviour or buggy, but we can work around it just by
+  // avoiding use of the DSA function and always doing our emulated version.
+  VendorCheck[VendorCheck_AMD_vertex_array_elem_buffer_query] = true;
+}
+
+const GLHookSet *GLMarkerRegion::gl;
+
+GLMarkerRegion::GLMarkerRegion(const std::string &marker)
+{
+  if(gl == NULL || !HasExt[KHR_debug] || !gl->glPushDebugGroup)
+    return;
+
+  gl->glPushDebugGroup(eGL_DEBUG_SOURCE_APPLICATION, 0, -1, marker.c_str());
+}
+
+void GLMarkerRegion::Set(const std::string &marker)
+{
+  if(gl == NULL || !HasExt[KHR_debug] || !gl->glDebugMessageInsert)
+    return;
+
+  gl->glDebugMessageInsert(eGL_DEBUG_SOURCE_APPLICATION, eGL_DEBUG_TYPE_MARKER, 0,
+                           eGL_DEBUG_SEVERITY_NOTIFICATION, -1, marker.c_str());
+}
+
+GLMarkerRegion::~GLMarkerRegion()
+{
+  if(gl == NULL || !HasExt[KHR_debug] || !gl->glPopDebugGroup)
+    return;
+
+  gl->glPopDebugGroup();
 }
 
 size_t BufferIdx(GLenum buf)
@@ -429,30 +738,56 @@ GLenum BufferEnum(size_t idx)
 
 size_t QueryIdx(GLenum query)
 {
+  size_t idx = 0;
+
   switch(query)
   {
-    case eGL_SAMPLES_PASSED: return 0;
-    case eGL_ANY_SAMPLES_PASSED: return 1;
-    case eGL_ANY_SAMPLES_PASSED_CONSERVATIVE: return 2;
-    case eGL_PRIMITIVES_GENERATED: return 3;
-    case eGL_TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN: return 4;
-    case eGL_TIME_ELAPSED: return 5;
+    case eGL_SAMPLES_PASSED: idx = 0; break;
+    case eGL_ANY_SAMPLES_PASSED: idx = 1; break;
+    case eGL_ANY_SAMPLES_PASSED_CONSERVATIVE: idx = 2; break;
+    case eGL_PRIMITIVES_GENERATED: idx = 3; break;
+    case eGL_TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN: idx = 4; break;
+    case eGL_TIME_ELAPSED: idx = 5; break;
+    case eGL_VERTICES_SUBMITTED_ARB: idx = 6; break;
+    case eGL_PRIMITIVES_SUBMITTED_ARB: idx = 7; break;
+    case eGL_GEOMETRY_SHADER_PRIMITIVES_EMITTED_ARB: idx = 8; break;
+    case eGL_CLIPPING_INPUT_PRIMITIVES_ARB: idx = 9; break;
+    case eGL_CLIPPING_OUTPUT_PRIMITIVES_ARB: idx = 10; break;
+    case eGL_VERTEX_SHADER_INVOCATIONS_ARB: idx = 11; break;
+    case eGL_TESS_CONTROL_SHADER_PATCHES_ARB: idx = 12; break;
+    case eGL_TESS_EVALUATION_SHADER_INVOCATIONS_ARB: idx = 13; break;
+    case eGL_GEOMETRY_SHADER_INVOCATIONS: idx = 14; break;
+    case eGL_FRAGMENT_SHADER_INVOCATIONS_ARB: idx = 15; break;
+    case eGL_COMPUTE_SHADER_INVOCATIONS_ARB: idx = 16; break;
+
     default: RDCERR("Unexpected enum as query target: %s", ToStr::Get(query).c_str());
   }
 
-  return 0;
+  if(idx >= WrappedOpenGL::MAX_QUERIES)
+    RDCERR("Query index for enum %s out of range %d", ToStr::Get(query).c_str(), idx);
+
+  return idx;
 }
 
 GLenum QueryEnum(size_t idx)
 {
-  GLenum enums[] = {
-      eGL_SAMPLES_PASSED,
-      eGL_ANY_SAMPLES_PASSED,
-      eGL_ANY_SAMPLES_PASSED_CONSERVATIVE,
-      eGL_PRIMITIVES_GENERATED,
-      eGL_TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN,
-      eGL_TIME_ELAPSED,
-  };
+  GLenum enums[] = {eGL_SAMPLES_PASSED,
+                    eGL_ANY_SAMPLES_PASSED,
+                    eGL_ANY_SAMPLES_PASSED_CONSERVATIVE,
+                    eGL_PRIMITIVES_GENERATED,
+                    eGL_TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN,
+                    eGL_TIME_ELAPSED,
+                    eGL_VERTICES_SUBMITTED_ARB,
+                    eGL_PRIMITIVES_SUBMITTED_ARB,
+                    eGL_GEOMETRY_SHADER_PRIMITIVES_EMITTED_ARB,
+                    eGL_CLIPPING_INPUT_PRIMITIVES_ARB,
+                    eGL_CLIPPING_OUTPUT_PRIMITIVES_ARB,
+                    eGL_VERTEX_SHADER_INVOCATIONS_ARB,
+                    eGL_TESS_CONTROL_SHADER_PATCHES_ARB,
+                    eGL_TESS_EVALUATION_SHADER_INVOCATIONS_ARB,
+                    eGL_GEOMETRY_SHADER_INVOCATIONS,
+                    eGL_FRAGMENT_SHADER_INVOCATIONS_ARB,
+                    eGL_COMPUTE_SHADER_INVOCATIONS_ARB};
 
   if(idx < ARRAY_COUNT(enums))
     return enums[idx];
@@ -594,7 +929,7 @@ const char *SamplerString(GLenum smpenum)
   return unknown.c_str();
 }
 
-ResourceFormat MakeResourceFormat(WrappedOpenGL &gl, GLenum target, GLenum fmt)
+ResourceFormat MakeResourceFormat(const GLHookSet &gl, GLenum target, GLenum fmt)
 {
   ResourceFormat ret;
 
@@ -1723,7 +2058,7 @@ static void ForAllProgramUniforms(const GLHookSet &gl, Serialiser *ser, GLuint p
   }
 
   GLint numSSBOs = 0;
-  if(CheckConstParam(ReadSourceProgram))
+  if(CheckConstParam(ReadSourceProgram) && HasExt[ARB_shader_storage_buffer_object])
     gl.glGetProgramInterfaceiv(progSrc, eGL_SHADER_STORAGE_BLOCK, eGL_ACTIVE_RESOURCES, &numSSBOs);
 
   if(CheckConstParam(SerialiseUniforms))

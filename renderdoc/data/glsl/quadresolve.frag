@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  * 
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -21,6 +21,8 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  ******************************************************************************/
+
+//#extension GL_ARB_shader_image_load_store : require
  
 ////////////////////////////////////////////////////////////////////////////////////////////
 // Below shaders courtesy of Stephen Hill (@self_shadow), converted to glsl trivially
@@ -49,9 +51,9 @@ void main()
 {
 	ivec2 quad = ivec2(gl_FragCoord.xy*0.5f);
 
-	uint overdraw = 0;
-	for(uint i = 0; i < 4; i++)
-		overdraw += imageLoad(overdrawImage, ivec3(quad, i)).x/(i + 1);
+	uint overdraw = 0u;
+	for(uint i = 0u; i < 4u; i++)
+		overdraw += imageLoad(overdrawImage, ivec3(quad, i)).x/(i + 1u);
 
 	color_out = ToColour(overdraw);
 }

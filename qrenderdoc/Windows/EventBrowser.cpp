@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -23,7 +23,10 @@
  ******************************************************************************/
 
 #include "EventBrowser.h"
+#include <QKeyEvent>
+#include <QShortcut>
 #include <QTimer>
+#include "3rdparty/flowlayout/FlowLayout.h"
 #include "Code/CaptureContext.h"
 #include "Code/QRDUtils.h"
 #include "ui_EventBrowser.h"
@@ -37,17 +40,21 @@ enum
   COL_CURRENT,
   COL_FIND,
   COL_BOOKMARK,
-  COL_SELECT_EID,
+  COL_LAST_EID,
 };
 
-EventBrowser::EventBrowser(CaptureContext *ctx, QWidget *parent)
+EventBrowser::EventBrowser(CaptureContext &ctx, QWidget *parent)
     : QFrame(parent), ui(new Ui::EventBrowser), m_Ctx(ctx)
 {
   ui->setupUi(this);
 
-  m_Ctx->AddLogViewer(this);
+  m_Ctx.AddLogViewer(this);
 
-  ui->events->header()->resizeSection(COL_EID, 45);
+  clearBookmarks();
+
+  ui->events->setClearSelectionOnFocusLoss(false);
+
+  ui->events->header()->resizeSection(COL_EID, 80);
 
   ui->events->header()->setSectionResizeMode(COL_NAME, QHeaderView::Stretch);
   ui->events->header()->setSectionResizeMode(COL_EID, QHeaderView::Interactive);
@@ -71,23 +78,47 @@ EventBrowser::EventBrowser(CaptureContext *ctx, QWidget *parent)
 
   QObject::connect(ui->closeFind, &QToolButton::clicked, this, &EventBrowser::on_HideFindJump);
   QObject::connect(ui->closeJump, &QToolButton::clicked, this, &EventBrowser::on_HideFindJump);
-  QObject::connect(ui->jumpToEID, &RDLineEdit::leave, this, &EventBrowser::on_HideFindJump);
-  QObject::connect(ui->findEvent, &RDLineEdit::leave, this, &EventBrowser::on_HideFindJump);
+  QObject::connect(ui->events, &RDTreeWidget::keyPress, this, &EventBrowser::events_keyPress);
   ui->jumpStrip->hide();
   ui->findStrip->hide();
   ui->bookmarkStrip->hide();
 
-  m_CurrentIcon.addFile(QStringLiteral(":/Resources/flag_green.png"), QSize(), QIcon::Normal,
-                        QIcon::Off);
-  m_FindIcon.addFile(QStringLiteral(":/Resources/find.png"), QSize(), QIcon::Normal, QIcon::Off);
-  m_BookmarkIcon.addFile(QStringLiteral(":/Resources/asterisk_orange.png"), QSize(), QIcon::Normal,
-                         QIcon::Off);
+  m_BookmarkStripLayout = new FlowLayout(ui->bookmarkStrip, 0, 3, 3);
+  m_BookmarkSpacer = new QSpacerItem(40, 20, QSizePolicy::Expanding, QSizePolicy::Minimum);
+
+  ui->bookmarkStrip->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
+  m_BookmarkStripLayout->addWidget(ui->bookmarkStripHeader);
+  m_BookmarkStripLayout->addItem(m_BookmarkSpacer);
+
+  m_CurrentIcon.addFile(QStringLiteral(":/flag_green.png"), QSize(), QIcon::Normal, QIcon::Off);
+  m_FindIcon.addFile(QStringLiteral(":/find.png"), QSize(), QIcon::Normal, QIcon::Off);
+  m_BookmarkIcon.addFile(QStringLiteral(":/asterisk_orange.png"), QSize(), QIcon::Normal, QIcon::Off);
+
+  Qt::Key keys[] = {
+      Qt::Key_1, Qt::Key_2, Qt::Key_3, Qt::Key_4, Qt::Key_5,
+      Qt::Key_6, Qt::Key_7, Qt::Key_8, Qt::Key_9, Qt::Key_0,
+  };
+  for(int i = 0; i < 10; i++)
+  {
+    QShortcut *sc = new QShortcut(QKeySequence(keys[i] | Qt::ControlModifier), this);
+    QObject::connect(sc, &QShortcut::activated, [this, i]() { jumpToBookmark(i); });
+  }
+
+  {
+    QShortcut *sc = new QShortcut(QKeySequence(Qt::Key_Left | Qt::ControlModifier), this);
+    QObject::connect(sc, &QShortcut::activated, this, &EventBrowser::on_stepPrev_clicked);
+  }
+
+  {
+    QShortcut *sc = new QShortcut(QKeySequence(Qt::Key_Right | Qt::ControlModifier), this);
+    QObject::connect(sc, &QShortcut::activated, this, &EventBrowser::on_stepNext_clicked);
+  }
 }
 
 EventBrowser::~EventBrowser()
 {
-  m_Ctx->windowClosed(this);
-  m_Ctx->RemoveLogViewer(this);
+  m_Ctx.windowClosed(this);
+  m_Ctx.RemoveLogViewer(this);
   delete ui;
   delete m_SizeDelegate;
 }
@@ -96,34 +127,39 @@ void EventBrowser::OnLogfileLoaded()
 {
   QTreeWidgetItem *frame = new QTreeWidgetItem(
       (QTreeWidget *)NULL,
-      QStringList{QString("Frame #%1").arg(m_Ctx->FrameInfo().frameNumber), "", ""});
+      QStringList{QString("Frame #%1").arg(m_Ctx.FrameInfo().frameNumber), "", ""});
+
+  clearBookmarks();
 
   QTreeWidgetItem *framestart = new QTreeWidgetItem(frame, QStringList{"Frame Start", "0", ""});
   framestart->setData(COL_EID, Qt::UserRole, QVariant(0));
   framestart->setData(COL_CURRENT, Qt::UserRole, QVariant(false));
   framestart->setData(COL_FIND, Qt::UserRole, QVariant(false));
   framestart->setData(COL_BOOKMARK, Qt::UserRole, QVariant(false));
-  framestart->setData(COL_SELECT_EID, Qt::UserRole, QVariant(0));
+  framestart->setData(COL_LAST_EID, Qt::UserRole, QVariant(0));
 
-  uint lastEID = AddDrawcalls(frame, m_Ctx->CurDrawcalls());
-  frame->setData(COL_EID, Qt::UserRole, QVariant(lastEID));
-  frame->setData(COL_SELECT_EID, Qt::UserRole, QVariant(lastEID));
+  uint lastEID = AddDrawcalls(frame, m_Ctx.CurDrawcalls());
+  frame->setData(COL_EID, Qt::UserRole, QVariant(0));
+  frame->setData(COL_LAST_EID, Qt::UserRole, QVariant(lastEID));
 
   ui->events->insertTopLevelItem(0, frame);
 
   ui->events->expandItem(frame);
 
-  m_Ctx->SetEventID(this, lastEID);
+  m_Ctx.SetEventID({this}, lastEID, lastEID);
 }
 
 void EventBrowser::OnLogfileClosed()
 {
+  clearBookmarks();
+
   ui->events->clear();
 }
 
-void EventBrowser::OnEventSelected(uint32_t eventID)
+void EventBrowser::OnEventChanged(uint32_t eventID)
 {
   SelectEvent(eventID);
+  highlightBookmarks();
 }
 
 uint EventBrowser::AddDrawcalls(QTreeWidgetItem *parent, const rdctype::array<FetchDrawcall> &draws)
@@ -137,6 +173,9 @@ uint EventBrowser::AddDrawcalls(QTreeWidgetItem *parent, const rdctype::array<Fe
 
     lastEID = AddDrawcalls(child, draws[i].children);
 
+    if(lastEID > draws[i].eventID)
+      child->setText(COL_EID, QString("%1-%2").arg(draws[i].eventID).arg(lastEID));
+
     if(lastEID == 0)
     {
       lastEID = draws[i].eventID;
@@ -145,11 +184,11 @@ uint EventBrowser::AddDrawcalls(QTreeWidgetItem *parent, const rdctype::array<Fe
         lastEID = draws[i + 1].eventID;
     }
 
-    child->setData(COL_EID, Qt::UserRole, QVariant(lastEID));
+    child->setData(COL_EID, Qt::UserRole, QVariant(draws[i].eventID));
     child->setData(COL_CURRENT, Qt::UserRole, QVariant(false));
     child->setData(COL_FIND, Qt::UserRole, QVariant(false));
     child->setData(COL_BOOKMARK, Qt::UserRole, QVariant(false));
-    child->setData(COL_SELECT_EID, Qt::UserRole, QVariant(lastEID));
+    child->setData(COL_LAST_EID, Qt::UserRole, QVariant(lastEID));
   }
 
   return lastEID;
@@ -167,7 +206,7 @@ void EventBrowser::SetDrawcallTimes(QTreeWidgetItem *node,
   // look up leaf nodes in the dictionary
   if(node->childCount() == 0)
   {
-    uint eid = node->data(COL_SELECT_EID, Qt::UserRole).toUInt();
+    uint eid = node->data(COL_EID, Qt::UserRole).toUInt();
 
     duration = -1.0;
 
@@ -201,7 +240,6 @@ void EventBrowser::on_find_clicked()
 {
   ui->jumpStrip->hide();
   ui->findStrip->show();
-  ui->bookmarkStrip->hide();
   ui->findEvent->setFocus();
 }
 
@@ -209,28 +247,27 @@ void EventBrowser::on_gotoEID_clicked()
 {
   ui->jumpStrip->show();
   ui->findStrip->hide();
-  ui->bookmarkStrip->hide();
   ui->jumpToEID->setFocus();
 }
 
-void EventBrowser::on_toolButton_clicked()
+void EventBrowser::on_bookmark_clicked()
 {
-  ui->jumpStrip->hide();
-  ui->findStrip->hide();
-  ui->bookmarkStrip->show();
+  QTreeWidgetItem *n = ui->events->currentItem();
+
+  if(n)
+    toggleBookmark(n->data(COL_LAST_EID, Qt::UserRole).toUInt());
 }
 
 void EventBrowser::on_timeDraws_clicked()
 {
-  m_Ctx->Renderer()->AsyncInvoke([this](IReplayRenderer *r) {
+  m_Ctx.Renderer().AsyncInvoke([this](IReplayRenderer *r) {
 
     uint32_t counters[] = {eCounter_EventGPUDuration};
 
     rdctype::array<CounterResult> results;
     r->FetchCounters(counters, 1, &results);
 
-    GUIInvoke::blockcall(
-        [this, results]() { SetDrawcallTimes(ui->events->topLevelItem(0), results); });
+    GUIInvoke::call([this, results]() { SetDrawcallTimes(ui->events->topLevelItem(0), results); });
   });
 }
 
@@ -248,9 +285,12 @@ void EventBrowser::on_events_currentItemChanged(QTreeWidgetItem *current, QTreeW
   current->setData(COL_CURRENT, Qt::UserRole, QVariant(true));
   RefreshIcon(current);
 
-  uint EID = current->data(COL_SELECT_EID, Qt::UserRole).toUInt();
+  uint EID = current->data(COL_EID, Qt::UserRole).toUInt();
+  uint lastEID = current->data(COL_LAST_EID, Qt::UserRole).toUInt();
 
-  m_Ctx->SetEventID(this, EID);
+  m_Ctx.SetEventID({this}, EID, lastEID);
+
+  highlightBookmarks();
 }
 
 void EventBrowser::on_HideFindJump()
@@ -261,7 +301,6 @@ void EventBrowser::on_HideFindJump()
   ui->jumpToEID->setText("");
 
   ClearFindIcons();
-  ui->findEvent->setText("");
   ui->findEvent->setStyleSheet("");
 }
 
@@ -304,16 +343,30 @@ void EventBrowser::on_findEvent_textEdited(const QString &arg1)
 
 void EventBrowser::on_findEvent_returnPressed()
 {
+  // stop the timer, we'll manually fire it instantly
   if(m_FindHighlight->isActive())
-  {
-    // manually fire it instantly
     m_FindHighlight->stop();
-    findHighlight_timeout();
-  }
 
   if(!ui->findEvent->text().isEmpty())
-  {
     Find(true);
+
+  findHighlight_timeout();
+}
+
+void EventBrowser::on_findEvent_keyPress(QKeyEvent *event)
+{
+  if(event->key() == Qt::Key_F3)
+  {
+    // stop the timer, we'll manually fire it instantly
+    if(m_FindHighlight->isActive())
+      m_FindHighlight->stop();
+
+    if(!ui->findEvent->text().isEmpty())
+      Find(event->modifiers() & Qt::ShiftModifier ? false : true);
+
+    findHighlight_timeout();
+
+    event->accept();
   }
 }
 
@@ -327,26 +380,183 @@ void EventBrowser::on_findPrev_clicked()
   Find(false);
 }
 
+void EventBrowser::on_stepNext_clicked()
+{
+  if(!m_Ctx.LogLoaded())
+    return;
+
+  const FetchDrawcall *draw = m_Ctx.CurDrawcall();
+
+  if(draw && draw->next > 0)
+    SelectEvent(draw->next);
+}
+
+void EventBrowser::on_stepPrev_clicked()
+{
+  if(!m_Ctx.LogLoaded())
+    return;
+
+  const FetchDrawcall *draw = m_Ctx.CurDrawcall();
+
+  if(draw && draw->previous > 0)
+    SelectEvent(draw->previous);
+}
+
+void EventBrowser::events_keyPress(QKeyEvent *event)
+{
+  if(!m_Ctx.LogLoaded())
+    return;
+
+  if(event->key() == Qt::Key_F3)
+  {
+    if(event->modifiers() == Qt::ShiftModifier)
+      Find(false);
+    else
+      Find(true);
+  }
+
+  if(event->modifiers() == Qt::ControlModifier)
+  {
+    if(event->key() == Qt::Key_F)
+    {
+      on_find_clicked();
+      event->accept();
+    }
+    else if(event->key() == Qt::Key_G)
+    {
+      on_gotoEID_clicked();
+      event->accept();
+    }
+    else if(event->key() == Qt::Key_B)
+    {
+      on_bookmark_clicked();
+      event->accept();
+    }
+    else if(event->key() == Qt::Key_T)
+    {
+      on_timeDraws_clicked();
+      event->accept();
+    }
+  }
+}
+
+void EventBrowser::clearBookmarks()
+{
+  for(QToolButton *b : m_BookmarkButtons)
+    delete b;
+
+  m_Bookmarks.clear();
+  m_BookmarkButtons.clear();
+
+  ui->bookmarkStrip->setVisible(false);
+}
+
+void EventBrowser::toggleBookmark(uint32_t EID)
+{
+  int index = m_Bookmarks.indexOf(EID);
+
+  QTreeWidgetItem *found = NULL;
+  FindEventNode(found, ui->events->topLevelItem(0), EID);
+
+  if(index >= 0)
+  {
+    delete m_BookmarkButtons.takeAt(index);
+    m_Bookmarks.removeAt(index);
+
+    if(found)
+    {
+      found->setData(COL_BOOKMARK, Qt::UserRole, QVariant(false));
+      RefreshIcon(found);
+    }
+  }
+  else
+  {
+    QToolButton *but = new QToolButton(this);
+
+    but->setText(QString::number(EID));
+    but->setCheckable(true);
+    but->setAutoRaise(true);
+    but->setProperty("eid", EID);
+    QObject::connect(but, &QToolButton::clicked, [this, but, EID]() {
+      but->setChecked(true);
+      SelectEvent(EID);
+      highlightBookmarks();
+    });
+
+    m_BookmarkButtons.push_back(but);
+    m_Bookmarks.push_back(EID);
+
+    highlightBookmarks();
+
+    if(found)
+    {
+      found->setData(COL_BOOKMARK, Qt::UserRole, QVariant(true));
+      RefreshIcon(found);
+    }
+
+    m_BookmarkStripLayout->removeItem(m_BookmarkSpacer);
+    m_BookmarkStripLayout->addWidget(but);
+    m_BookmarkStripLayout->addItem(m_BookmarkSpacer);
+  }
+
+  ui->bookmarkStrip->setVisible(!m_BookmarkButtons.isEmpty());
+}
+
+void EventBrowser::jumpToBookmark(int idx)
+{
+  if(idx < 0 || idx >= m_Bookmarks.count() || !m_Ctx.LogLoaded())
+    return;
+
+  // don't exclude ourselves, so we're updated as normal
+  SelectEvent(m_Bookmarks[idx]);
+}
+
+void EventBrowser::highlightBookmarks()
+{
+  for(QToolButton *b : m_BookmarkButtons)
+  {
+    if(b->property("eid").toUInt() == m_Ctx.CurEvent())
+      b->setChecked(true);
+    else
+      b->setChecked(false);
+  }
+}
+
+bool EventBrowser::hasBookmark(QTreeWidgetItem *node)
+{
+  if(node)
+    return hasBookmark(node->data(COL_EID, Qt::UserRole).toUInt());
+
+  return false;
+}
+
+bool EventBrowser::hasBookmark(uint32_t EID)
+{
+  return m_Bookmarks.contains(EID);
+}
+
 void EventBrowser::RefreshIcon(QTreeWidgetItem *item)
 {
   if(item->data(COL_CURRENT, Qt::UserRole).toBool())
     item->setIcon(COL_NAME, m_CurrentIcon);
-  else if(item->data(COL_FIND, Qt::UserRole).toBool())
-    item->setIcon(COL_NAME, m_FindIcon);
   else if(item->data(COL_BOOKMARK, Qt::UserRole).toBool())
     item->setIcon(COL_NAME, m_BookmarkIcon);
+  else if(item->data(COL_FIND, Qt::UserRole).toBool())
+    item->setIcon(COL_NAME, m_FindIcon);
   else
     item->setIcon(COL_NAME, QIcon());
 }
 
 bool EventBrowser::FindEventNode(QTreeWidgetItem *&found, QTreeWidgetItem *parent, uint32_t eventID)
 {
-  for(int i = 0; i < parent->childCount(); i++)
+  // do a reverse search to find the last match (in case of 'set' markers that
+  // inherit the event of the next real draw).
+  for(int i = parent->childCount() - 1; i >= 0; i--)
   {
     QTreeWidgetItem *n = parent->child(i);
 
-    uint nEID = n->data(COL_SELECT_EID, Qt::UserRole).toUInt();
-    uint fEID = found ? found->data(COL_SELECT_EID, Qt::UserRole).toUInt() : 0;
+    uint nEID = n->data(COL_LAST_EID, Qt::UserRole).toUInt();
+    uint fEID = found ? found->data(COL_LAST_EID, Qt::UserRole).toUInt() : 0;
 
     if(nEID >= eventID && (found == NULL || nEID <= fEID))
       found = n;
@@ -380,7 +590,7 @@ void EventBrowser::ExpandNode(QTreeWidgetItem *node)
 
 bool EventBrowser::SelectEvent(uint32_t eventID)
 {
-  if(!m_Ctx->LogLoaded())
+  if(!m_Ctx.LogLoaded())
     return false;
 
   QTreeWidgetItem *found = NULL;
@@ -414,7 +624,7 @@ void EventBrowser::ClearFindIcons(QTreeWidgetItem *parent)
 
 void EventBrowser::ClearFindIcons()
 {
-  if(m_Ctx->LogLoaded())
+  if(m_Ctx.LogLoaded())
     ClearFindIcons(ui->events->topLevelItem(0));
 }
 
@@ -456,7 +666,7 @@ QTreeWidgetItem *EventBrowser::FindNode(QTreeWidgetItem *parent, QString filter,
   {
     QTreeWidgetItem *n = parent->child(i);
 
-    uint eid = n->data(COL_SELECT_EID, Qt::UserRole).toUInt();
+    uint eid = n->data(COL_LAST_EID, Qt::UserRole).toUInt();
 
     if(eid > after && n->text(COL_NAME).contains(filter, Qt::CaseInsensitive))
       return n;
@@ -483,7 +693,7 @@ int EventBrowser::FindEvent(QTreeWidgetItem *parent, QString filter, uint32_t af
   {
     auto n = parent->child(i);
 
-    uint eid = n->data(COL_SELECT_EID, Qt::UserRole).toUInt();
+    uint eid = n->data(COL_LAST_EID, Qt::UserRole).toUInt();
 
     bool matchesAfter = (forward && eid > after) || (!forward && eid < after);
 
@@ -508,7 +718,7 @@ int EventBrowser::FindEvent(QTreeWidgetItem *parent, QString filter, uint32_t af
 
 int EventBrowser::FindEvent(QString filter, uint32_t after, bool forward)
 {
-  if(!m_Ctx->LogLoaded())
+  if(!m_Ctx.LogLoaded())
     return 0;
 
   return FindEvent(ui->events->topLevelItem(0), filter, after, forward);
@@ -519,9 +729,9 @@ void EventBrowser::Find(bool forward)
   if(ui->findEvent->text().isEmpty())
     return;
 
-  uint32_t curEID = m_Ctx->CurEvent();
+  uint32_t curEID = m_Ctx.CurEvent();
   if(!ui->events->selectedItems().isEmpty())
-    curEID = ui->events->selectedItems()[0]->data(COL_SELECT_EID, Qt::UserRole).toUInt();
+    curEID = ui->events->selectedItems()[0]->data(COL_LAST_EID, Qt::UserRole).toUInt();
 
   int eid = FindEvent(ui->findEvent->text(), curEID, forward);
   if(eid >= 0)

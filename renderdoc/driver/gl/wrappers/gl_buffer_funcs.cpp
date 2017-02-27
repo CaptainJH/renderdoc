@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -24,6 +24,7 @@
  ******************************************************************************/
 
 #include "../gl_driver.h"
+#include "3rdparty/tinyfiledialogs/tinyfiledialogs.h"
 #include "common/common.h"
 #include "serialise/string_utils.h"
 
@@ -233,6 +234,13 @@ void WrappedOpenGL::glBindBuffer(GLenum target, GLuint buffer)
     GLResourceRecord *r = cd.m_BufferRecord[idx] =
         GetResourceManager()->GetResourceRecord(BufferRes(GetCtx(), buffer));
 
+    if(!r)
+    {
+      RDCERR("Invalid/unrecognised buffer passed: glBindBuffer(%s, %u)", ToStr::Get(target).c_str(),
+             buffer);
+      return;
+    }
+
     // it's legal to re-type buffers, generate another BindBuffer chunk to rename
     if(r->datatype != target)
     {
@@ -328,6 +336,13 @@ bool WrappedOpenGL::Serialise_glNamedBufferStorageEXT(GLuint buffer, GLsizeiptr 
 
   if(m_State < WRITING)
   {
+    // remove persistent flag - we will never persistently map so this is a nice
+    // hint. It helps especially when self-hosting, as we don't want tons of
+    // overhead added when we won't use it.
+    Flags &= ~GL_MAP_PERSISTENT_BIT;
+    // can't have coherent without persistent, so remove as well
+    Flags &= ~GL_MAP_COHERENT_BIT;
+
     GLResource res = GetResourceManager()->GetLiveResource(id);
     m_Real.glNamedBufferStorageEXT(res.name, (GLsizeiptr)Bytesize, bytes, Flags);
 
@@ -1805,7 +1820,13 @@ void *WrappedOpenGL::glMapNamedBufferRangeEXT(GLuint buffer, GLintptr offset, GL
       directMap = true;
 
     // persistent maps must ALWAYS be intercepted
-    if(access & GL_MAP_PERSISTENT_BIT)
+    if((access & GL_MAP_PERSISTENT_BIT) || record->Map.persistentPtr)
+      directMap = false;
+
+    bool verifyWrite = (RenderDoc::Inst().GetCaptureOptions().VerifyMapWrites != 0);
+
+    // must also intercept to verify writes
+    if(verifyWrite)
       directMap = false;
 
     if(directMap)
@@ -1818,6 +1839,7 @@ void *WrappedOpenGL::glMapNamedBufferRangeEXT(GLuint buffer, GLintptr offset, GL
     record->Map.length = length;
     record->Map.access = access;
     record->Map.invalidate = invalidateMap;
+    record->Map.verifyWrite = verifyWrite;
 
     // store a list of all persistent maps, and subset of all coherent maps
     if(access & GL_MAP_PERSISTENT_BIT)
@@ -1927,6 +1949,30 @@ void *WrappedOpenGL::glMapNamedBufferRangeEXT(GLuint buffer, GLintptr offset, GL
       }
       else if(m_State == WRITING_IDLE)
       {
+        if(verifyWrite)
+        {
+          byte *shadow = record->GetShadowPtr(0);
+
+          GLint buflength;
+          m_Real.glGetNamedBufferParameterivEXT(buffer, eGL_BUFFER_SIZE, &buflength);
+
+          // if we don't have a shadow pointer, need to allocate & initialise
+          if(shadow == NULL)
+          {
+            // allocate our shadow storage
+            record->AllocShadowStorage(buflength);
+            shadow = (byte *)record->GetShadowPtr(0);
+          }
+
+          // if we're not invalidating, we need the existing contents
+          if(!invalidateMap)
+            memcpy(shadow, record->GetDataPtr(), buflength);
+          else
+            memset(shadow + offset, 0xcc, length);
+
+          ptr = shadow;
+        }
+
         // return buffer backing store pointer, offsetted
         ptr += offset;
 
@@ -2173,6 +2219,26 @@ GLboolean WrappedOpenGL::glUnmapNamedBufferEXT(GLuint buffer)
         break;
       case GLResourceRecord::Mapped_Write:
       {
+        if(record->Map.verifyWrite)
+        {
+          if(!record->VerifyShadowStorage())
+          {
+            string msg = StringFormat::Fmt(
+                "Overwrite of %llu byte Map()'d buffer detected\n"
+                "Breakpoint now to see callstack,\nor click 'Yes' to debugbreak.",
+                record->Length);
+            int res =
+                tinyfd_messageBox("Map() overwrite detected!", msg.c_str(), "yesno", "error", 1);
+            if(res == 1)
+            {
+              OS_DEBUG_BREAK();
+            }
+          }
+
+          // copy from shadow to backing store, so we're consistent
+          memcpy(record->GetDataPtr() + record->Map.offset, record->Map.ptr, record->Map.length);
+        }
+
         if(record->Map.access & GL_MAP_FLUSH_EXPLICIT_BIT)
         {
           // do nothing, any flushes that happened were handled,

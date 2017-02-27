@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2014-2016 Baldur Karlsson
+ * Copyright (c) 2014-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -429,7 +429,18 @@ GLuint MakeSeparableShaderProgram(WrappedOpenGL &gl, GLenum type, vector<string>
 
             // keep going until the next newline
             while(it < len && !isnewline(src[it]))
+            {
+              // if we encounter a C-style comment in the middle of a #define
+              // we can't consume it because then we'd miss the start of it.
+              // Instead we break out (although we're not technically at the
+              // end of the pre-processor line) and let it be consumed next.
+              // Note that we can discount C++-style comments because they
+              // want to consume to the end of the line too.
+              if(it + 1 < len && src[it] == '/' && src[it + 1] == '*')
+                break;
+
               ++it;
+            }
 
             // skip more things
             continue;
@@ -746,6 +757,13 @@ void ReconstructVarTree(const GLHookSet &gl, GLenum query, GLuint sepProg, GLuin
   else
     var.type.descriptor.elements = 0;
 
+  GLint topLevelStride = 0;
+  if(query == eGL_BUFFER_VARIABLE)
+  {
+    GLenum propName = eGL_TOP_LEVEL_ARRAY_STRIDE;
+    gl.glGetProgramResourceiv(sepProg, query, varIdx, 1, &propName, 1, NULL, &topLevelStride);
+  }
+
   vector<DynShaderConstant> *parentmembers = defaultBlock;
 
   if(values[3] != -1 && values[3] < numParentBlocks)
@@ -822,6 +840,7 @@ void ReconstructVarTree(const GLHookSet &gl, GLenum query, GLuint sepProg, GLuin
     parentVar.type.descriptor.rowMajorStorage = false;
     parentVar.type.descriptor.type = var.type.descriptor.type;
     parentVar.type.descriptor.elements = isarray ? RDCMAX(1U, uint32_t(arrayIdx + 1)) : 0;
+    parentVar.type.descriptor.arrayStride = topLevelStride;
 
     bool found = false;
 
@@ -1473,6 +1492,7 @@ void MakeShaderReflection(const GLHookSet &gl, GLenum shadType, GLuint sepProg,
   uint32_t ssboMembers = 0;
 
   GLint numSSBOs = 0;
+  if(HasExt[ARB_shader_storage_buffer_object])
   {
     gl.glGetProgramInterfaceiv(sepProg, eGL_SHADER_STORAGE_BLOCK, eGL_ACTIVE_RESOURCES, &numSSBOs);
 
@@ -1523,6 +1543,54 @@ void MakeShaderReflection(const GLHookSet &gl, GLenum shadType, GLuint sepProg,
     for(size_t ssbo = 0; ssbo < ssbos.size(); ssbo++)
     {
       sort(members[ssbo]);
+
+      // account for padding for std430 layout, if we have a root array of
+      // structs, we need to pad the struct up to have the correct alignment
+      if(members[ssbo].size() == 1 && !members[ssbo][0].type.members.empty() &&
+         members[ssbo][0].type.descriptor.arrayStride != 0)
+      {
+        // now that we're sorted, see what the tightly packed stride would be by looking at the last
+        // member
+        uint32_t desiredStride = members[ssbo][0].type.descriptor.arrayStride;
+
+        DynShaderConstant *last = &members[ssbo][0].type.members.back();
+        while(!last->type.members.empty())
+          last = &last->type.members.back();
+
+        // start from the offset
+        uint32_t stride = last->reg.vec * 16 + last->reg.comp * 4;
+
+        // add its size
+        uint32_t size = last->type.descriptor.rows * last->type.descriptor.cols * 4;
+        if(last->type.descriptor.type == eVar_Double)
+          size *= 2;
+
+        stride += size;
+
+        if(stride < desiredStride)
+        {
+          uint32_t padding = desiredStride - stride;
+
+          RDCASSERT((padding % 4) == 0 && padding <= 16, padding);
+
+          padding /= 4;
+
+          DynShaderConstant paddingVar;
+          paddingVar.name = "__padding";
+          paddingVar.reg.vec = last->reg.vec + (size / 16);
+          paddingVar.reg.comp = (last->reg.comp + size / 4) % 16;
+          paddingVar.type.descriptor.type = eVar_UInt;
+          paddingVar.type.descriptor.rows = 1;
+          paddingVar.type.descriptor.cols = padding;
+          paddingVar.type.descriptor.elements = 1;
+          paddingVar.type.descriptor.rowMajorStorage = false;
+          paddingVar.type.descriptor.arrayStride = 0;
+          paddingVar.type.descriptor.name = StringFormat::Fmt("uint%u", padding);
+
+          members[ssbo][0].type.members.push_back(paddingVar);
+        }
+      }
+
       copy(rwresources[ssbos[ssbo]].variableType.members, members[ssbo]);
     }
 
@@ -1620,7 +1688,7 @@ void MakeShaderReflection(const GLHookSet &gl, GLenum shadType, GLuint sepProg,
         GLsizei numSigProps = (GLsizei)ARRAY_COUNT(props);
 
         // GL_LOCATION_COMPONENT not supported on core <4.4 (or without GL_ARB_enhanced_layouts)
-        if(!ExtensionSupported[ExtensionSupported_ARB_enhanced_layouts] && GLCoreVersion < 44)
+        if(!HasExt[ARB_enhanced_layouts])
           numSigProps--;
         gl.glGetProgramResourceiv(sepProg, sigEnum, i, numSigProps, props, numSigProps, NULL, values);
 

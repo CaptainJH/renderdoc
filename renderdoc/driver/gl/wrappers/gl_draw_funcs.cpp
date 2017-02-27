@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -1527,7 +1527,7 @@ bool WrappedOpenGL::Serialise_glDrawElementsInstancedBaseInstance(GLenum mode, G
     draw.vertexOffset = 0;
     draw.instanceOffset = BaseInstance;
 
-    draw.flags |= eDraw_Drawcall | eDraw_UseIBuffer;
+    draw.flags |= eDraw_Drawcall | eDraw_Instanced | eDraw_UseIBuffer;
 
     draw.topology = MakePrimitiveTopology(m_Real, Mode);
     draw.indexByteWidth = IdxSize;
@@ -1610,7 +1610,7 @@ bool WrappedOpenGL::Serialise_glDrawElementsInstancedBaseVertex(GLenum mode, GLs
     draw.baseVertex = BaseVertex;
     draw.instanceOffset = 0;
 
-    draw.flags |= eDraw_Drawcall | eDraw_UseIBuffer;
+    draw.flags |= eDraw_Drawcall | eDraw_Instanced | eDraw_UseIBuffer;
 
     draw.topology = MakePrimitiveTopology(m_Real, Mode);
     draw.indexByteWidth = IdxSize;
@@ -1693,7 +1693,7 @@ bool WrappedOpenGL::Serialise_glDrawElementsInstancedBaseVertexBaseInstance(
     draw.baseVertex = BaseVertex;
     draw.instanceOffset = BaseInstance;
 
-    draw.flags |= eDraw_Drawcall | eDraw_UseIBuffer;
+    draw.flags |= eDraw_Drawcall | eDraw_Instanced | eDraw_UseIBuffer;
 
     draw.topology = MakePrimitiveTopology(m_Real, Mode);
     draw.indexByteWidth = IdxSize;
@@ -1807,10 +1807,10 @@ bool WrappedOpenGL::Serialise_glMultiDrawArrays(GLenum mode, const GLint *first,
 
     m_DrawcallStack.push_back(&m_DrawcallStack.back()->children.back());
 
-    m_CurEventID++;
-
     for(uint32_t i = 0; i < Count; i++)
     {
+      m_CurEventID++;
+
       FetchDrawcall multidraw;
       multidraw.numIndices = countArray[i];
       multidraw.vertexOffset = firstArray[i];
@@ -1824,15 +1824,13 @@ bool WrappedOpenGL::Serialise_glMultiDrawArrays(GLenum mode, const GLint *first,
 
       AddEvent(desc);
       AddDrawcall(multidraw, true);
-
-      m_CurEventID++;
     }
 
     m_DrawcallStack.pop_back();
   }
   else
   {
-    m_CurEventID += Count + 1;
+    m_CurEventID += Count;
   }
 
   SAFE_DELETE_ARRAY(firstArray);
@@ -1967,10 +1965,10 @@ bool WrappedOpenGL::Serialise_glMultiDrawElements(GLenum mode, const GLsizei *co
 
     m_DrawcallStack.push_back(&m_DrawcallStack.back()->children.back());
 
-    m_CurEventID++;
-
     for(uint32_t i = 0; i < Count; i++)
     {
+      m_CurEventID++;
+
       FetchDrawcall multidraw;
       multidraw.numIndices = countArray[i];
       multidraw.indexOffset = (uint32_t)uint64_t(idxOffsArray[i]) & 0xFFFFFFFF;
@@ -1987,15 +1985,13 @@ bool WrappedOpenGL::Serialise_glMultiDrawElements(GLenum mode, const GLsizei *co
 
       AddEvent(desc);
       AddDrawcall(multidraw, true);
-
-      m_CurEventID++;
     }
 
     m_DrawcallStack.pop_back();
   }
   else
   {
-    m_CurEventID += Count + 1;
+    m_CurEventID += Count;
   }
 
   SAFE_DELETE_ARRAY(countArray);
@@ -2133,10 +2129,10 @@ bool WrappedOpenGL::Serialise_glMultiDrawElementsBaseVertex(GLenum mode, const G
 
     m_DrawcallStack.push_back(&m_DrawcallStack.back()->children.back());
 
-    m_CurEventID++;
-
     for(uint32_t i = 0; i < Count; i++)
     {
+      m_CurEventID++;
+
       FetchDrawcall multidraw;
       multidraw.numIndices = countArray[i];
       multidraw.indexOffset = (uint32_t)uint64_t(idxOffsArray[i]) & 0xFFFFFFFF;
@@ -2154,15 +2150,13 @@ bool WrappedOpenGL::Serialise_glMultiDrawElementsBaseVertex(GLenum mode, const G
 
       AddEvent(desc);
       AddDrawcall(multidraw, true);
-
-      m_CurEventID++;
     }
 
     m_DrawcallStack.pop_back();
   }
   else
   {
-    m_CurEventID += Count + 1;
+    m_CurEventID += Count;
   }
 
   SAFE_DELETE_ARRAY(countArray);
@@ -2290,12 +2284,12 @@ bool WrappedOpenGL::Serialise_glMultiDrawArraysIndirect(GLenum mode, const void 
           EventUsage(m_CurEventID, eUsage_Indirect));
     }
 
-    m_CurEventID++;
-
     GLintptr offs = (GLintptr)Offset;
 
     for(uint32_t i = 0; i < Count; i++)
     {
+      m_CurEventID++;
+
       DrawArraysIndirectCommand params;
 
       m_Real.glGetBufferSubData(eGL_DRAW_INDIRECT_BUFFER, offs, sizeof(params), &params);
@@ -2321,15 +2315,13 @@ bool WrappedOpenGL::Serialise_glMultiDrawArraysIndirect(GLenum mode, const void 
 
       AddEvent(desc);
       AddDrawcall(multidraw, true);
-
-      m_CurEventID++;
     }
 
     m_DrawcallStack.pop_back();
   }
   else
   {
-    m_CurEventID += Count + 1;
+    m_CurEventID += Count;
   }
 
   return true;
@@ -2460,12 +2452,12 @@ bool WrappedOpenGL::Serialise_glMultiDrawElementsIndirect(GLenum mode, GLenum ty
           EventUsage(m_CurEventID, eUsage_Indirect));
     }
 
-    m_CurEventID++;
-
     GLintptr offs = (GLintptr)Offset;
 
     for(uint32_t i = 0; i < Count; i++)
     {
+      m_CurEventID++;
+
       DrawElementsIndirectCommand params;
 
       m_Real.glGetBufferSubData(eGL_DRAW_INDIRECT_BUFFER, offs, sizeof(params), &params);
@@ -2493,15 +2485,13 @@ bool WrappedOpenGL::Serialise_glMultiDrawElementsIndirect(GLenum mode, GLenum ty
 
       AddEvent(desc);
       AddDrawcall(multidraw, true);
-
-      m_CurEventID++;
     }
 
     m_DrawcallStack.pop_back();
   }
   else
   {
-    m_CurEventID += Count + 1;
+    m_CurEventID += Count;
   }
 
   return true;
@@ -2637,12 +2627,12 @@ bool WrappedOpenGL::Serialise_glMultiDrawArraysIndirectCountARB(GLenum mode, GLi
           EventUsage(m_CurEventID, eUsage_Indirect));
     }
 
-    m_CurEventID++;
-
     GLintptr offs = (GLintptr)Offset;
 
     for(uint32_t i = 0; i < realdrawcount; i++)
     {
+      m_CurEventID++;
+
       DrawArraysIndirectCommand params;
 
       m_Real.glGetBufferSubData(eGL_DRAW_INDIRECT_BUFFER, offs, sizeof(params), &params);
@@ -2668,15 +2658,13 @@ bool WrappedOpenGL::Serialise_glMultiDrawArraysIndirectCountARB(GLenum mode, GLi
 
       AddEvent(desc);
       AddDrawcall(multidraw, true);
-
-      m_CurEventID++;
     }
 
     m_DrawcallStack.pop_back();
   }
   else
   {
-    m_CurEventID += realdrawcount + 1;
+    m_CurEventID += realdrawcount;
   }
 
   return true;
@@ -2823,12 +2811,12 @@ bool WrappedOpenGL::Serialise_glMultiDrawElementsIndirectCountARB(GLenum mode, G
           EventUsage(m_CurEventID, eUsage_Indirect));
     }
 
-    m_CurEventID++;
-
     GLintptr offs = (GLintptr)Offset;
 
     for(uint32_t i = 0; i < realdrawcount; i++)
     {
+      m_CurEventID++;
+
       DrawElementsIndirectCommand params;
 
       m_Real.glGetBufferSubData(eGL_DRAW_INDIRECT_BUFFER, offs, sizeof(params), &params);
@@ -2856,15 +2844,13 @@ bool WrappedOpenGL::Serialise_glMultiDrawElementsIndirectCountARB(GLenum mode, G
 
       AddEvent(desc);
       AddDrawcall(multidraw, true);
-
-      m_CurEventID++;
     }
 
     m_DrawcallStack.pop_back();
   }
   else
   {
-    m_CurEventID += realdrawcount + 1;
+    m_CurEventID += realdrawcount;
   }
 
   return true;
@@ -3482,6 +3468,10 @@ void WrappedOpenGL::glClearNamedBufferDataEXT(GLuint buffer, GLenum internalform
 
     m_ContextRecord->AddChunk(scope.Get());
   }
+  else if(m_State == WRITING_IDLE)
+  {
+    GetResourceManager()->MarkDirtyResource(BufferRes(GetCtx(), buffer));
+  }
 }
 
 void WrappedOpenGL::glClearBufferData(GLenum target, GLenum internalformat, GLenum format,
@@ -3491,7 +3481,7 @@ void WrappedOpenGL::glClearBufferData(GLenum target, GLenum internalformat, GLen
 
   m_Real.glClearBufferData(target, internalformat, format, type, data);
 
-  if(m_State == WRITING_CAPFRAME)
+  if(m_State >= WRITING)
   {
     GLResourceRecord *record = GetCtxData().m_BufferRecord[BufferIdx(target)];
     RDCASSERTMSG("Couldn't identify implicit object at binding. Mismatched or bad GLuint?", record,
@@ -3499,10 +3489,18 @@ void WrappedOpenGL::glClearBufferData(GLenum target, GLenum internalformat, GLen
 
     if(record)
     {
-      SCOPED_SERIALISE_CONTEXT(CLEARBUFFERDATA);
-      Serialise_glClearNamedBufferDataEXT(record->Resource.name, internalformat, format, type, data);
+      if(m_State == WRITING_CAPFRAME)
+      {
+        SCOPED_SERIALISE_CONTEXT(CLEARBUFFERDATA);
+        Serialise_glClearNamedBufferDataEXT(record->Resource.name, internalformat, format, type,
+                                            data);
 
-      m_ContextRecord->AddChunk(scope.Get());
+        m_ContextRecord->AddChunk(scope.Get());
+      }
+      else if(m_State == WRITING_IDLE)
+      {
+        GetResourceManager()->MarkDirtyResource(record->GetResourceID());
+      }
     }
   }
 }
@@ -3602,6 +3600,10 @@ void WrappedOpenGL::glClearNamedBufferSubDataEXT(GLuint buffer, GLenum internalf
 
     m_ContextRecord->AddChunk(scope.Get());
   }
+  else if(m_State == WRITING_IDLE)
+  {
+    GetResourceManager()->MarkDirtyResource(BufferRes(GetCtx(), buffer));
+  }
 }
 
 void WrappedOpenGL::glClearNamedBufferSubData(GLuint buffer, GLenum internalformat, GLintptr offset,
@@ -3620,7 +3622,7 @@ void WrappedOpenGL::glClearBufferSubData(GLenum target, GLenum internalformat, G
 
   m_Real.glClearBufferSubData(target, internalformat, offset, size, format, type, data);
 
-  if(m_State == WRITING_CAPFRAME)
+  if(m_State >= WRITING)
   {
     GLResourceRecord *record = GetCtxData().m_BufferRecord[BufferIdx(target)];
     RDCASSERTMSG("Couldn't identify implicit object at binding. Mismatched or bad GLuint?", record,
@@ -3628,11 +3630,18 @@ void WrappedOpenGL::glClearBufferSubData(GLenum target, GLenum internalformat, G
 
     if(record)
     {
-      SCOPED_SERIALISE_CONTEXT(CLEARBUFFERSUBDATA);
-      Serialise_glClearNamedBufferSubDataEXT(record->Resource.name, internalformat, offset, size,
-                                             format, type, data);
+      if(m_State == WRITING_CAPFRAME)
+      {
+        SCOPED_SERIALISE_CONTEXT(CLEARBUFFERSUBDATA);
+        Serialise_glClearNamedBufferSubDataEXT(record->Resource.name, internalformat, offset, size,
+                                               format, type, data);
 
-      m_ContextRecord->AddChunk(scope.Get());
+        m_ContextRecord->AddChunk(scope.Get());
+      }
+      else if(m_State == WRITING_IDLE)
+      {
+        GetResourceManager()->MarkDirtyResource(record->GetResourceID());
+      }
     }
   }
 }

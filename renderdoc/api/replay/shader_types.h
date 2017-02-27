@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -133,6 +133,7 @@ struct ShaderDebugState
   rdctype::array<rdctype::array<ShaderVariable> > indexableTemps;
 
   uint32_t nextInstruction;
+  uint32_t flags;
 };
 
 struct ShaderDebugTrace

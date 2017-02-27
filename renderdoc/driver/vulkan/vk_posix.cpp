@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -224,6 +224,21 @@ VkResult WrappedVulkan::vkCreateXlibSurfaceKHR(VkInstance instance,
   }
 
   return ret;
+}
+
+VkResult WrappedVulkan::vkAcquireXlibDisplayEXT(VkPhysicalDevice physicalDevice, Display *dpy,
+                                                VkDisplayKHR display)
+{
+  // display is not wrapped so we can pass straight through
+  return ObjDisp(physicalDevice)->AcquireXlibDisplayEXT(Unwrap(physicalDevice), dpy, display);
+}
+
+VkResult WrappedVulkan::vkGetRandROutputDisplayEXT(VkPhysicalDevice physicalDevice, Display *dpy,
+                                                   RROutput rrOutput, VkDisplayKHR *pDisplay)
+{
+  // display is not wrapped so we can pass straight through
+  return ObjDisp(physicalDevice)
+      ->GetRandROutputDisplayEXT(Unwrap(physicalDevice), dpy, rrOutput, pDisplay);
 }
 
 #endif

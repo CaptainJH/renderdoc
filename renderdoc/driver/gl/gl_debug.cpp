@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -211,6 +211,29 @@ GLuint GLReplay::CreateShaderProgram(const vector<string> &vsSources,
   return ret;
 }
 
+void GLReplay::CheckGLSLVersion(const char *sl, int &glslVersion)
+{
+  if(sl[0] >= '0' && sl[0] <= '9' && sl[1] == '.' && sl[2] >= '0' && sl[2] <= '9')
+  {
+    int major = int(sl[0] - '0');
+    int minor = int(sl[2] - '0');
+    int ver = major * 100 + minor * 10;
+
+    if(ver > glslVersion)
+      glslVersion = ver;
+  }
+
+  if(sl[0] >= '0' && sl[0] <= '9' && sl[1] >= '0' && sl[1] <= '9' && sl[2] == '0')
+  {
+    int major = int(sl[0] - '0');
+    int minor = int(sl[1] - '0');
+    int ver = major * 100 + minor * 10;
+
+    if(ver > glslVersion)
+      glslVersion = ver;
+  }
+}
+
 void GLReplay::InitDebugData()
 {
   if(m_pDriver == NULL)
@@ -239,7 +262,7 @@ void GLReplay::InitDebugData()
   vector<string> gs;
   vector<string> cs;
 
-  GenerateGLSLShader(vs, eShaderGLSL, "", GetEmbeddedResource(glsl_blit_vert), 420);
+  GenerateGLSLShader(vs, eShaderGLSL, "", GetEmbeddedResource(glsl_blit_vert), 150);
 
   DebugData.texDisplayVSProg = CreateShaderProgram(vs, empty);
 
@@ -248,79 +271,95 @@ void GLReplay::InitDebugData()
     string defines = string("#define UINT_TEX ") + (i == 1 ? "1" : "0") + "\n";
     defines += string("#define SINT_TEX ") + (i == 2 ? "1" : "0") + "\n";
 
-    GenerateGLSLShader(fs, eShaderGLSL, defines, GetEmbeddedResource(glsl_texdisplay_frag), 420);
+    GenerateGLSLShader(fs, eShaderGLSL, defines, GetEmbeddedResource(glsl_texdisplay_frag), 150);
 
     DebugData.texDisplayProg[i] = CreateShaderProgram(empty, fs);
   }
 
-  GLint numsl = 0;
-  gl.glGetIntegerv(eGL_NUM_SHADING_LANGUAGE_VERSIONS, &numsl);
-
   RenderDoc::Inst().SetProgress(DebugManagerInit, 0.2f);
 
-  bool support450 = false;
-  for(GLint i = 0; i < numsl; i++)
+  int glslVersion = 150;
+
+  if(GLCoreVersion >= 43)
   {
-    const char *sl = (const char *)gl.glGetStringi(eGL_SHADING_LANGUAGE_VERSION, (GLuint)i);
+    GLint numsl = 0;
+    gl.glGetIntegerv(eGL_NUM_SHADING_LANGUAGE_VERSIONS, &numsl);
 
-    if(sl[0] == '4' && sl[1] == '5' && sl[2] == '0')
-      support450 = true;
-    if(sl[0] == '4' && sl[1] == '.' && sl[2] == '5')
-      support450 = true;
+    for(GLint i = 0; i < numsl; i++)
+    {
+      const char *sl = (const char *)gl.glGetStringi(eGL_SHADING_LANGUAGE_VERSION, (GLuint)i);
 
-    if(support450)
-      break;
+      CheckGLSLVersion(sl, glslVersion);
+    }
+  }
+  else
+  {
+    const char *sl = (const char *)gl.glGetString(eGL_SHADING_LANGUAGE_VERSION);
+
+    CheckGLSLVersion(sl, glslVersion);
   }
 
-  DebugData.quadoverdraw420 = !support450;
+  DebugData.glslVersion = glslVersion;
 
-  GenerateGLSLShader(vs, eShaderGLSL, "", GetEmbeddedResource(glsl_blit_vert), 420);
+  RDCLOG("GLSL version %d", glslVersion);
 
+  GenerateGLSLShader(vs, eShaderGLSL, "", GetEmbeddedResource(glsl_blit_vert), 150);
+
+  if(HasExt[ARB_shader_image_load_store] && HasExt[ARB_gpu_shader5])
   {
     string defines = "";
 
-    if(!support450)
+    if(glslVersion < 450)
     {
       // dFdx fine functions not available before GLSL 450. Use normal dFdx, which might be coarse,
       // so won't show quad overdraw properly
       defines += "#define dFdxFine dFdx\n\n";
       defines += "#define dFdyFine dFdy\n\n";
+
+      RDCWARN("Quad overdraw requires GLSL 4.50 for dFd(xy)fine, using possibly coarse dFd(xy).");
+      m_pDriver->AddDebugMessage(
+          eDbgCategory_Portability, eDbgSeverity_Medium, eDbgSource_RuntimeWarning,
+          "Quad overdraw requires GLSL 4.50 for dFd(xy)fine, using possibly coarse dFd(xy).");
     }
 
     GenerateGLSLShader(fs, eShaderGLSL, defines, GetEmbeddedResource(glsl_quadwrite_frag),
-                       support450 ? 450 : 420);
-
-    if(!support450)
-    {
-      // remove derivative control extension
-      size_t offs = fs[0].find("#extension GL_ARB_derivative_control");
-      if(offs != string::npos)
-        fs[0].insert(offs, "//");
-    }
+                       RDCMIN(450, glslVersion));
 
     DebugData.quadoverdrawFSProg = CreateShaderProgram(empty, fs);
 
-    GenerateGLSLShader(fs, eShaderGLSL, "", GetEmbeddedResource(glsl_quadresolve_frag), 420);
+    GenerateGLSLShader(fs, eShaderGLSL, "", GetEmbeddedResource(glsl_quadresolve_frag), 150);
 
     DebugData.quadoverdrawResolveProg = CreateShaderProgram(vs, fs);
   }
+  else
+  {
+    RDCWARN(
+        "GL_ARB_shader_image_load_store/GL_ARB_gpu_shader5 not supported, disabling quad overdraw "
+        "feature.");
+    m_pDriver->AddDebugMessage(eDbgCategory_Portability, eDbgSeverity_Medium,
+                               eDbgSource_RuntimeWarning,
+                               "GL_ARB_shader_image_load_store/GL_ARB_gpu_shader5 not supported, "
+                               "disabling quad overdraw feature.");
+    DebugData.quadoverdrawFSProg = 0;
+    DebugData.quadoverdrawResolveProg = 0;
+  }
 
-  GenerateGLSLShader(fs, eShaderGLSL, "", GetEmbeddedResource(glsl_checkerboard_frag), 420);
+  GenerateGLSLShader(fs, eShaderGLSL, "", GetEmbeddedResource(glsl_checkerboard_frag), 150);
   DebugData.checkerProg = CreateShaderProgram(vs, fs);
 
-  GenerateGLSLShader(fs, eShaderGLSL, "", GetEmbeddedResource(glsl_fixedcol_frag), 420);
+  GenerateGLSLShader(fs, eShaderGLSL, "", GetEmbeddedResource(glsl_fixedcol_frag), 150);
 
   DebugData.fixedcolFSProg = CreateShaderProgram(empty, fs);
 
-  GenerateGLSLShader(vs, eShaderGLSL, "", GetEmbeddedResource(glsl_mesh_vert), 420);
-  GenerateGLSLShader(fs, eShaderGLSL, "", GetEmbeddedResource(glsl_mesh_frag), 420);
-  GenerateGLSLShader(gs, eShaderGLSL, "", GetEmbeddedResource(glsl_mesh_geom), 420);
+  GenerateGLSLShader(vs, eShaderGLSL, "", GetEmbeddedResource(glsl_mesh_vert), 150);
+  GenerateGLSLShader(fs, eShaderGLSL, "", GetEmbeddedResource(glsl_mesh_frag), 150);
+  GenerateGLSLShader(gs, eShaderGLSL, "", GetEmbeddedResource(glsl_mesh_geom), 150);
 
   DebugData.meshProg = CreateShaderProgram(vs, fs);
   DebugData.meshgsProg = CreateShaderProgram(vs, fs, gs);
 
-  GenerateGLSLShader(fs, eShaderGLSL, "", GetEmbeddedResource(glsl_trisize_frag), 420);
-  GenerateGLSLShader(gs, eShaderGLSL, "", GetEmbeddedResource(glsl_trisize_geom), 420);
+  GenerateGLSLShader(fs, eShaderGLSL, "", GetEmbeddedResource(glsl_trisize_frag), 150);
+  GenerateGLSLShader(gs, eShaderGLSL, "", GetEmbeddedResource(glsl_trisize_geom), 150);
 
   DebugData.trisizeProg = CreateShaderProgram(vs, fs, gs);
 
@@ -357,7 +396,7 @@ void GLReplay::InitDebugData()
     RDCCOMPILE_ASSERT(sizeof(overdrawRamp) <= 2048, "UBO too small");
   }
 
-  DebugData.overlayTexWidth = DebugData.overlayTexHeight = 0;
+  DebugData.overlayTexWidth = DebugData.overlayTexHeight = DebugData.overlayTexSamples = 0;
   DebugData.overlayTex = DebugData.overlayFBO = 0;
 
   gl.glGenFramebuffers(1, &DebugData.customFBO);
@@ -370,7 +409,9 @@ void GLReplay::InitDebugData()
   gl.glGenTextures(1, &DebugData.pickPixelTex);
   gl.glBindTexture(eGL_TEXTURE_2D, DebugData.pickPixelTex);
 
-  gl.glTextureStorage2DEXT(DebugData.pickPixelTex, eGL_TEXTURE_2D, 1, eGL_RGBA32F, 1, 1);
+  gl.glTextureImage2DEXT(DebugData.pickPixelTex, eGL_TEXTURE_2D, 0, eGL_RGBA32F, 1, 1, 0, eGL_RGBA,
+                         eGL_FLOAT, NULL);
+  gl.glTexParameteri(eGL_TEXTURE_2D, eGL_TEXTURE_MAX_LEVEL, 0);
   gl.glTexParameteri(eGL_TEXTURE_2D, eGL_TEXTURE_MIN_FILTER, eGL_NEAREST);
   gl.glTexParameteri(eGL_TEXTURE_2D, eGL_TEXTURE_MAG_FILTER, eGL_NEAREST);
   gl.glTexParameteri(eGL_TEXTURE_2D, eGL_TEXTURE_WRAP_S, eGL_CLAMP_TO_EDGE);
@@ -396,7 +437,7 @@ void GLReplay::InitDebugData()
         "#extension GL_ARB_compute_shader : require\n"
         "#extension GL_ARB_shader_storage_buffer_object : require\n";
 
-    for(int t = 1; t <= RESTYPE_TEXTYPEMAX; t++)
+    for(int t = 1; HasExt[ARB_compute_shader] && t <= RESTYPE_TEXTYPEMAX; t++)
     {
       // float, uint, sint
       for(int i = 0; i < 3; i++)
@@ -445,6 +486,14 @@ void GLReplay::InitDebugData()
       }
     }
 
+    if(!HasExt[ARB_compute_shader])
+    {
+      RDCWARN("GL_ARB_compute_shader not supported, disabling min/max and histogram features.");
+      m_pDriver->AddDebugMessage(
+          eDbgCategory_Portability, eDbgSeverity_Medium, eDbgSource_RuntimeWarning,
+          "GL_ARB_compute_shader not supported, disabling min/max and histogram features.");
+    }
+
     gl.glGenBuffers(1, &DebugData.minmaxTileResult);
     gl.glGenBuffers(1, &DebugData.minmaxResult);
     gl.glGenBuffers(1, &DebugData.histogramBuf);
@@ -456,12 +505,13 @@ void GLReplay::InitDebugData()
     const size_t byteSize =
         2 * sizeof(Vec4f) * HGRAM_TILES_PER_BLOCK * HGRAM_TILES_PER_BLOCK * maxBlocksNeeded;
 
-    gl.glNamedBufferStorageEXT(DebugData.minmaxTileResult, byteSize, NULL, 0);
-    gl.glNamedBufferStorageEXT(DebugData.minmaxResult, sizeof(Vec4f) * 2, NULL, GL_MAP_READ_BIT);
-    gl.glNamedBufferStorageEXT(DebugData.histogramBuf, sizeof(uint32_t) * 4 * HGRAM_NUM_BUCKETS,
-                               NULL, GL_MAP_READ_BIT);
+    gl.glNamedBufferDataEXT(DebugData.minmaxTileResult, byteSize, NULL, eGL_DYNAMIC_DRAW);
+    gl.glNamedBufferDataEXT(DebugData.minmaxResult, sizeof(Vec4f) * 2, NULL, eGL_DYNAMIC_READ);
+    gl.glNamedBufferDataEXT(DebugData.histogramBuf, sizeof(uint32_t) * 4 * HGRAM_NUM_BUCKETS, NULL,
+                            eGL_DYNAMIC_READ);
   }
 
+  if(HasExt[ARB_compute_shader])
   {
     GenerateGLSLShader(cs, eShaderGLSL, "", GetEmbeddedResource(glsl_ms2array_comp), 420);
     DebugData.MS2Array = CreateCShaderProgram(cs);
@@ -469,7 +519,17 @@ void GLReplay::InitDebugData()
     GenerateGLSLShader(cs, eShaderGLSL, "", GetEmbeddedResource(glsl_array2ms_comp), 420);
     DebugData.Array2MS = CreateCShaderProgram(cs);
   }
+  else
+  {
+    DebugData.MS2Array = 0;
+    DebugData.Array2MS = 0;
+    RDCWARN("GL_ARB_compute_shader not supported, disabling 2DMS save/load.");
+    m_pDriver->AddDebugMessage(eDbgCategory_Portability, eDbgSeverity_Medium,
+                               eDbgSource_RuntimeWarning,
+                               "GL_ARB_compute_shader not supported, disabling 2DMS save/load.");
+  }
 
+  if(HasExt[ARB_compute_shader])
   {
     string defines =
         "#extension GL_ARB_compute_shader : require\n"
@@ -477,15 +537,26 @@ void GLReplay::InitDebugData()
     GenerateGLSLShader(cs, eShaderGLSL, defines, GetEmbeddedResource(glsl_mesh_comp), 420);
     DebugData.meshPickProgram = CreateCShaderProgram(cs);
   }
+  else
+  {
+    DebugData.meshPickProgram = 0;
+    RDCWARN("GL_ARB_compute_shader not supported, disabling mesh picking.");
+    m_pDriver->AddDebugMessage(eDbgCategory_Portability, eDbgSeverity_Medium,
+                               eDbgSource_RuntimeWarning,
+                               "GL_ARB_compute_shader not supported, disabling mesh picking.");
+  }
 
   RenderDoc::Inst().SetProgress(DebugManagerInit, 0.8f);
 
+  DebugData.pickResultBuf = 0;
+
+  if(DebugData.meshPickProgram)
   {
     gl.glGenBuffers(1, &DebugData.pickResultBuf);
     gl.glBindBuffer(eGL_SHADER_STORAGE_BUFFER, DebugData.pickResultBuf);
-    gl.glNamedBufferStorageEXT(DebugData.pickResultBuf,
-                               sizeof(Vec4f) * DebugRenderData::maxMeshPicks + sizeof(uint32_t) * 4,
-                               NULL, GL_DYNAMIC_STORAGE_BIT | GL_MAP_READ_BIT);
+    gl.glNamedBufferDataEXT(DebugData.pickResultBuf,
+                            sizeof(Vec4f) * DebugRenderData::maxMeshPicks + sizeof(uint32_t) * 4,
+                            NULL, eGL_DYNAMIC_READ);
 
     // sized/created on demand
     DebugData.pickVBBuf = DebugData.pickIBBuf = 0;
@@ -521,7 +592,8 @@ void GLReplay::InitDebugData()
       TLF, TRF, TRF, BRF, BRF, BLF, BLF, TLF,
   };
 
-  gl.glNamedBufferStorageEXT(DebugData.axisFrustumBuffer, sizeof(axisFrustum), axisFrustum, 0);
+  gl.glNamedBufferDataEXT(DebugData.axisFrustumBuffer, sizeof(axisFrustum), axisFrustum,
+                          eGL_STATIC_DRAW);
 
   gl.glGenVertexArrays(1, &DebugData.axisVAO);
   gl.glBindVertexArray(DebugData.axisVAO);
@@ -540,14 +612,13 @@ void GLReplay::InitDebugData()
   gl.glGenBuffers(1, &DebugData.triHighlightBuffer);
   gl.glBindBuffer(eGL_ARRAY_BUFFER, DebugData.triHighlightBuffer);
 
-  gl.glNamedBufferStorageEXT(DebugData.triHighlightBuffer, sizeof(Vec4f) * 24, NULL,
-                             GL_DYNAMIC_STORAGE_BIT);
+  gl.glNamedBufferDataEXT(DebugData.triHighlightBuffer, sizeof(Vec4f) * 24, NULL, eGL_DYNAMIC_DRAW);
 
   gl.glVertexAttribPointer(0, 4, eGL_FLOAT, GL_FALSE, sizeof(Vec4f), NULL);
   gl.glEnableVertexAttribArray(0);
 
-  GenerateGLSLShader(vs, eShaderGLSL, "", GetEmbeddedResource(glsl_blit_vert), 420);
-  GenerateGLSLShader(fs, eShaderGLSL, "", GetEmbeddedResource(glsl_outline_frag), 420);
+  GenerateGLSLShader(vs, eShaderGLSL, "", GetEmbeddedResource(glsl_blit_vert), 150);
+  GenerateGLSLShader(fs, eShaderGLSL, "", GetEmbeddedResource(glsl_outline_frag), 150);
 
   DebugData.outlineQuadProg = CreateShaderProgram(vs, fs);
 
@@ -563,11 +634,39 @@ void GLReplay::InitDebugData()
 
   gl.glBindTransformFeedback(eGL_TRANSFORM_FEEDBACK, DebugData.feedbackObj);
   gl.glBindBuffer(eGL_TRANSFORM_FEEDBACK_BUFFER, DebugData.feedbackBuffer);
-  gl.glNamedBufferStorageEXT(DebugData.feedbackBuffer, 32 * 1024 * 1024, NULL, GL_MAP_READ_BIT);
+  gl.glNamedBufferDataEXT(DebugData.feedbackBuffer, 32 * 1024 * 1024, NULL, eGL_DYNAMIC_READ);
   gl.glBindBufferBase(eGL_TRANSFORM_FEEDBACK_BUFFER, 0, DebugData.feedbackBuffer);
   gl.glBindTransformFeedback(eGL_TRANSFORM_FEEDBACK, 0);
 
   RenderDoc::Inst().SetProgress(DebugManagerInit, 1.0f);
+
+  if(!HasExt[ARB_gpu_shader5])
+  {
+    RDCWARN(
+        "ARB_gpu_shader5 not supported, pixel picking and saving of integer textures may be "
+        "inaccurate.");
+    m_pDriver->AddDebugMessage(eDbgCategory_Portability, eDbgSeverity_Medium,
+                               eDbgSource_RuntimeWarning,
+                               "ARB_gpu_shader5 not supported, pixel picking and saving of integer "
+                               "textures may be inaccurate.");
+
+    m_Degraded = true;
+  }
+
+  if(!HasExt[ARB_stencil_texturing])
+  {
+    RDCWARN("ARB_stencil_texturing not supported, stencil values will not be displayed or picked.");
+    m_pDriver->AddDebugMessage(
+        eDbgCategory_Portability, eDbgSeverity_Medium, eDbgSource_RuntimeWarning,
+        "ARB_stencil_texturing not supported, stencil values will not be displayed or picked.");
+
+    m_Degraded = true;
+  }
+
+  if(!HasExt[ARB_shader_image_load_store] || !HasExt[ARB_compute_shader])
+  {
+    m_Degraded = true;
+  }
 }
 
 void GLReplay::DeleteDebugData()
@@ -594,17 +693,11 @@ void GLReplay::DeleteDebugData()
 
   m_PostVSData.clear();
 
-  if(DebugData.overlayFBO)
-  {
-    gl.glDeleteFramebuffers(1, &DebugData.overlayFBO);
-    gl.glDeleteTextures(1, &DebugData.overlayTex);
-  }
+  gl.glDeleteFramebuffers(1, &DebugData.overlayFBO);
+  gl.glDeleteTextures(1, &DebugData.overlayTex);
 
-  if(DebugData.quadoverdrawFSProg)
-  {
-    gl.glDeleteProgram(DebugData.quadoverdrawFSProg);
-    gl.glDeleteProgram(DebugData.quadoverdrawResolveProg);
-  }
+  gl.glDeleteProgram(DebugData.quadoverdrawFSProg);
+  gl.glDeleteProgram(DebugData.quadoverdrawResolveProg);
 
   gl.glDeleteProgram(DebugData.texDisplayVSProg);
   for(int i = 0; i < 3; i++)
@@ -625,9 +718,10 @@ void GLReplay::DeleteDebugData()
   gl.glDeleteFramebuffers(1, &DebugData.pickPixelFBO);
   gl.glDeleteTextures(1, &DebugData.pickPixelTex);
 
+  gl.glDeleteBuffers(1, &DebugData.genericUBO);
+
   gl.glDeleteFramebuffers(1, &DebugData.customFBO);
-  if(DebugData.customTex != 0)
-    gl.glDeleteTextures(1, &DebugData.customTex);
+  gl.glDeleteTextures(1, &DebugData.customTex);
 
   gl.glDeleteVertexArrays(1, &DebugData.emptyVAO);
 
@@ -645,10 +739,15 @@ void GLReplay::DeleteDebugData()
       gl.glDeleteProgram(DebugData.minmaxTileProgram[idx]);
       gl.glDeleteProgram(DebugData.histogramProgram[idx]);
 
-      if(t == 1)
-        gl.glDeleteProgram(DebugData.minmaxResultProgram[i]);
+      gl.glDeleteProgram(DebugData.minmaxResultProgram[i]);
+      DebugData.minmaxResultProgram[i] = 0;
     }
   }
+
+  gl.glDeleteProgram(DebugData.meshPickProgram);
+  gl.glDeleteBuffers(1, &DebugData.pickIBBuf);
+  gl.glDeleteBuffers(1, &DebugData.pickVBBuf);
+  gl.glDeleteBuffers(1, &DebugData.pickResultBuf);
 
   gl.glDeleteProgram(DebugData.Array2MS);
   gl.glDeleteProgram(DebugData.MS2Array);
@@ -672,6 +771,9 @@ bool GLReplay::GetMinMax(ResourceId texid, uint32_t sliceFace, uint32_t mip, uin
                          FormatComponentType typeHint, float *minval, float *maxval)
 {
   if(texid == ResourceId() || m_pDriver->m_Textures.find(texid) == m_pDriver->m_Textures.end())
+    return false;
+
+  if(!HasExt[ARB_compute_shader])
     return false;
 
   auto &texDetails = m_pDriver->m_Textures[texid];
@@ -843,6 +945,9 @@ bool GLReplay::GetHistogram(ResourceId texid, uint32_t sliceFace, uint32_t mip, 
     return false;
 
   if(m_pDriver->m_Textures.find(texid) == m_pDriver->m_Textures.end())
+    return false;
+
+  if(!HasExt[ARB_compute_shader])
     return false;
 
   auto &texDetails = m_pDriver->m_Textures[texid];
@@ -1018,6 +1123,9 @@ uint32_t GLReplay::PickVertex(uint32_t eventID, const MeshDisplay &cfg, uint32_t
 {
   WrappedOpenGL &gl = *m_pDriver;
 
+  if(!HasExt[ARB_compute_shader])
+    return ~0U;
+
   MakeCurrentReplayContext(m_DebugCtx);
 
   gl.glUseProgram(DebugData.meshPickProgram);
@@ -1045,7 +1153,9 @@ uint32_t GLReplay::PickVertex(uint32_t eventID, const MeshDisplay &cfg, uint32_t
     // the derivation of the projection matrix might not be right (hell, it could be an
     // orthographic projection). But it'll be close enough likely.
     Matrix4f guessProj =
-        Matrix4f::Perspective(cfg.fov, cfg.position.nearPlane, cfg.position.farPlane, cfg.aspect);
+        cfg.position.farPlane != FLT_MAX
+            ? Matrix4f::Perspective(cfg.fov, cfg.position.nearPlane, cfg.position.farPlane, cfg.aspect)
+            : Matrix4f::ReversePerspective(cfg.fov, cfg.position.nearPlane, cfg.aspect);
 
     if(cfg.ortho)
       guessProj = Matrix4f::Orthographic(cfg.position.nearPlane, cfg.position.farPlane);
@@ -1173,8 +1283,8 @@ uint32_t GLReplay::PickVertex(uint32_t eventID, const MeshDisplay &cfg, uint32_t
 
       gl.glGenBuffers(1, &DebugData.pickIBBuf);
       gl.glBindBuffer(eGL_SHADER_STORAGE_BUFFER, DebugData.pickIBBuf);
-      gl.glNamedBufferStorageEXT(DebugData.pickIBBuf, cfg.position.numVerts * sizeof(uint32_t),
-                                 NULL, GL_DYNAMIC_STORAGE_BIT);
+      gl.glNamedBufferDataEXT(DebugData.pickIBBuf, cfg.position.numVerts * sizeof(uint32_t), NULL,
+                              eGL_STREAM_DRAW);
 
       DebugData.pickIBSize = cfg.position.numVerts * sizeof(uint32_t);
     }
@@ -1232,8 +1342,8 @@ uint32_t GLReplay::PickVertex(uint32_t eventID, const MeshDisplay &cfg, uint32_t
 
     gl.glGenBuffers(1, &DebugData.pickVBBuf);
     gl.glBindBuffer(eGL_SHADER_STORAGE_BUFFER, DebugData.pickVBBuf);
-    gl.glNamedBufferStorageEXT(DebugData.pickVBBuf, cfg.position.numVerts * sizeof(Vec4f), NULL,
-                               GL_DYNAMIC_STORAGE_BIT);
+    gl.glNamedBufferDataEXT(DebugData.pickVBBuf, cfg.position.numVerts * sizeof(Vec4f), NULL,
+                            eGL_DYNAMIC_DRAW);
 
     DebugData.pickVBSize = cfg.position.numVerts * sizeof(Vec4f);
   }
@@ -1410,6 +1520,28 @@ void GLReplay::PickPixel(ResourceId texture, uint32_t x, uint32_t y, uint32_t sl
 
   gl.glReadPixels(0, 0, 1, 1, eGL_RGBA, eGL_FLOAT, (void *)pixel);
 
+  if(!HasExt[ARB_gpu_shader5])
+  {
+    auto &texDetails = m_pDriver->m_Textures[texDisplay.texid];
+
+    if(IsSIntFormat(texDetails.internalFormat))
+    {
+      int32_t casted[4] = {
+          (int32_t)pixel[0], (int32_t)pixel[1], (int32_t)pixel[2], (int32_t)pixel[3],
+      };
+
+      memcpy(pixel, casted, sizeof(casted));
+    }
+    else if(IsUIntFormat(texDetails.internalFormat))
+    {
+      uint32_t casted[4] = {
+          (uint32_t)pixel[0], (uint32_t)pixel[1], (uint32_t)pixel[2], (uint32_t)pixel[3],
+      };
+
+      memcpy(pixel, casted, sizeof(casted));
+    }
+  }
+
   {
     auto &texDetails = m_pDriver->m_Textures[texture];
 
@@ -1425,6 +1557,16 @@ void GLReplay::PickPixel(ResourceId texture, uint32_t x, uint32_t y, uint32_t sl
 
       uint32_t stencilpixel[4];
       gl.glReadPixels(0, 0, 1, 1, eGL_RGBA, eGL_FLOAT, (void *)stencilpixel);
+
+      if(!HasExt[ARB_gpu_shader5])
+      {
+        // bits weren't aliased, so re-cast back to uint.
+        float fpix[4];
+        memcpy(fpix, stencilpixel, sizeof(fpix));
+
+        stencilpixel[0] = (uint32_t)fpix[0];
+        stencilpixel[1] = (uint32_t)fpix[1];
+      }
 
       // not sure whether [0] or [1] will return stencil values, so use
       // max of two because other channel should be 0
@@ -1445,6 +1587,15 @@ void GLReplay::CopyTex2DMSToArray(GLuint destArray, GLuint srcMS, GLint width, G
                                   GLint arraySize, GLint samples, GLenum intFormat)
 {
   WrappedOpenGL &gl = *m_pDriver;
+
+  if(!HasExt[ARB_compute_shader])
+    return;
+
+  if(!HasExt[ARB_texture_view])
+  {
+    RDCWARN("Can't copy multisampled texture to array for serialisation without ARB_texture_view.");
+    return;
+  }
 
   GLRenderState rs(&gl.GetHookset(), NULL, READING);
   rs.FetchState(m_pDriver->GetCtx(), m_pDriver);
@@ -1481,7 +1632,7 @@ void GLReplay::CopyTex2DMSToArray(GLuint destArray, GLuint srcMS, GLint width, G
   gl.glBindTexture(eGL_TEXTURE_2D_MULTISAMPLE_ARRAY, texs[1]);
   gl.glBindSampler(0, DebugData.pointNoMipSampler);
   gl.glTexParameteri(eGL_TEXTURE_2D_MULTISAMPLE_ARRAY, eGL_TEXTURE_BASE_LEVEL, 0);
-  gl.glTexParameteri(eGL_TEXTURE_2D_MULTISAMPLE_ARRAY, eGL_TEXTURE_MAX_LEVEL, 1);
+  gl.glTexParameteri(eGL_TEXTURE_2D_MULTISAMPLE_ARRAY, eGL_TEXTURE_MAX_LEVEL, 0);
 
   gl.glUseProgram(DebugData.MS2Array);
 
@@ -1676,7 +1827,7 @@ bool GLReplay::RenderTextureInternal(TextureDisplay cfg, int flags)
   gl.glBindTexture(target, texname);
 
   GLint origDSTexMode = eGL_DEPTH_COMPONENT;
-  if(dsTexMode != eGL_NONE)
+  if(dsTexMode != eGL_NONE && HasExt[ARB_stencil_texturing])
   {
     gl.glGetTexParameteriv(target, eGL_DEPTH_STENCIL_TEXTURE_MODE, &origDSTexMode);
     gl.glTexParameteri(target, eGL_DEPTH_STENCIL_TEXTURE_MODE, dsTexMode);
@@ -1836,7 +1987,7 @@ bool GLReplay::RenderTextureInternal(TextureDisplay cfg, int flags)
 
   gl.glBindSampler(0, 0);
 
-  if(dsTexMode != eGL_NONE)
+  if(dsTexMode != eGL_NONE && HasExt[ARB_stencil_texturing])
     gl.glTexParameteri(target, eGL_DEPTH_STENCIL_TEXTURE_MODE, origDSTexMode);
 
   return true;
@@ -1956,8 +2107,12 @@ void GLReplay::SetupOverlayPipeline(GLuint Program, GLuint Pipeline, GLuint frag
           CopyProgramUniforms(gl.GetHookset(), progsrc, progdst);
 
           if(i == 0)
+          {
             CopyProgramAttribBindings(gl.GetHookset(), progsrc, progdst,
                                       GetShader(pipeDetails.stageShaders[i], ""));
+
+            gl.glLinkProgram(progdst);
+          }
         }
       }
     }
@@ -1975,11 +2130,16 @@ void GLReplay::SetupOverlayPipeline(GLuint Program, GLuint Pipeline, GLuint frag
 
         gl.glUseProgramStages(DebugData.overlayPipe, ShaderBit(i), progdst);
 
-        CopyProgramUniforms(gl.GetHookset(), Program, progdst);
-
+        // we have to link the program first, as this trashes all uniform values
         if(i == 0)
+        {
           CopyProgramAttribBindings(gl.GetHookset(), Program, progdst,
                                     GetShader(progDetails.stageShaders[i], ""));
+
+          gl.glLinkProgram(progdst);
+        }
+
+        CopyProgramUniforms(gl.GetHookset(), Program, progdst);
       }
     }
   }
@@ -1995,6 +2155,8 @@ ResourceId GLReplay::RenderOverlay(ResourceId texid, FormatComponentType typeHin
   WrappedOpenGL &gl = *m_pDriver;
 
   MakeCurrentReplayContext(&m_ReplayCtx);
+
+  GLMarkerRegion renderoverlay(StringFormat::Fmt("RenderOverlay %d", overlay));
 
   void *ctx = m_ReplayCtx.ctx;
 
@@ -2013,8 +2175,19 @@ ResourceId GLReplay::RenderOverlay(ResourceId texid, FormatComponentType typeHin
 
   auto &texDetails = m_pDriver->m_Textures[texid];
 
+  GLenum texBindingEnum = eGL_TEXTURE_2D;
+  GLenum texQueryEnum = eGL_TEXTURE_BINDING_2D;
+
+  if(texDetails.samples > 1)
+  {
+    texBindingEnum = eGL_TEXTURE_2D_MULTISAMPLE;
+    texQueryEnum = eGL_TEXTURE_BINDING_2D_MULTISAMPLE;
+  }
+
   // resize (or create) the overlay texture and FBO if necessary
-  if(DebugData.overlayTexWidth != texDetails.width || DebugData.overlayTexHeight != texDetails.height)
+  if(DebugData.overlayTexWidth != texDetails.width ||
+     DebugData.overlayTexHeight != texDetails.height ||
+     DebugData.overlayTexSamples != texDetails.samples)
   {
     if(DebugData.overlayFBO)
     {
@@ -2026,23 +2199,33 @@ ResourceId GLReplay::RenderOverlay(ResourceId texid, FormatComponentType typeHin
     gl.glBindFramebuffer(eGL_FRAMEBUFFER, DebugData.overlayFBO);
 
     GLuint curTex = 0;
-    gl.glGetIntegerv(eGL_TEXTURE_BINDING_2D, (GLint *)&curTex);
+    gl.glGetIntegerv(texQueryEnum, (GLint *)&curTex);
 
     gl.glGenTextures(1, &DebugData.overlayTex);
-    gl.glBindTexture(eGL_TEXTURE_2D, DebugData.overlayTex);
+    gl.glBindTexture(texBindingEnum, DebugData.overlayTex);
 
     DebugData.overlayTexWidth = texDetails.width;
     DebugData.overlayTexHeight = texDetails.height;
+    DebugData.overlayTexSamples = texDetails.samples;
 
-    gl.glTextureStorage2DEXT(DebugData.overlayTex, eGL_TEXTURE_2D, 1, eGL_RGBA16, texDetails.width,
-                             texDetails.height);
-    gl.glTexParameteri(eGL_TEXTURE_2D, eGL_TEXTURE_MIN_FILTER, eGL_NEAREST);
-    gl.glTexParameteri(eGL_TEXTURE_2D, eGL_TEXTURE_MAG_FILTER, eGL_NEAREST);
-    gl.glTexParameteri(eGL_TEXTURE_2D, eGL_TEXTURE_WRAP_S, eGL_CLAMP_TO_EDGE);
-    gl.glTexParameteri(eGL_TEXTURE_2D, eGL_TEXTURE_WRAP_T, eGL_CLAMP_TO_EDGE);
+    if(DebugData.overlayTexSamples > 1)
+    {
+      gl.glTextureStorage2DMultisampleEXT(DebugData.overlayTex, texBindingEnum, texDetails.samples,
+                                          eGL_RGBA16, texDetails.width, texDetails.height, true);
+    }
+    else
+    {
+      gl.glTextureImage2DEXT(DebugData.overlayTex, texBindingEnum, 0, eGL_RGBA16, texDetails.width,
+                             texDetails.height, 0, eGL_RGBA, eGL_FLOAT, NULL);
+      gl.glTexParameteri(texBindingEnum, eGL_TEXTURE_MAX_LEVEL, 0);
+      gl.glTexParameteri(texBindingEnum, eGL_TEXTURE_MIN_FILTER, eGL_NEAREST);
+      gl.glTexParameteri(texBindingEnum, eGL_TEXTURE_MAG_FILTER, eGL_NEAREST);
+      gl.glTexParameteri(texBindingEnum, eGL_TEXTURE_WRAP_S, eGL_CLAMP_TO_EDGE);
+      gl.glTexParameteri(texBindingEnum, eGL_TEXTURE_WRAP_T, eGL_CLAMP_TO_EDGE);
+    }
     gl.glFramebufferTexture(eGL_FRAMEBUFFER, eGL_COLOR_ATTACHMENT0, DebugData.overlayTex, 0);
 
-    gl.glBindTexture(eGL_TEXTURE_2D, curTex);
+    gl.glBindTexture(texBindingEnum, curTex);
   }
 
   gl.glBindFramebuffer(eGL_FRAMEBUFFER, DebugData.overlayFBO);
@@ -2101,8 +2284,12 @@ ResourceId GLReplay::RenderOverlay(ResourceId texid, FormatComponentType typeHin
 
     gl.glDisablei(eGL_SCISSOR_TEST, 0);
 
-    gl.glViewportIndexedf(0, rs.Viewports[0].x, rs.Viewports[0].y, rs.Viewports[0].width,
-                          rs.Viewports[0].height);
+    if(HasExt[ARB_viewport_array])
+      gl.glViewportIndexedf(0, rs.Viewports[0].x, rs.Viewports[0].y, rs.Viewports[0].width,
+                            rs.Viewports[0].height);
+    else
+      gl.glViewport((GLint)rs.Viewports[0].x, (GLint)rs.Viewports[0].y,
+                    (GLsizei)rs.Viewports[0].width, (GLsizei)rs.Viewports[0].height);
 
     gl.glBindBufferBase(eGL_UNIFORM_BUFFER, 0, DebugData.UBOs[0]);
     OutlineUBOData *cdata =
@@ -2124,7 +2311,11 @@ ResourceId GLReplay::RenderOverlay(ResourceId texid, FormatComponentType typeHin
       Vec4f scissor((float)rs.Scissors[0].x, (float)rs.Scissors[0].y, (float)rs.Scissors[0].width,
                     (float)rs.Scissors[0].height);
 
-      gl.glViewportIndexedf(0, scissor.x, scissor.y, scissor.z, scissor.w);
+      if(HasExt[ARB_viewport_array])
+        gl.glViewportIndexedf(0, scissor.x, scissor.y, scissor.z, scissor.w);
+      else
+        gl.glViewport(rs.Scissors[0].x, rs.Scissors[0].y, rs.Scissors[0].width,
+                      rs.Scissors[0].height);
 
       cdata = (OutlineUBOData *)gl.glMapBufferRange(eGL_UNIFORM_BUFFER, 0, sizeof(OutlineUBOData),
                                                     GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
@@ -2158,65 +2349,168 @@ ResourceId GLReplay::RenderOverlay(ResourceId texid, FormatComponentType typeHin
                                                      eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME,
                                                      (GLint *)&curStencil);
 
+    GLenum copyBindingEnum = texBindingEnum;
+    GLenum copyQueryEnum = texQueryEnum;
+
     GLuint depthCopy = 0, stencilCopy = 0;
 
-    // TODO handle non-2D depth/stencil attachments and fetch slice or cubemap face
     GLint mip = 0;
-
-    gl.glGetNamedFramebufferAttachmentParameterivEXT(
-        rs.DrawFBO, eGL_DEPTH_ATTACHMENT, eGL_FRAMEBUFFER_ATTACHMENT_TEXTURE_LEVEL, &mip);
+    GLint layer = 0;
 
     // create matching depth for existing FBO
     if(curDepth != 0)
     {
-      GLuint curTex = 0;
-      gl.glGetIntegerv(eGL_TEXTURE_BINDING_2D, (GLint *)&curTex);
+      GLint type = 0;
+      gl.glGetNamedFramebufferAttachmentParameterivEXT(
+          rs.DrawFBO, eGL_DEPTH_ATTACHMENT, eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, &type);
 
       GLenum fmt;
-      gl.glGetTextureLevelParameterivEXT(curDepth, eGL_TEXTURE_2D, mip, eGL_TEXTURE_INTERNAL_FORMAT,
-                                         (GLint *)&fmt);
+
+      if(type != eGL_RENDERBUFFER)
+      {
+        ResourceId id = m_pDriver->GetResourceManager()->GetID(TextureRes(ctx, curDepth));
+        WrappedOpenGL::TextureData &details = m_pDriver->m_Textures[id];
+
+        fmt = details.internalFormat;
+
+        gl.glGetNamedFramebufferAttachmentParameterivEXT(
+            rs.DrawFBO, eGL_DEPTH_ATTACHMENT, eGL_FRAMEBUFFER_ATTACHMENT_TEXTURE_LEVEL, &mip);
+
+        if(details.curType == eGL_TEXTURE_CUBE_MAP)
+        {
+          GLenum face;
+          gl.glGetNamedFramebufferAttachmentParameterivEXT(
+              rs.DrawFBO, eGL_DEPTH_ATTACHMENT, eGL_FRAMEBUFFER_ATTACHMENT_TEXTURE_CUBE_MAP_FACE,
+              (GLint *)&face);
+
+          layer = CubeTargetIndex(face);
+        }
+      }
+      else
+      {
+        ResourceId id = m_pDriver->GetResourceManager()->GetID(RenderbufferRes(ctx, curDepth));
+        WrappedOpenGL::TextureData &details = m_pDriver->m_Textures[id];
+
+        fmt = details.internalFormat;
+      }
+
+      if(copyBindingEnum == eGL_TEXTURE_CUBE_MAP)
+      {
+        copyBindingEnum = eGL_TEXTURE_2D;
+        copyQueryEnum = eGL_TEXTURE_BINDING_2D;
+      }
+
+      GLuint curTex = 0;
+      gl.glGetIntegerv(copyQueryEnum, (GLint *)&curTex);
 
       gl.glGenTextures(1, &depthCopy);
-      gl.glBindTexture(eGL_TEXTURE_2D, depthCopy);
-      gl.glTextureStorage2DEXT(depthCopy, eGL_TEXTURE_2D, 1, fmt, DebugData.overlayTexWidth,
-                               DebugData.overlayTexHeight);
-      gl.glTexParameteri(eGL_TEXTURE_2D, eGL_TEXTURE_MIN_FILTER, eGL_NEAREST);
-      gl.glTexParameteri(eGL_TEXTURE_2D, eGL_TEXTURE_MAG_FILTER, eGL_NEAREST);
-      gl.glTexParameteri(eGL_TEXTURE_2D, eGL_TEXTURE_WRAP_S, eGL_CLAMP_TO_EDGE);
-      gl.glTexParameteri(eGL_TEXTURE_2D, eGL_TEXTURE_WRAP_T, eGL_CLAMP_TO_EDGE);
+      gl.glBindTexture(copyBindingEnum, depthCopy);
+      if(DebugData.overlayTexSamples > 1)
+      {
+        gl.glTextureStorage2DMultisampleEXT(depthCopy, copyBindingEnum, DebugData.overlayTexSamples,
+                                            fmt, DebugData.overlayTexWidth,
+                                            DebugData.overlayTexHeight, true);
+      }
+      else
+      {
+        gl.glTextureImage2DEXT(depthCopy, copyBindingEnum, 0, fmt, DebugData.overlayTexWidth,
+                               DebugData.overlayTexHeight, 0, GetBaseFormat(fmt), GetDataType(fmt),
+                               NULL);
+        gl.glTexParameteri(copyBindingEnum, eGL_TEXTURE_MAX_LEVEL, 0);
+        gl.glTexParameteri(copyBindingEnum, eGL_TEXTURE_MIN_FILTER, eGL_NEAREST);
+        gl.glTexParameteri(copyBindingEnum, eGL_TEXTURE_MAG_FILTER, eGL_NEAREST);
+        gl.glTexParameteri(copyBindingEnum, eGL_TEXTURE_WRAP_S, eGL_CLAMP_TO_EDGE);
+        gl.glTexParameteri(copyBindingEnum, eGL_TEXTURE_WRAP_T, eGL_CLAMP_TO_EDGE);
+      }
 
-      gl.glBindTexture(eGL_TEXTURE_2D, curTex);
+      gl.glBindTexture(copyBindingEnum, curTex);
     }
 
     // create matching separate stencil if relevant
     if(curStencil != curDepth && curStencil != 0)
     {
-      GLuint curTex = 0;
-      gl.glGetIntegerv(eGL_TEXTURE_BINDING_2D, (GLint *)&curTex);
+      GLint type = 0;
+      gl.glGetNamedFramebufferAttachmentParameterivEXT(
+          rs.DrawFBO, eGL_STENCIL_ATTACHMENT, eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, &type);
 
       GLenum fmt;
-      gl.glGetTextureLevelParameterivEXT(curStencil, eGL_TEXTURE_2D, mip,
-                                         eGL_TEXTURE_INTERNAL_FORMAT, (GLint *)&fmt);
+
+      if(type != eGL_RENDERBUFFER)
+      {
+        ResourceId id = m_pDriver->GetResourceManager()->GetID(TextureRes(ctx, curDepth));
+        WrappedOpenGL::TextureData &details = m_pDriver->m_Textures[id];
+
+        fmt = details.internalFormat;
+
+        if(details.curType == eGL_TEXTURE_CUBE_MAP)
+        {
+          GLenum face;
+          gl.glGetNamedFramebufferAttachmentParameterivEXT(
+              rs.DrawFBO, eGL_DEPTH_ATTACHMENT, eGL_FRAMEBUFFER_ATTACHMENT_TEXTURE_CUBE_MAP_FACE,
+              (GLint *)&face);
+
+          layer = CubeTargetIndex(face);
+        }
+      }
+      else
+      {
+        ResourceId id = m_pDriver->GetResourceManager()->GetID(RenderbufferRes(ctx, curDepth));
+        WrappedOpenGL::TextureData &details = m_pDriver->m_Textures[id];
+
+        fmt = details.internalFormat;
+      }
+
+      GLuint curTex = 0;
+      gl.glGetIntegerv(copyQueryEnum, (GLint *)&curTex);
 
       gl.glGenTextures(1, &stencilCopy);
-      gl.glBindTexture(eGL_TEXTURE_2D, stencilCopy);
-      gl.glTextureStorage2DEXT(stencilCopy, eGL_TEXTURE_2D, 1, fmt, DebugData.overlayTexWidth,
-                               DebugData.overlayTexHeight);
-      gl.glTexParameteri(eGL_TEXTURE_2D, eGL_TEXTURE_MIN_FILTER, eGL_NEAREST);
-      gl.glTexParameteri(eGL_TEXTURE_2D, eGL_TEXTURE_MAG_FILTER, eGL_NEAREST);
-      gl.glTexParameteri(eGL_TEXTURE_2D, eGL_TEXTURE_WRAP_S, eGL_CLAMP_TO_EDGE);
-      gl.glTexParameteri(eGL_TEXTURE_2D, eGL_TEXTURE_WRAP_T, eGL_CLAMP_TO_EDGE);
+      gl.glBindTexture(copyBindingEnum, stencilCopy);
+      if(DebugData.overlayTexSamples > 1)
+      {
+        gl.glTextureStorage2DMultisampleEXT(
+            stencilCopy, copyBindingEnum, DebugData.overlayTexSamples, fmt,
+            DebugData.overlayTexWidth, DebugData.overlayTexHeight, true);
+      }
+      else
+      {
+        gl.glTextureImage2DEXT(stencilCopy, copyBindingEnum, 0, fmt, DebugData.overlayTexWidth,
+                               DebugData.overlayTexHeight, 0, GetBaseFormat(fmt), GetDataType(fmt),
+                               NULL);
+        gl.glTexParameteri(copyBindingEnum, eGL_TEXTURE_MAX_LEVEL, 0);
+        gl.glTexParameteri(copyBindingEnum, eGL_TEXTURE_MIN_FILTER, eGL_NEAREST);
+        gl.glTexParameteri(copyBindingEnum, eGL_TEXTURE_MAG_FILTER, eGL_NEAREST);
+        gl.glTexParameteri(copyBindingEnum, eGL_TEXTURE_WRAP_S, eGL_CLAMP_TO_EDGE);
+        gl.glTexParameteri(copyBindingEnum, eGL_TEXTURE_WRAP_T, eGL_CLAMP_TO_EDGE);
+      }
 
-      gl.glBindTexture(eGL_TEXTURE_2D, curTex);
+      gl.glBindTexture(copyBindingEnum, curTex);
     }
 
     // bind depth/stencil to overlay FBO (currently bound to DRAW_FRAMEBUFFER)
     if(curDepth != 0 && curDepth == curStencil)
-      gl.glFramebufferTexture(eGL_DRAW_FRAMEBUFFER, eGL_DEPTH_STENCIL_ATTACHMENT, depthCopy, mip);
+    {
+      if(layer == 0)
+        gl.glFramebufferTexture(eGL_DRAW_FRAMEBUFFER, eGL_DEPTH_STENCIL_ATTACHMENT, depthCopy, mip);
+      else
+        gl.glFramebufferTextureLayer(eGL_DRAW_FRAMEBUFFER, eGL_DEPTH_STENCIL_ATTACHMENT, depthCopy,
+                                     mip, layer);
+    }
     else if(curDepth != 0)
-      gl.glFramebufferTexture(eGL_DRAW_FRAMEBUFFER, eGL_DEPTH_ATTACHMENT, depthCopy, mip);
+    {
+      if(layer == 0)
+        gl.glFramebufferTexture(eGL_DRAW_FRAMEBUFFER, eGL_DEPTH_ATTACHMENT, depthCopy, mip);
+      else
+        gl.glFramebufferTextureLayer(eGL_DRAW_FRAMEBUFFER, eGL_DEPTH_ATTACHMENT, depthCopy, mip,
+                                     layer);
+    }
     else if(curStencil != 0)
-      gl.glFramebufferTexture(eGL_DRAW_FRAMEBUFFER, eGL_STENCIL_ATTACHMENT, stencilCopy, mip);
+    {
+      if(layer == 0)
+        gl.glFramebufferTexture(eGL_DRAW_FRAMEBUFFER, eGL_STENCIL_ATTACHMENT, stencilCopy, mip);
+      else
+        gl.glFramebufferTextureLayer(eGL_DRAW_FRAMEBUFFER, eGL_STENCIL_ATTACHMENT, stencilCopy, mip,
+                                     layer);
+    }
 
     // bind the 'real' fbo to the read framebuffer, so we can blit from it
     gl.glBindFramebuffer(eGL_READ_FRAMEBUFFER, rs.DrawFBO);
@@ -2293,6 +2587,9 @@ ResourceId GLReplay::RenderOverlay(ResourceId texid, FormatComponentType typeHin
   }
   else if(overlay == eTexOverlay_ClearBeforeDraw || overlay == eTexOverlay_ClearBeforePass)
   {
+    float col[] = {0.0f, 0.0f, 0.0f, 0.0f};
+    gl.glClearBufferfv(eGL_COLOR, 0, col);
+
     vector<uint32_t> events = passEvents;
 
     if(overlay == eTexOverlay_ClearBeforeDraw)
@@ -2303,11 +2600,14 @@ ResourceId GLReplay::RenderOverlay(ResourceId texid, FormatComponentType typeHin
     if(!events.empty())
     {
       if(overlay == eTexOverlay_ClearBeforePass)
+      {
         m_pDriver->ReplayLog(0, events[0], eReplay_WithoutDraw);
+      }
       else
-        gl.glBindFramebuffer(
-            eGL_FRAMEBUFFER,
-            rs.DrawFBO);    // if we don't replay the real state, restore drawFBO to clear it
+      {
+        // if we don't replay the real state, restore what we've changed
+        rs.ApplyState(ctx, &gl);
+      }
 
       float black[] = {0.0f, 0.0f, 0.0f, 0.0f};
       for(int i = 0; i < 8; i++)
@@ -2697,14 +2997,7 @@ ResourceId GLReplay::RenderOverlay(ResourceId texid, FormatComponentType typeHin
   }
   else if(overlay == eTexOverlay_QuadOverdrawDraw || overlay == eTexOverlay_QuadOverdrawPass)
   {
-    if(DebugData.quadoverdraw420)
-    {
-      RDCWARN("Quad overdraw requires GLSL 4.50 for dFd(xy)fine, using possibly coarse dFd(xy).");
-      m_pDriver->AddDebugMessage(
-          eDbgCategory_Portability, eDbgSeverity_Medium, eDbgSource_RuntimeWarning,
-          "Quad overdraw requires GLSL 4.50 for dFd(xy)fine, using possibly coarse dFd(xy).");
-    }
-
+    if(DebugData.quadoverdrawFSProg)
     {
       SCOPED_TIMER("Quad Overdraw");
 
@@ -2720,11 +3013,6 @@ ResourceId GLReplay::RenderOverlay(ResourceId texid, FormatComponentType typeHin
 
       if(!events.empty())
       {
-        if(overlay == eTexOverlay_QuadOverdrawPass)
-          ReplayLog(events[0], eReplay_WithoutDraw);
-        else
-          rs.ApplyState(m_pDriver->GetCtx(), m_pDriver);
-
         GLuint replacefbo = 0;
         GLuint quadtexs[3] = {0};
         gl.glGenFramebuffers(1, &replacefbo);
@@ -2734,37 +3022,73 @@ ResourceId GLReplay::RenderOverlay(ResourceId texid, FormatComponentType typeHin
 
         // image for quad usage
         gl.glBindTexture(eGL_TEXTURE_2D_ARRAY, quadtexs[2]);
-        gl.glTextureStorage3DEXT(quadtexs[2], eGL_TEXTURE_2D_ARRAY, 1, eGL_R32UI,
-                                 texDetails.width >> 1, texDetails.height >> 1, 4);
+        gl.glTextureImage3DEXT(quadtexs[2], eGL_TEXTURE_2D_ARRAY, 0, eGL_R32UI,
+                               RDCMAX(1, texDetails.width >> 1), RDCMAX(1, texDetails.height >> 1),
+                               4, 0, eGL_RED_INTEGER, eGL_UNSIGNED_INT, NULL);
+        gl.glTexParameteri(eGL_TEXTURE_2D_ARRAY, eGL_TEXTURE_MAX_LEVEL, 0);
 
         // temporarily attach to FBO to clear it
-        GLint zero = 0;
+        GLint zero[4] = {0};
         gl.glFramebufferTextureLayer(eGL_FRAMEBUFFER, eGL_COLOR_ATTACHMENT0, quadtexs[2], 0, 0);
-        gl.glClearBufferiv(eGL_COLOR, 0, &zero);
+        gl.glClearBufferiv(eGL_COLOR, 0, zero);
         gl.glFramebufferTextureLayer(eGL_FRAMEBUFFER, eGL_COLOR_ATTACHMENT0, quadtexs[2], 0, 1);
-        gl.glClearBufferiv(eGL_COLOR, 0, &zero);
+        gl.glClearBufferiv(eGL_COLOR, 0, zero);
         gl.glFramebufferTextureLayer(eGL_FRAMEBUFFER, eGL_COLOR_ATTACHMENT0, quadtexs[2], 0, 2);
-        gl.glClearBufferiv(eGL_COLOR, 0, &zero);
+        gl.glClearBufferiv(eGL_COLOR, 0, zero);
         gl.glFramebufferTextureLayer(eGL_FRAMEBUFFER, eGL_COLOR_ATTACHMENT0, quadtexs[2], 0, 3);
-        gl.glClearBufferiv(eGL_COLOR, 0, &zero);
+        gl.glClearBufferiv(eGL_COLOR, 0, zero);
 
         gl.glBindTexture(eGL_TEXTURE_2D, quadtexs[0]);
-        gl.glTextureStorage2DEXT(quadtexs[0], eGL_TEXTURE_2D, 1, eGL_RGBA8, texDetails.width,
-                                 texDetails.height);
+        gl.glTextureImage2DEXT(quadtexs[0], eGL_TEXTURE_2D, 0, eGL_RGBA8, texDetails.width,
+                               texDetails.height, 0, eGL_RGBA, eGL_UNSIGNED_BYTE, NULL);
+        gl.glTexParameteri(eGL_TEXTURE_2D, eGL_TEXTURE_MAX_LEVEL, 0);
         gl.glTexParameteri(eGL_TEXTURE_2D, eGL_TEXTURE_MIN_FILTER, eGL_NEAREST);
         gl.glTexParameteri(eGL_TEXTURE_2D, eGL_TEXTURE_MAG_FILTER, eGL_NEAREST);
         gl.glTexParameteri(eGL_TEXTURE_2D, eGL_TEXTURE_WRAP_S, eGL_CLAMP_TO_EDGE);
         gl.glTexParameteri(eGL_TEXTURE_2D, eGL_TEXTURE_WRAP_T, eGL_CLAMP_TO_EDGE);
         gl.glFramebufferTexture(eGL_FRAMEBUFFER, eGL_COLOR_ATTACHMENT0, quadtexs[0], 0);
 
+        GLuint curDepth = 0, depthType = 0;
+
+        // TODO handle non-2D depth/stencil attachments and fetch slice or cubemap face
+        GLint mip = 0;
+
+        gl.glGetNamedFramebufferAttachmentParameterivEXT(rs.DrawFBO, eGL_DEPTH_ATTACHMENT,
+                                                         eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME,
+                                                         (GLint *)&curDepth);
+        gl.glGetNamedFramebufferAttachmentParameterivEXT(rs.DrawFBO, eGL_DEPTH_ATTACHMENT,
+                                                         eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE,
+                                                         (GLint *)&depthType);
+        gl.glGetNamedFramebufferAttachmentParameterivEXT(
+            rs.DrawFBO, eGL_DEPTH_ATTACHMENT, eGL_FRAMEBUFFER_ATTACHMENT_TEXTURE_LEVEL, &mip);
+
+        GLenum fmt = eGL_DEPTH32F_STENCIL8;
+
+        if(depthType == eGL_TEXTURE)
+        {
+          gl.glGetTextureLevelParameterivEXT(curDepth, texBindingEnum, mip,
+                                             eGL_TEXTURE_INTERNAL_FORMAT, (GLint *)&fmt);
+        }
+        else
+        {
+          gl.glGetNamedRenderbufferParameterivEXT(curDepth, eGL_RENDERBUFFER_INTERNAL_FORMAT,
+                                                  (GLint *)&fmt);
+        }
+
         gl.glBindTexture(eGL_TEXTURE_2D, quadtexs[1]);
-        gl.glTextureStorage2DEXT(quadtexs[1], eGL_TEXTURE_2D, 1, eGL_DEPTH32F_STENCIL8,
-                                 texDetails.width, texDetails.height);
+        gl.glTextureImage2DEXT(quadtexs[1], eGL_TEXTURE_2D, 0, fmt, texDetails.width,
+                               texDetails.height, 0, GetBaseFormat(fmt), GetDataType(fmt), NULL);
+        gl.glTexParameteri(eGL_TEXTURE_2D, eGL_TEXTURE_MAX_LEVEL, 0);
         gl.glTexParameteri(eGL_TEXTURE_2D, eGL_TEXTURE_MIN_FILTER, eGL_NEAREST);
         gl.glTexParameteri(eGL_TEXTURE_2D, eGL_TEXTURE_MAG_FILTER, eGL_NEAREST);
         gl.glTexParameteri(eGL_TEXTURE_2D, eGL_TEXTURE_WRAP_S, eGL_CLAMP_TO_EDGE);
         gl.glTexParameteri(eGL_TEXTURE_2D, eGL_TEXTURE_WRAP_T, eGL_CLAMP_TO_EDGE);
         gl.glFramebufferTexture(eGL_FRAMEBUFFER, eGL_DEPTH_STENCIL_ATTACHMENT, quadtexs[1], 0);
+
+        if(overlay == eTexOverlay_QuadOverdrawPass)
+          ReplayLog(events[0], eReplay_WithoutDraw);
+        else
+          rs.ApplyState(m_pDriver->GetCtx(), m_pDriver);
 
         for(size_t i = 0; i < events.size(); i++)
         {
@@ -3241,10 +3565,22 @@ void GLReplay::InitPostVSBuffers(uint32_t eventID)
   if((drawcall->flags & eDraw_UseIBuffer) == 0)
   {
     if(drawcall->flags & eDraw_Instanced)
-      gl.glDrawArraysInstancedBaseInstance(eGL_POINTS, drawcall->vertexOffset, drawcall->numIndices,
-                                           drawcall->numInstances, drawcall->instanceOffset);
+    {
+      if(HasExt[ARB_base_instance])
+      {
+        gl.glDrawArraysInstancedBaseInstance(eGL_POINTS, drawcall->vertexOffset, drawcall->numIndices,
+                                             drawcall->numInstances, drawcall->instanceOffset);
+      }
+      else
+      {
+        gl.glDrawArraysInstanced(eGL_POINTS, drawcall->vertexOffset, drawcall->numIndices,
+                                 drawcall->numInstances);
+      }
+    }
     else
+    {
       gl.glDrawArrays(eGL_POINTS, drawcall->vertexOffset, drawcall->numIndices);
+    }
   }
   else    // drawcall is indexed
   {
@@ -3313,13 +3649,22 @@ void GLReplay::InitPostVSBuffers(uint32_t eventID)
     GLuint indexSetBuffer = 0;
     gl.glGenBuffers(1, &indexSetBuffer);
     gl.glBindBuffer(eGL_ELEMENT_ARRAY_BUFFER, indexSetBuffer);
-    gl.glNamedBufferStorageEXT(indexSetBuffer, sizeof(uint32_t) * indices.size(), &indices[0], 0);
+    gl.glNamedBufferDataEXT(indexSetBuffer, sizeof(uint32_t) * indices.size(), &indices[0],
+                            eGL_STATIC_DRAW);
 
     if(drawcall->flags & eDraw_Instanced)
     {
-      gl.glDrawElementsInstancedBaseVertexBaseInstance(
-          eGL_POINTS, (GLsizei)indices.size(), eGL_UNSIGNED_INT, NULL, drawcall->numInstances,
-          drawcall->vertexOffset, drawcall->instanceOffset);
+      if(HasExt[ARB_base_instance])
+      {
+        gl.glDrawElementsInstancedBaseVertexBaseInstance(
+            eGL_POINTS, (GLsizei)indices.size(), eGL_UNSIGNED_INT, NULL, drawcall->numInstances,
+            drawcall->baseVertex, drawcall->instanceOffset);
+      }
+      else
+      {
+        gl.glDrawElementsInstancedBaseVertex(eGL_POINTS, (GLsizei)indices.size(), eGL_UNSIGNED_INT,
+                                             NULL, drawcall->numInstances, drawcall->baseVertex);
+      }
     }
     else
     {
@@ -3356,7 +3701,7 @@ void GLReplay::InitPostVSBuffers(uint32_t eventID)
     {
       gl.glGenBuffers(1, &idxBuf);
       gl.glBindBuffer(eGL_ELEMENT_ARRAY_BUFFER, idxBuf);
-      gl.glNamedBufferStorageEXT(idxBuf, (GLsizeiptr)idxdata.size(), &idxdata[0], 0);
+      gl.glNamedBufferDataEXT(idxBuf, (GLsizeiptr)idxdata.size(), &idxdata[0], eGL_STATIC_DRAW);
     }
 
     // restore previous element array buffer binding
@@ -3417,7 +3762,7 @@ void GLReplay::InitPostVSBuffers(uint32_t eventID)
   GLuint vsoutBuffer = 0;
   gl.glGenBuffers(1, &vsoutBuffer);
   gl.glBindBuffer(eGL_ARRAY_BUFFER, vsoutBuffer);
-  gl.glNamedBufferStorageEXT(vsoutBuffer, stride * primsWritten, data, 0);
+  gl.glNamedBufferDataEXT(vsoutBuffer, stride * primsWritten, data, eGL_STATIC_DRAW);
 
   byte *byteData = (byte *)data;
 
@@ -3725,10 +4070,23 @@ void GLReplay::InitPostVSBuffers(uint32_t eventID)
       if((drawcall->flags & eDraw_UseIBuffer) == 0)
       {
         if(drawcall->flags & eDraw_Instanced)
-          gl.glDrawArraysInstancedBaseInstance(drawtopo, drawcall->vertexOffset, drawcall->numIndices,
-                                               drawcall->numInstances, drawcall->instanceOffset);
+        {
+          if(HasExt[ARB_base_instance])
+          {
+            gl.glDrawArraysInstancedBaseInstance(drawtopo, drawcall->vertexOffset,
+                                                 drawcall->numIndices, drawcall->numInstances,
+                                                 drawcall->instanceOffset);
+          }
+          else
+          {
+            gl.glDrawArraysInstanced(drawtopo, drawcall->vertexOffset, drawcall->numIndices,
+                                     drawcall->numInstances);
+          }
+        }
         else
+        {
           gl.glDrawArrays(drawtopo, drawcall->vertexOffset, drawcall->numIndices);
+        }
       }
       else    // drawcall is indexed
       {
@@ -3740,10 +4098,20 @@ void GLReplay::InitPostVSBuffers(uint32_t eventID)
 
         if(drawcall->flags & eDraw_Instanced)
         {
-          gl.glDrawElementsInstancedBaseVertexBaseInstance(
-              drawtopo, drawcall->numIndices, idxType,
-              (const void *)uintptr_t(drawcall->indexOffset * drawcall->indexByteWidth),
-              drawcall->numInstances, drawcall->baseVertex, drawcall->instanceOffset);
+          if(HasExt[ARB_base_instance])
+          {
+            gl.glDrawElementsInstancedBaseVertexBaseInstance(
+                drawtopo, drawcall->numIndices, idxType,
+                (const void *)uintptr_t(drawcall->indexOffset * drawcall->indexByteWidth),
+                drawcall->numInstances, drawcall->baseVertex, drawcall->instanceOffset);
+          }
+          else
+          {
+            gl.glDrawElementsInstancedBaseVertex(
+                drawtopo, drawcall->numIndices, idxType,
+                (const void *)uintptr_t(drawcall->indexOffset * drawcall->indexByteWidth),
+                drawcall->numInstances, drawcall->baseVertex);
+          }
         }
         else
         {
@@ -3827,8 +4195,8 @@ void GLReplay::InitPostVSBuffers(uint32_t eventID)
       GLuint lastoutBuffer = 0;
       gl.glGenBuffers(1, &lastoutBuffer);
       gl.glBindBuffer(eGL_ARRAY_BUFFER, lastoutBuffer);
-      gl.glNamedBufferStorageEXT(lastoutBuffer, stride * m_PostVSData[eventID].gsout.numVerts, data,
-                                 0);
+      gl.glNamedBufferDataEXT(lastoutBuffer, stride * m_PostVSData[eventID].gsout.numVerts, data,
+                              eGL_STATIC_DRAW);
 
       byteData = (byte *)data;
 

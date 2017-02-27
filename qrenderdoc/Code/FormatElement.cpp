@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -123,18 +123,18 @@ FormatElement::FormatElement()
   systemValue = eAttr_None;
 }
 
-FormatElement::FormatElement(const QString &Name, int buf, uint offs, bool pi, int ir, bool rowMat,
-                             uint matDim, ResourceFormat f, bool h)
+FormatElement::FormatElement(const QString &Name, int buf, uint offs, bool perInst, int instRate,
+                             bool rowMat, uint matDim, ResourceFormat f, bool hexDisplay)
 {
   name = Name;
   buffer = buf;
   offset = offs;
   format = f;
-  perinstance = pi;
-  instancerate = ir;
+  perinstance = perInst;
+  instancerate = instRate;
   rowmajor = rowMat;
   matrixdim = matDim;
-  hex = h;
+  hex = hexDisplay;
   systemValue = eAttr_None;
 }
 
@@ -759,7 +759,7 @@ ShaderVariable FormatElement::GetShaderVar(const byte *&data, const byte *end) c
   return ret;
 }
 
-uint32_t FormatElement::byteSize()
+uint32_t FormatElement::byteSize() const
 {
   uint32_t vecSize = format.compByteWidth * format.compCount;
 
@@ -813,17 +813,20 @@ static QString RowValuesToString(int cols, el x, el y, el z, el w)
            Formatter::Format(w);
 }
 
-QString RowString(const ShaderVariable &v, uint32_t row)
+QString RowString(const ShaderVariable &v, uint32_t row, VarType type)
 {
-  if(v.type == eVar_Double)
+  if(type == eVar_Unknown)
+    type = v.type;
+
+  if(type == eVar_Double)
     return RowValuesToString((int)v.columns, v.value.dv[row * v.columns + 0],
                              v.value.dv[row * v.columns + 1], v.value.dv[row * v.columns + 2],
                              v.value.dv[row * v.columns + 3]);
-  else if(v.type == eVar_Int)
+  else if(type == eVar_Int)
     return RowValuesToString((int)v.columns, v.value.iv[row * v.columns + 0],
                              v.value.iv[row * v.columns + 1], v.value.iv[row * v.columns + 2],
                              v.value.iv[row * v.columns + 3]);
-  else if(v.type == eVar_UInt)
+  else if(type == eVar_UInt)
     return RowValuesToString((int)v.columns, v.value.uv[row * v.columns + 0],
                              v.value.uv[row * v.columns + 1], v.value.uv[row * v.columns + 2],
                              v.value.uv[row * v.columns + 3]);

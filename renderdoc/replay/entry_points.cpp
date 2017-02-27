@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -285,6 +285,12 @@ extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_FreeEnvironmentModification
   delete[] mods;
 }
 
+extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_SetDebugLogFile(const char *log)
+{
+  if(log)
+    RDCLOGFILE(log);
+}
+
 extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_LogText(const char *text)
 {
   rdclog_int(RDCLog_Comment, "EXT", "external", 0, "%s", text);
@@ -298,6 +304,14 @@ extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_LogMessage(LogMessageType t
       (int)eLogType_First == (int)RDCLog_First && (int)eLogType_NumTypes == (int)eLogType_NumTypes,
       "Log type enum is out of sync");
   rdclog_int((LogType)type, project ? project : "UNK?", file ? file : "unknown", line, "%s", text);
+
+#if ENABLED(DEBUGBREAK_ON_ERROR_LOG)
+  if(type == eLogType_Error)
+    RDCBREAK();
+#endif
+
+  if(type == eLogType_Fatal)
+    RDCDUMP();
 }
 
 extern "C" RENDERDOC_API const char *RENDERDOC_CC RENDERDOC_GetLogFile()
@@ -710,19 +724,41 @@ void adbForwardPorts()
                                    RenderDoc_FirstTargetControlPort + RenderDoc_AndroidPortOffset,
                                    RenderDoc_FirstTargetControlPort));
 }
-uint32_t StartAndroidPackageForCapture(const char *package)
+uint32_t StartAndroidPackageForCapture(const char *host, const char *package)
 {
   string packageName = basename(string(package));    // Remove leading '/' if any
 
   adbExecCommand("shell am force-stop " + packageName);
   adbForwardPorts();
   adbExecCommand("shell setprop debug.vulkan.layers VK_LAYER_RENDERDOC_Capture");
+  adbExecCommand("shell pm grant " + packageName +
+                 " android.permission.WRITE_EXTERNAL_STORAGE");    // Creating the capture file
+  adbExecCommand("shell pm grant " + packageName +
+                 " android.permission.READ_EXTERNAL_STORAGE");    // Reading the capture thumbnail
   adbExecCommand("shell monkey -p " + packageName + " -c android.intent.category.LAUNCHER 1");
-  Threading::Sleep(
-      5000);    // Let the app pickup the setprop before we turn it back off for replaying.
-  adbExecCommand("shell setprop debug.vulkan.layers \\\"\\\"");
 
-  return RenderDoc_FirstTargetControlPort + RenderDoc_AndroidPortOffset;
+  uint32_t ret = RenderDoc_FirstTargetControlPort + RenderDoc_AndroidPortOffset;
+  uint32_t elapsed = 0,
+           timeout = 1000 *
+                     RDCMAX(5, atoi(RenderDoc::Inst().GetConfigSetting("MaxConnectTimeout").c_str()));
+  while(elapsed < timeout)
+  {
+    // Check if the target app has started yet and we can connect to it.
+    TargetControl *control = RENDERDOC_CreateTargetControl(host, ret, "testConnection", false);
+    if(control)
+    {
+      TargetControl_Shutdown(control);
+      break;
+    }
+
+    Threading::Sleep(1000);
+    elapsed += 1000;
+  }
+
+  // Let the app pickup the setprop before we turn it back off for replaying.
+  adbExecCommand("shell setprop debug.vulkan.layers :");
+
+  return ret;
 }
 }
 
@@ -758,7 +794,42 @@ extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_StartAndroidRemoteServer()
 {
   adbExecCommand("shell am force-stop org.renderdoc.renderdoccmd");
   adbForwardPorts();
-  adbExecCommand("shell setprop debug.vulkan.layers \\\"\\\"");
+  adbExecCommand("shell setprop debug.vulkan.layers :");
   adbExecCommand(
       "shell am start -n org.renderdoc.renderdoccmd/.Loader -e renderdoccmd remoteserver");
+}
+
+extern "C" RENDERDOC_API bool RENDERDOC_CC
+RENDERDOC_NeedVulkanLayerRegistration(uint32_t *flagsPtr, rdctype::array<rdctype::str> *myJSONsPtr,
+                                      rdctype::array<rdctype::str> *otherJSONsPtr)
+{
+  uint32_t flags = 0;
+  std::vector<std::string> myJSONs;
+  std::vector<std::string> otherJSONs;
+
+  bool ret = RenderDoc::Inst().NeedVulkanLayerRegistration(flags, myJSONs, otherJSONs);
+
+  if(flagsPtr)
+    *flagsPtr = flags;
+
+  if(myJSONsPtr)
+  {
+    create_array(*myJSONsPtr, myJSONs.size());
+    for(size_t i = 0; i < myJSONs.size(); i++)
+      (*myJSONsPtr)[i] = myJSONs[i];
+  }
+
+  if(otherJSONsPtr)
+  {
+    create_array(*otherJSONsPtr, otherJSONs.size());
+    for(size_t i = 0; i < otherJSONs.size(); i++)
+      (*otherJSONsPtr)[i] = otherJSONs[i];
+  }
+
+  return ret;
+}
+
+extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_UpdateVulkanLayerRegistration(bool systemLevel)
+{
+  RenderDoc::Inst().UpdateVulkanLayerRegistration(systemLevel);
 }

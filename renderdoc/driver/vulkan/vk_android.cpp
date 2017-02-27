@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -57,3 +57,14 @@ void VulkanReplay::GetOutputWindowDimensions(uint64_t id, int32_t &w, int32_t &h
 }
 
 const char *VulkanLibraryName = "libvulkan.so";
+
+bool VulkanReplay::CheckVulkanLayer(uint32_t &flags, std::vector<std::string> &myJSONs,
+                                    std::vector<std::string> &otherJSONs)
+{
+  // nothing to do
+  return false;
+}
+
+void VulkanReplay::InstallVulkanLayer(bool systemLevel)
+{
+}

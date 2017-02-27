@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -34,7 +34,7 @@ using std::pair;
 using std::map;
 
 class WrappedOpenGL;
-struct CounterContext;
+struct GLCounterContext;
 struct DrawcallTreeNode;
 
 struct GLPostVSData
@@ -243,6 +243,8 @@ private:
 
   struct OutputWindow : public GLWindowingData
   {
+    OutputWindow(const GLWindowingData &data) : GLWindowingData(data) {}
+    OutputWindow() {}
     struct
     {
       // used to blit from defined FBO (VAOs not shared)
@@ -277,6 +279,8 @@ private:
   struct DebugRenderData
   {
     float outWidth, outHeight;
+
+    int glslVersion;
 
     // min/max data
     GLuint minmaxTileResult;          // tile result buffer
@@ -338,19 +342,18 @@ private:
 
     GLuint quadoverdrawFSProg;
     GLuint quadoverdrawResolveProg;
-    bool quadoverdraw420;
 
     GLuint overlayTex;
     GLuint overlayFBO;
     GLuint overlayPipe;
-    GLint overlayTexWidth, overlayTexHeight;
+    GLint overlayTexWidth, overlayTexHeight, overlayTexSamples;
 
     GLuint UBOs[3];
 
-    GLuint readFBO;
-
     GLuint emptyVAO;
   } DebugData;
+
+  bool m_Degraded;
 
   FloatVector InterpretVertex(byte *data, uint32_t vert, const MeshDisplay &cfg, byte *end,
                               bool useidx, bool &valid);
@@ -377,12 +380,15 @@ private:
   void InitDebugData();
   void DeleteDebugData();
 
+  void CheckGLSLVersion(const char *sl, int &glslVersion);
+
   // called after the context is created, to init any counters
   void PostContextInitCounters();
   // called before the context is destroyed, to shutdown any counters
   void PreContextShutdownCounters();
 
-  void FillTimers(CounterContext &ctx, const DrawcallTreeNode &drawnode);
+  void FillTimers(GLCounterContext &ctx, const DrawcallTreeNode &drawnode,
+                  const vector<uint32_t> &counters);
 
   GLuint CreateShaderProgram(const vector<string> &vs, const vector<string> &fs,
                              const vector<string> &gs);
@@ -413,3 +419,6 @@ private:
 
   GLPipelineState m_CurPipelineState;
 };
+
+const GLHookSet &GetRealGLFunctions();
+GLPlatform &GetGLPlatform();

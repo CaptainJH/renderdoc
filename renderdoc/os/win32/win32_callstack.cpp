@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -142,6 +142,9 @@ static bool InitDbgHelp()
   // can't reliably co-exist with dbghelp already being used in the process
   if(GetModuleHandleA("dbghelp.dll") != NULL)
   {
+    RDCLOG(
+        "dbghelp.dll is already loaded, can't guarantee thread-safety against application use. "
+        "Callstack collection disabled");
     ret = false;
     return false;
   }
@@ -755,8 +758,42 @@ Callstack::AddressDetails Win32CallstackResolver::GetAddr(DWORD64 addr)
         info = GetAddrInfoForModule(modules[i].moduleId, addr);
 
       // if we didn't get a filename, default to the module name
-      if(info.fileName[0] == 0)
+      if(modules[i].moduleId == 0 || info.fileName[0] == 0)
         wcsncpy_s(info.fileName, modules[i].name.c_str(), 126);
+
+      if(modules[i].moduleId == 0 || info.funcName[0] == 0)
+      {
+        // if we didn't get a function name, at least indicate
+        // the module it came from, and an offset
+        wchar_t *baseName = info.fileName;
+
+        wchar_t *c = wcsrchr(baseName, '\\');
+        if(c)
+          baseName = c + 1;
+
+        c = wcsrchr(baseName, '/');
+        if(c)
+          baseName = c + 1;
+
+        wsprintfW(info.funcName, L"%s+0x%08I64x", baseName, addr - base);
+
+        c = wcsstr(info.funcName, L"pdb");
+        if(c)
+        {
+          if(i == 0)
+          {
+            c[0] = 'e';
+            c[1] = 'x';
+            c[2] = 'e';
+          }
+          else
+          {
+            c[0] = 'd';
+            c[1] = 'l';
+            c[2] = 'l';
+          }
+        }
+      }
 
       break;
     }

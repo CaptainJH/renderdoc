@@ -26,6 +26,8 @@ namespace renderdocui.Windows.Dialogs
 
         ScintillaNET.Scintilla scriptEditor = null;
 
+        private bool m_LibsLoaded = false;
+
         public PythonShell(Core core)
         {
             InitializeComponent();
@@ -116,7 +118,10 @@ namespace renderdocui.Windows.Dialogs
             string libspath = Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), "pythonlibs.zip");
 
             if (File.Exists(libspath))
+            {
+                m_LibsLoaded = true;
                 searches.Add(libspath);
+            }
 
             engine.SetSearchPaths(searches);
 
@@ -309,6 +314,15 @@ namespace renderdocui.Windows.Dialogs
                                 "The 'pyrenderdoc' object is the Core class instance.{1}" +
                                 "The 'renderdoc' module is available, as the matching namespace in C#.{1}",
                                 IronPython.CurrentVersion.AssemblyFileVersion, Environment.NewLine);
+
+            if (!m_LibsLoaded)
+            {
+                interactiveOutput.Text = String.Format("!!! pythonlibs.zip not found! Check installation !!!{0}" +
+                    "!!! If building locally, ensure you have compiled python libraries: !!!{0}" +
+                    "!!! Download IronPython-2.7.4 package, run this command and rebuild renderdocui !!!{0}" +
+                    "cd renderdocui/3rdparty/ironpython/ && ./compilelibs.sh /path/to/IronPython-2.7.4{0}{0}{1}",
+                    Environment.NewLine, interactiveOutput.Text);
+            }
 
             shellscope = NewScope(pythonengine);
         }
@@ -531,6 +545,14 @@ namespace renderdocui.Windows.Dialogs
                                 "# The 'pyrenderdoc' object is the Core class instance.\n" +
                                 "# The 'renderdoc' module is available, as the matching namespace in C#\n\n",
                                 IronPython.CurrentVersion.AssemblyFileVersion);
+
+            if (!m_LibsLoaded)
+            {
+                scriptEditor.Text += "# !!! pythonlibs.zip not found! Check installation !!!\n" +
+                    "# !!! If building locally, ensure you have compiled python libraries: !!!\n" +
+                    "# !!! Download IronPython-2.7.4 package, run this command and rebuild renderdocui !!!\n" +
+                    "# cd renderdocui/3rdparty/ironpython/ && ./compilelibs.sh /path/to/IronPython-2.7.4\n\n";
+            }
 
             scriptEditor.Text = scriptEditor.Text.Replace("\n", Environment.NewLine);
         }

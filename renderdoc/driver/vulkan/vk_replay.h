@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -257,6 +257,14 @@ public:
   static void PostDeviceShutdownCounters();
   // called before the VkDevice is destroyed, to shutdown any counters
   void PreDeviceShutdownCounters();
+
+  // used for vulkan layer bookkeeping. Ideally this should all be handled by installers/packages,
+  // but for developers running builds locally or just in case, we need to be able to update the
+  // layer registration ourselves.
+  // These functions are defined in vk_<platform>.cpp
+  static bool CheckVulkanLayer(uint32_t &flags, std::vector<std::string> &myJSONs,
+                               std::vector<std::string> &otherJSONs);
+  static void InstallVulkanLayer(bool systemLevel);
 
 private:
   struct OutputWindow

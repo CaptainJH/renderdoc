@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2017 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -260,6 +260,7 @@ void Serialiser::Serialise(const char *name, ShaderDebugState &el)
   Serialise("", el.registers);
   Serialise("", el.outputs);
   Serialise("", el.nextInstruction);
+  Serialise("", el.flags);
 
   vector<vector<ShaderVariable> > indexableTemps;
 
@@ -902,8 +903,9 @@ void Serialiser::Serialise(const char *name, GLPipelineState::FrameBuffer::Attac
   Serialise("", el.Obj);
   Serialise("", el.Layer);
   Serialise("", el.Mip);
+  SerialisePODArray<4>("", el.Swizzle);
 
-  SIZE_CHECK(16);
+  SIZE_CHECK(32);
 }
 
 template <>
@@ -928,7 +930,7 @@ void Serialiser::Serialise(const char *name, GLPipelineState::FrameBuffer &el)
 
   Serialise("", el.m_Blending);
 
-  SIZE_CHECK(200);
+  SIZE_CHECK(264);
 }
 
 template <>
@@ -962,7 +964,7 @@ void Serialiser::Serialise(const char *name, GLPipelineState &el)
 
   Serialise("", el.m_Hints);
 
-  SIZE_CHECK(1952);
+  SIZE_CHECK(2016);
 }
 
 #pragma endregion OpenGL pipeline state
@@ -1235,12 +1237,12 @@ void Serialiser::Serialise(const char *name, VulkanPipelineState &el)
   Serialise("", el.IA);
   Serialise("", el.VI);
 
-  Serialise("", el.VS);
-  Serialise("", el.TCS);
-  Serialise("", el.TES);
-  Serialise("", el.GS);
-  Serialise("", el.FS);
-  Serialise("", el.CS);
+  Serialise("", el.m_VS);
+  Serialise("", el.m_TCS);
+  Serialise("", el.m_TES);
+  Serialise("", el.m_GS);
+  Serialise("", el.m_FS);
+  Serialise("", el.m_CS);
 
   Serialise("", el.Tess);
 
@@ -1999,6 +2001,7 @@ void ReplayProxy::RemapProxyTextureIfNeeded(ResourceFormat &format, GetTextureDa
       case eSpecial_D16S8: params.remap = eRemap_D32S8; break;
       case eSpecial_ASTC:
       case eSpecial_EAC:
+      case eSpecial_R5G6B5:
       case eSpecial_ETC2: params.remap = eRemap_RGBA8; break;
       default:
         RDCERR("Don't know how to remap special format %u, falling back to RGBA32");
@@ -2724,7 +2727,7 @@ void ReplayProxy::InitPostVSBuffers(const vector<uint32_t> &events)
 
 MeshFormat ReplayProxy::GetPostVSBuffers(uint32_t eventID, uint32_t instID, MeshDataStage stage)
 {
-  MeshFormat ret = {};
+  MeshFormat ret;
 
   m_ToReplaySerialiser->Serialise("", eventID);
   m_ToReplaySerialiser->Serialise("", instID);
