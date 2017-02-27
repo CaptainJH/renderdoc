@@ -179,6 +179,10 @@ WrappedID3D12Device::WrappedID3D12Device(ID3D12Device *realDevice, D3D12InitPara
     m_DescriptorIncrements[i] =
         realDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE(i));
 
+  RDCEraseEl(m_D3D12Opts);
+
+  realDevice->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &m_D3D12Opts, sizeof(m_D3D12Opts));
+
   WrappedID3D12Resource::m_List = NULL;
 
   // refcounters implicitly construct with one reference, but we don't start with any soft
@@ -644,7 +648,13 @@ void WrappedID3D12Device::ReleaseSwapchainResources(WrappedIDXGISwapChain4 *swap
 
   for(int i = 0; i < swap->GetNumBackbuffers(); i++)
   {
-    WrappedID3D12Resource *wrapped = (WrappedID3D12Resource *)swap->GetBackbuffers()[i];
+    ID3D12Resource *res = (ID3D12Resource *)swap->GetBackbuffers()[i];
+
+    if(!res)
+      continue;
+
+    WrappedID3D12Resource *wrapped = (WrappedID3D12Resource *)res;
+    wrapped->ReleaseInternalRef();
     SAFE_RELEASE(wrapped);
   }
 
@@ -664,6 +674,17 @@ void WrappedID3D12Device::ReleaseSwapchainResources(WrappedIDXGISwapChain4 *swap
       GetDebugManager()->FreeRTV(it->second.rtvs[i]);
 
     m_SwapChains.erase(it);
+  }
+}
+
+void WrappedID3D12Device::NewSwapchainBuffer(IUnknown *backbuffer)
+{
+  ID3D12Resource *pRes = (ID3D12Resource *)backbuffer;
+
+  if(pRes)
+  {
+    WrappedID3D12Resource *wrapped = (WrappedID3D12Resource *)pRes;
+    wrapped->AddInternalRef();
   }
 }
 

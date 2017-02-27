@@ -333,6 +333,7 @@ private:
 
   WrappedIDXGISwapChain4 *m_LastSwap;
 
+  D3D12_FEATURE_DATA_D3D12_OPTIONS m_D3D12Opts;
   UINT m_DescriptorIncrements[D3D12_DESCRIPTOR_HEAP_TYPE_NUM_TYPES];
 
   void Serialise_CaptureScope(uint64_t offset);
@@ -471,7 +472,7 @@ public:
                                        UINT buffer, IUnknown *realSurface);
   HRESULT Present(WrappedIDXGISwapChain4 *swap, UINT SyncInterval, UINT Flags);
 
-  void NewSwapchainBuffer(IUnknown *backbuffer) {}
+  void NewSwapchainBuffer(IUnknown *backbuffer);
   void ReleaseSwapchainResources(WrappedIDXGISwapChain4 *swap, UINT QueueCount,
                                  IUnknown *const *ppPresentQueue, IUnknown **unwrappedQueues);
 

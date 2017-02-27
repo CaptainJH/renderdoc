@@ -252,6 +252,138 @@ VkResult WrappedVulkan::vkAllocateMemory(VkDevice device, const VkMemoryAllocate
     ObjDisp(device)->DestroyBuffer(Unwrap(device), buf, NULL);
   }
 
+  size_t memSize = 0;
+
+  // we don't have to unwrap every struct, but unwrapping a struct means we need to copy
+  // the previous one in the chain locally to modify the pNext pointer. So we just copy
+  // all of them locally
+  {
+    const VkGenericStruct *next = (const VkGenericStruct *)info.pNext;
+    while(next)
+    {
+      // we need to unwrap this struct
+      if(next->sType == VK_STRUCTURE_TYPE_DEDICATED_ALLOCATION_MEMORY_ALLOCATE_INFO_NV)
+        memSize += sizeof(VkDedicatedAllocationMemoryAllocateInfoNV);
+      else if(next->sType == VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO_NV)
+        memSize += sizeof(VkExportMemoryAllocateInfoNV);
+#ifdef VK_NV_external_memory_win32
+      else if(next->sType == VK_STRUCTURE_TYPE_EXPORT_MEMORY_WIN32_HANDLE_INFO_NV)
+        memSize += sizeof(VkExportMemoryWin32HandleInfoNV);
+      else if(next->sType == VK_STRUCTURE_TYPE_IMPORT_MEMORY_WIN32_HANDLE_INFO_NV)
+        memSize += sizeof(VkImportMemoryWin32HandleInfoNV);
+#else
+      else if(next->sType == VK_STRUCTURE_TYPE_EXPORT_MEMORY_WIN32_HANDLE_INFO_NV)
+        RDCERR("Support for VK_NV_external_memory_win32 not compiled in");
+      else if(next->sType == VK_STRUCTURE_TYPE_IMPORT_MEMORY_WIN32_HANDLE_INFO_NV)
+        RDCERR("Support for VK_NV_external_memory_win32 not compiled in");
+#endif
+
+      next = next->pNext;
+    }
+  }
+
+  byte *tempMem = GetTempMemory(memSize);
+
+  {
+    VkGenericStruct *nextChainTail = (VkGenericStruct *)&info;
+    const VkGenericStruct *nextInput = (const VkGenericStruct *)info.pNext;
+    while(nextInput)
+    {
+      // unwrap and replace the dedicated allocation struct in the chain
+      if(nextInput->sType == VK_STRUCTURE_TYPE_DEDICATED_ALLOCATION_MEMORY_ALLOCATE_INFO_NV)
+      {
+        const VkDedicatedAllocationMemoryAllocateInfoNV *dedicatedIn =
+            (const VkDedicatedAllocationMemoryAllocateInfoNV *)nextInput;
+        VkDedicatedAllocationMemoryAllocateInfoNV *dedicatedOut =
+            (VkDedicatedAllocationMemoryAllocateInfoNV *)tempMem;
+
+        tempMem = (byte *)(dedicatedOut + 1);
+
+        // copy and unwrap the struct
+        dedicatedOut->sType = dedicatedIn->sType;
+        dedicatedOut->buffer = Unwrap(dedicatedIn->buffer);
+        dedicatedOut->image = Unwrap(dedicatedIn->image);
+
+        // default to NULL. It will be overwritten in the next step if there is a next object
+        dedicatedOut->pNext = NULL;
+
+        // append this onto the chain
+        nextChainTail->pNext = (const VkGenericStruct *)dedicatedOut;
+        nextChainTail = (VkGenericStruct *)dedicatedOut;
+      }
+      else if(nextInput->sType == VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO_NV)
+      {
+        const VkExportMemoryAllocateInfoNV *instruct =
+            (const VkExportMemoryAllocateInfoNV *)nextInput;
+        VkExportMemoryAllocateInfoNV *outstruct = (VkExportMemoryAllocateInfoNV *)tempMem;
+
+        tempMem = (byte *)(outstruct + 1);
+
+        // copy the struct, nothing to unwrap
+        *outstruct = *instruct;
+
+        // default to NULL. It will be overwritten in the next step if there is a next object
+        outstruct->pNext = NULL;
+
+        // append this onto the chain
+        nextChainTail->pNext = (const VkGenericStruct *)outstruct;
+        nextChainTail = (VkGenericStruct *)outstruct;
+      }
+      else if(nextInput->sType == VK_STRUCTURE_TYPE_EXPORT_MEMORY_WIN32_HANDLE_INFO_NV)
+      {
+#ifdef VK_NV_external_memory_win32
+        const VkExportMemoryWin32HandleInfoNV *instruct =
+            (const VkExportMemoryWin32HandleInfoNV *)nextInput;
+        VkExportMemoryWin32HandleInfoNV *outstruct = (VkExportMemoryWin32HandleInfoNV *)tempMem;
+
+        tempMem = (byte *)(outstruct + 1);
+
+        // copy the struct, nothing to unwrap
+        *outstruct = *instruct;
+
+        // default to NULL. It will be overwritten in the next step if there is a next object
+        outstruct->pNext = NULL;
+
+        // append this onto the chain
+        nextChainTail->pNext = (const VkGenericStruct *)outstruct;
+        nextChainTail = (VkGenericStruct *)outstruct;
+#else
+        RDCERR("Support for VK_NV_external_memory_win32 not compiled in");
+#endif
+      }
+      else if(nextInput->sType == VK_STRUCTURE_TYPE_IMPORT_MEMORY_WIN32_HANDLE_INFO_NV)
+      {
+#ifdef VK_NV_external_memory_win32
+        const VkImportMemoryWin32HandleInfoNV *instruct =
+            (const VkImportMemoryWin32HandleInfoNV *)nextInput;
+        VkImportMemoryWin32HandleInfoNV *outstruct = (VkImportMemoryWin32HandleInfoNV *)tempMem;
+
+        tempMem = (byte *)(outstruct + 1);
+
+        // copy the struct, nothing to unwrap
+        *outstruct = *instruct;
+
+        // default to NULL. It will be overwritten in the next step if there is a next object
+        outstruct->pNext = NULL;
+
+        // append this onto the chain
+        nextChainTail->pNext = (const VkGenericStruct *)outstruct;
+        nextChainTail = (VkGenericStruct *)outstruct;
+#else
+        RDCERR("Support for VK_NV_external_memory_win32 not compiled in");
+#endif
+      }
+      else
+      {
+        RDCERR("unrecognised struct %d in vkAllocateMemoryInfo pNext chain", nextInput->sType);
+        // can't patch this struct, have to just copy it and hope it's the last in the chain
+        nextChainTail->pNext = nextInput;
+      }
+
+      nextInput = nextInput->pNext;
+    }
+  }
+
   VkResult ret = ObjDisp(device)->AllocateMemory(Unwrap(device), &info, pAllocator, pMemory);
 
   // restore the memoryTypeIndex to the original, as that's what we want to serialise,

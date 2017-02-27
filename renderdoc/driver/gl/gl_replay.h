@@ -34,7 +34,7 @@ using std::pair;
 using std::map;
 
 class WrappedOpenGL;
-struct CounterContext;
+struct GLCounterContext;
 struct DrawcallTreeNode;
 
 struct GLPostVSData
@@ -243,6 +243,8 @@ private:
 
   struct OutputWindow : public GLWindowingData
   {
+    OutputWindow(const GLWindowingData &data) : GLWindowingData(data) {}
+    OutputWindow() {}
     struct
     {
       // used to blit from defined FBO (VAOs not shared)
@@ -385,7 +387,7 @@ private:
   // called before the context is destroyed, to shutdown any counters
   void PreContextShutdownCounters();
 
-  void FillTimers(CounterContext &ctx, const DrawcallTreeNode &drawnode,
+  void FillTimers(GLCounterContext &ctx, const DrawcallTreeNode &drawnode,
                   const vector<uint32_t> &counters);
 
   GLuint CreateShaderProgram(const vector<string> &vs, const vector<string> &fs,

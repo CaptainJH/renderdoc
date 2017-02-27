@@ -921,7 +921,12 @@ ShaderDebugTrace D3D11DebugManager::DebugVertex(uint32_t eventID, uint32_t verti
   using namespace DXBC;
   using namespace ShaderDebug;
 
+  D3D11MarkerRegion debugpixRegion(
+      StringFormat::Fmt("DebugVertex @ %u of (%u,%u,%u)", eventID, vertid, instid, idx));
+
   ShaderDebugTrace empty;
+
+  const FetchDrawcall *draw = m_WrappedDevice->GetDrawcall(eventID);
 
   D3D11RenderStateTracker tracker(m_WrappedContext);
 
@@ -947,10 +952,14 @@ ShaderDebugTrace D3D11DebugManager::DebugVertex(uint32_t eventID, uint32_t verti
   set<UINT> vertexbuffers;
   uint32_t trackingOffs[32] = {0};
 
+  UINT MaxStepRate = 1U;
+
   // need special handling for other step rates
   for(size_t i = 0; i < inputlayout.size(); i++)
   {
-    RDCASSERT(inputlayout[i].InstanceDataStepRate <= 1);
+    if(inputlayout[i].InputSlotClass == D3D11_INPUT_PER_INSTANCE_DATA &&
+       inputlayout[i].InstanceDataStepRate < draw->numInstances)
+      MaxStepRate = RDCMAX(inputlayout[i].InstanceDataStepRate, MaxStepRate);
 
     UINT slot =
         RDCCLAMP(inputlayout[i].InputSlot, 0U, UINT(D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT - 1));
@@ -972,7 +981,8 @@ ShaderDebugTrace D3D11DebugManager::DebugVertex(uint32_t eventID, uint32_t verti
   }
 
   vector<byte> vertData[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT];
-  vector<byte> instData[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT];
+  vector<byte> *instData = new vector<byte>[MaxStepRate * D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT];
+  vector<byte> staticData[D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT];
 
   for(auto it = vertexbuffers.begin(); it != vertexbuffers.end(); ++it)
   {
@@ -981,8 +991,16 @@ ShaderDebugTrace D3D11DebugManager::DebugVertex(uint32_t eventID, uint32_t verti
     {
       GetBufferData(rs->IA.VBs[i], rs->IA.Offsets[i] + rs->IA.Strides[i] * (vertOffset + idx),
                     rs->IA.Strides[i], vertData[i], true);
-      GetBufferData(rs->IA.VBs[i], rs->IA.Offsets[i] + rs->IA.Strides[i] * (instOffset + instid),
-                    rs->IA.Strides[i], instData[i], true);
+
+      for(UINT isr = 1; isr <= MaxStepRate; isr++)
+      {
+        GetBufferData(rs->IA.VBs[i],
+                      rs->IA.Offsets[i] + rs->IA.Strides[i] * (instOffset + (instid / isr)),
+                      rs->IA.Strides[i], instData[i * MaxStepRate + isr - 1], true);
+      }
+
+      GetBufferData(rs->IA.VBs[i], rs->IA.Offsets[i] + rs->IA.Strides[i] * instOffset,
+                    rs->IA.Strides[i], staticData[i], true);
     }
   }
 
@@ -1044,10 +1062,19 @@ ShaderDebugTrace D3D11DebugManager::DebugVertex(uint32_t eventID, uint32_t verti
       }
       else
       {
-        if(instData[el->InputSlot].size() >= el->AlignedByteOffset)
+        if(el->InstanceDataStepRate >= draw->numInstances)
         {
-          srcData = &instData[el->InputSlot][el->AlignedByteOffset];
-          dataSize = instData[el->InputSlot].size() - el->AlignedByteOffset;
+          srcData = &staticData[el->InputSlot][el->AlignedByteOffset];
+          dataSize = staticData[el->InputSlot].size() - el->AlignedByteOffset;
+        }
+        else
+        {
+          UINT isrIdx = el->InputSlot * MaxStepRate + (el->InstanceDataStepRate - 1);
+          if(instData[isrIdx].size() >= el->AlignedByteOffset)
+          {
+            srcData = &instData[isrIdx][el->AlignedByteOffset];
+            dataSize = instData[isrIdx].size() - el->AlignedByteOffset;
+          }
         }
       }
 
@@ -1204,8 +1231,6 @@ ShaderDebugTrace D3D11DebugManager::DebugVertex(uint32_t eventID, uint32_t verti
     {
       uint32_t sv_vertid = vertid;
 
-      const FetchDrawcall *draw = m_WrappedDevice->GetDrawcall(eventID);
-
       if(draw->flags & eDraw_UseIBuffer)
         sv_vertid = idx;
 
@@ -1231,11 +1256,15 @@ ShaderDebugTrace D3D11DebugManager::DebugVertex(uint32_t eventID, uint32_t verti
     }
   }
 
+  delete[] instData;
+
   State last;
 
   vector<ShaderDebugState> states;
 
   states.push_back((State)initialState);
+
+  D3D11MarkerRegion simloop("Simulation Loop");
 
   for(int cycleCounter = 0;; cycleCounter++)
   {
@@ -1263,6 +1292,9 @@ ShaderDebugTrace D3D11DebugManager::DebugPixel(uint32_t eventID, uint32_t x, uin
 {
   using namespace DXBC;
   using namespace ShaderDebug;
+
+  D3D11MarkerRegion debugpixRegion(
+      StringFormat::Fmt("DebugPixel @ %u of (%u,%u) %u / %u", eventID, x, y, sample, primitive));
 
   ShaderDebugTrace empty;
 
@@ -1511,6 +1543,31 @@ ShaderDebugTrace D3D11DebugManager::DebugPixel(uint32_t eventID, uint32_t x, uin
 
       if(prev.compCount <= 2 && prev.regChannelMask <= 0x3)
         arrayLength = 1;
+    }
+
+    // The compiler is also really annoying and will go to great lengths to rearrange elements
+    // and screw up our declaration, to pack things together. E.g.:
+    // float2 a : TEXCOORD1;
+    // float4 b : TEXCOORD2;
+    // float4 c : TEXCOORD3;
+    // float2 d : TEXCOORD4;
+    // the compiler will move d up and pack it into the last two components of a.
+    // To prevent this, we look forward and backward to check that we aren't expecting to pack
+    // with anything, and if not then we just make it a 1-length array to ensure no packing.
+    // Note the regChannelMask & 0x1 means it is using .x, so it's not the tail-end of a pack
+    if(included && arrayLength == 0 && numCols <= 2 && (dxbc->m_InputSig[i].regChannelMask & 0x1))
+    {
+      if(i == dxbc->m_InputSig.size() - 1)
+      {
+        // the last element is never packed
+        arrayLength = 1;
+      }
+      else
+      {
+        // if the next reg is using .x, it wasn't packed with us
+        if(dxbc->m_InputSig[i + 1].regChannelMask & 0x1)
+          arrayLength = 1;
+      }
     }
 
     extractHlsl += ToStr::Get((uint32_t)numCols) + " input_" + name;
@@ -2059,6 +2116,8 @@ ShaderDebugTrace D3D11DebugManager::DebugPixel(uint32_t eventID, uint32_t x, uin
 
   int cycleCounter = 0;
 
+  D3D11MarkerRegion simloop("Simulation Loop");
+
   // simulate lockstep until all threads are finished
   bool finished = true;
   do
@@ -2177,6 +2236,10 @@ ShaderDebugTrace D3D11DebugManager::DebugThread(uint32_t eventID, uint32_t group
 {
   using namespace DXBC;
   using namespace ShaderDebug;
+
+  D3D11MarkerRegion simloop(StringFormat::Fmt("DebugThread @ %u: [%u, %u, %u] (%u, %u, %u)",
+                                              eventID, groupid[0], groupid[1], groupid[2],
+                                              threadid[0], threadid[1], threadid[2]));
 
   ShaderDebugTrace empty;
 
@@ -4760,6 +4823,8 @@ vector<PixelModification> D3D11DebugManager::PixelHistory(vector<EventUsage> eve
      details.texFmt == DXGI_FORMAT_R24G8_TYPELESS || details.texFmt == DXGI_FORMAT_D24_UNORM_S8_UINT ||
 
      details.texFmt == DXGI_FORMAT_D16_UNORM ||
+
+     details.texFmt == DXGI_FORMAT_D32_FLOAT ||
 
      details.texFmt == DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS ||
      details.texFmt == DXGI_FORMAT_X32_TYPELESS_G8X24_UINT ||
