@@ -141,19 +141,33 @@ struct GLWindowingData
 
 #elif ENABLED(RDOC_ANDROID)
 
-#include "EGL/egl.h"
-#include "EGL/eglext.h"
+// force include the eglplatform.h, as we want to use
+// our own because the system one could be a bit older and
+// propably not suitable for the given egl.h
+#include "official/eglplatform.h"
+
+#include "official/egl.h"
+#include "official/eglext.h"
 
 struct GLWindowingData
 {
   GLWindowingData()
   {
-    ctx = NULL;
+    egl_ctx = 0;
+    egl_dpy = 0;
+    egl_wnd = 0;
     wnd = 0;
   }
 
-  void SetCtx(void *c) { ctx = (void *)c; }
-  EGLContext ctx;
+  void SetCtx(void *c) { egl_ctx = (void *)c; }
+  union
+  {
+    // currently required to allow compatiblity with the driver parts
+    void *ctx;
+    EGLContext egl_ctx;
+  };
+  EGLDisplay egl_dpy;
+  EGLSurface egl_wnd;
   ANativeWindow *wnd;
 };
 
@@ -236,6 +250,8 @@ struct GLMarkerRegion
   static const GLHookSet *gl;
 };
 
+size_t GLTypeSize(GLenum type);
+
 size_t BufferIdx(GLenum buf);
 GLenum BufferEnum(size_t idx);
 
@@ -248,8 +264,15 @@ GLenum ShaderEnum(size_t idx);
 
 ResourceFormat MakeResourceFormat(const GLHookSet &gl, GLenum target, GLenum fmt);
 GLenum MakeGLFormat(WrappedOpenGL &gl, ResourceFormat fmt);
-PrimitiveTopology MakePrimitiveTopology(const GLHookSet &gl, GLenum Topo);
-GLenum MakeGLPrimitiveTopology(PrimitiveTopology Topo);
+Topology MakePrimitiveTopology(const GLHookSet &gl, GLenum Topo);
+GLenum MakeGLPrimitiveTopology(Topology Topo);
+AddressMode MakeAddressMode(GLenum addr);
+TextureFilter MakeFilter(GLenum minf, GLenum magf, bool shadowSampler, float maxAniso);
+CompareFunc MakeCompareFunc(GLenum func);
+StencilOp MakeStencilOp(GLenum op);
+LogicOp MakeLogicOp(GLenum op);
+BlendMultiplier MakeBlendMultiplier(GLenum blend);
+BlendOp MakeBlendOp(GLenum op);
 const char *BlendString(GLenum blendenum);
 const char *SamplerString(GLenum smpenum);
 
@@ -262,58 +285,93 @@ void GetBindpointMapping(const GLHookSet &gl, GLuint curProg, int shadIdx, Shade
 
 extern int GLCoreVersion;
 extern bool GLIsCore;
+extern bool IsGLES;
 
-// list of extensions and the version when they became core
-// 99 means the extension never became core, so you can easily
-// just do a check of CoreVersion >= NN and they will always fail.
-#define EXTENSION_CHECKS()                           \
-  EXT_TO_CHECK(33, ARB_explicit_attrib_location)     \
-  EXT_TO_CHECK(33, ARB_sampler_objects)              \
-  EXT_TO_CHECK(33, ARB_texture_swizzle)              \
-  EXT_TO_CHECK(40, ARB_draw_buffers_blend)           \
-  EXT_TO_CHECK(40, ARB_draw_indirect)                \
-  EXT_TO_CHECK(40, ARB_gpu_shader5)                  \
-  EXT_TO_CHECK(40, ARB_sample_shading)               \
-  EXT_TO_CHECK(40, ARB_shader_subroutine)            \
-  EXT_TO_CHECK(40, ARB_tessellation_shader)          \
-  EXT_TO_CHECK(40, ARB_texture_cube_map_array)       \
-  EXT_TO_CHECK(40, ARB_transform_feedback2)          \
-  EXT_TO_CHECK(41, ARB_separate_shader_objects)      \
-  EXT_TO_CHECK(41, ARB_viewport_array)               \
-  EXT_TO_CHECK(42, ARB_base_instance)                \
-  EXT_TO_CHECK(42, ARB_shader_atomic_counters)       \
-  EXT_TO_CHECK(42, ARB_shader_image_load_store)      \
-  EXT_TO_CHECK(42, ARB_shading_language_420pack)     \
-  EXT_TO_CHECK(42, ARB_texture_storage)              \
-  EXT_TO_CHECK(43, ARB_clear_buffer_object)          \
-  EXT_TO_CHECK(43, ARB_compute_shader)               \
-  EXT_TO_CHECK(43, ARB_copy_image)                   \
-  EXT_TO_CHECK(43, ARB_ES3_compatibility)            \
-  EXT_TO_CHECK(43, ARB_internalformat_query2)        \
-  EXT_TO_CHECK(43, ARB_program_interface_query)      \
-  EXT_TO_CHECK(43, ARB_shader_storage_buffer_object) \
-  EXT_TO_CHECK(43, ARB_stencil_texturing)            \
-  EXT_TO_CHECK(43, ARB_texture_storage_multisample)  \
-  EXT_TO_CHECK(43, ARB_texture_view)                 \
-  EXT_TO_CHECK(43, ARB_vertex_attrib_binding)        \
-  EXT_TO_CHECK(43, KHR_debug)                        \
-  EXT_TO_CHECK(44, ARB_enhanced_layouts)             \
-  EXT_TO_CHECK(44, ARB_query_buffer_object)          \
-  EXT_TO_CHECK(45, ARB_clip_control)                 \
-  EXT_TO_CHECK(99, ARB_indirect_parameters)          \
-  EXT_TO_CHECK(99, ARB_seamless_cubemap_per_texture) \
-  EXT_TO_CHECK(99, EXT_depth_bounds_test)            \
-  EXT_TO_CHECK(99, EXT_direct_state_access)          \
-  EXT_TO_CHECK(99, EXT_polygon_offset_clamp)         \
-  EXT_TO_CHECK(99, EXT_raster_multisample)           \
-  EXT_TO_CHECK(99, EXT_texture_swizzle)              \
-  EXT_TO_CHECK(99, KHR_blend_equation_advanced_coherent)
+// List of extensions and the versions when they became core (first column for GL, second column for
+// GLES). In case of GLES compatible extensions and new features of the different versions are also
+// taken into account.
+// 99 means the extension never became core, so you can easily just do a check of CoreVersion >= NN
+// and they will always fail.
+#define EXTENSION_CHECKS()                                       \
+  EXT_TO_CHECK(33, 30, ARB_explicit_attrib_location)             \
+  EXT_TO_CHECK(33, 30, ARB_sampler_objects)                      \
+  EXT_TO_CHECK(33, 30, ARB_texture_swizzle)                      \
+  EXT_TO_CHECK(40, 32, ARB_draw_buffers_blend)                   \
+  EXT_TO_CHECK(40, 31, ARB_draw_indirect)                        \
+  EXT_TO_CHECK(40, 32, ARB_gpu_shader5)                          \
+  EXT_TO_CHECK(40, 32, ARB_sample_shading)                       \
+  EXT_TO_CHECK(40, 99, ARB_shader_subroutine)                    \
+  EXT_TO_CHECK(40, 32, ARB_tessellation_shader)                  \
+  EXT_TO_CHECK(40, 32, ARB_texture_cube_map_array)               \
+  EXT_TO_CHECK(40, 30, ARB_transform_feedback2)                  \
+  EXT_TO_CHECK(41, 31, ARB_separate_shader_objects)              \
+  EXT_TO_CHECK(41, 99, ARB_viewport_array)                       \
+  EXT_TO_CHECK(42, 99, ARB_base_instance)                        \
+  EXT_TO_CHECK(42, 31, ARB_shader_atomic_counters)               \
+  EXT_TO_CHECK(42, 31, ARB_shader_image_load_store)              \
+  EXT_TO_CHECK(42, 31, ARB_shading_language_420pack)             \
+  EXT_TO_CHECK(42, 30, ARB_texture_storage)                      \
+  EXT_TO_CHECK(43, 99, ARB_clear_buffer_object)                  \
+  EXT_TO_CHECK(43, 31, ARB_compute_shader)                       \
+  EXT_TO_CHECK(43, 32, ARB_copy_image)                           \
+  EXT_TO_CHECK(43, 30, ARB_ES3_compatibility)                    \
+  EXT_TO_CHECK(43, 99, ARB_internalformat_query2)                \
+  EXT_TO_CHECK(43, 31, ARB_program_interface_query)              \
+  EXT_TO_CHECK(43, 31, ARB_shader_storage_buffer_object)         \
+  EXT_TO_CHECK(43, 31, ARB_stencil_texturing)                    \
+  EXT_TO_CHECK(43, 32, ARB_texture_storage_multisample)          \
+  EXT_TO_CHECK(43, 99, ARB_texture_view)                         \
+  EXT_TO_CHECK(43, 31, ARB_vertex_attrib_binding)                \
+  EXT_TO_CHECK(43, 32, KHR_debug)                                \
+  EXT_TO_CHECK(44, 99, ARB_enhanced_layouts)                     \
+  EXT_TO_CHECK(44, 99, ARB_query_buffer_object)                  \
+  EXT_TO_CHECK(45, 99, ARB_clip_control)                         \
+  EXT_TO_CHECK(99, 99, ARB_indirect_parameters)                  \
+  EXT_TO_CHECK(99, 99, ARB_seamless_cubemap_per_texture)         \
+  EXT_TO_CHECK(99, 99, EXT_depth_bounds_test)                    \
+  EXT_TO_CHECK(99, 99, EXT_direct_state_access)                  \
+  EXT_TO_CHECK(99, 99, EXT_polygon_offset_clamp)                 \
+  EXT_TO_CHECK(99, 99, EXT_raster_multisample)                   \
+  EXT_TO_CHECK(99, 99, EXT_texture_filter_anisotropic)           \
+  EXT_TO_CHECK(99, 30, EXT_texture_swizzle)                      \
+  EXT_TO_CHECK(99, 99, KHR_blend_equation_advanced_coherent)     \
+  /* OpenGL ES extensions */                                     \
+  EXT_TO_CHECK(99, 99, EXT_clip_cull_distance)                   \
+  EXT_TO_CHECK(99, 99, EXT_multisample_compatibility)            \
+  EXT_TO_CHECK(99, 99, NV_polygon_mode)                          \
+  EXT_TO_CHECK(99, 99, NV_read_depth)                            \
+  EXT_TO_CHECK(99, 99, NV_read_stencil)                          \
+  EXT_TO_CHECK(99, 99, NV_read_depth_stencil)                    \
+  EXT_TO_CHECK(99, 32, OES_texture_storage_multisample_2d_array) \
+  EXT_TO_CHECK(99, 32, EXT_color_buffer_float)
+
+// GL extensions and their roughly equivalent GLES alternatives
+#define EXTENSION_COMPATIBILITY_CHECKS()                                                    \
+  EXT_COMP_CHECK(ARB_base_instance, EXT_base_instance)                                      \
+  EXT_COMP_CHECK(ARB_copy_image, EXT_copy_image)                                            \
+  EXT_COMP_CHECK(ARB_copy_image, OES_copy_image)                                            \
+  EXT_COMP_CHECK(ARB_draw_buffers_blend, EXT_draw_buffers_indexed)                          \
+  EXT_COMP_CHECK(ARB_draw_buffers_blend, OES_draw_buffers_indexed)                          \
+  EXT_COMP_CHECK(ARB_gpu_shader5, EXT_gpu_shader5)                                          \
+  EXT_COMP_CHECK(ARB_gpu_shader5, OES_gpu_shader5)                                          \
+  EXT_COMP_CHECK(ARB_sample_shading, OES_sample_shading)                                    \
+  EXT_COMP_CHECK(ARB_separate_shader_objects, EXT_separate_shader_objects)                  \
+  EXT_COMP_CHECK(ARB_tessellation_shader, EXT_tessellation_shader)                          \
+  EXT_COMP_CHECK(ARB_tessellation_shader, OES_tessellation_shader)                          \
+  EXT_COMP_CHECK(ARB_texture_cube_map_array, EXT_texture_cube_map_array)                    \
+  EXT_COMP_CHECK(ARB_texture_cube_map_array, OES_texture_cube_map_array)                    \
+  EXT_COMP_CHECK(ARB_texture_storage, EXT_texture_storage)                                  \
+  EXT_COMP_CHECK(ARB_texture_storage_multisample, OES_texture_storage_multisample_2d_array) \
+  EXT_COMP_CHECK(ARB_texture_view, EXT_texture_view)                                        \
+  EXT_COMP_CHECK(ARB_texture_view, OES_texture_view)                                        \
+  EXT_COMP_CHECK(ARB_viewport_array, NV_viewport_array)                                     \
+  EXT_COMP_CHECK(ARB_viewport_array, OES_viewport_array)
 
 // extensions we know we want to check for are precached, indexd by this enum
 enum ExtensionCheckEnum
 {
 #undef EXT_TO_CHECK
-#define EXT_TO_CHECK(ver, ext) ext,
+#define EXT_TO_CHECK(ver, glesver, ext) ext,
   EXTENSION_CHECKS()
 
       GLExtension_Count,
@@ -350,7 +408,7 @@ bool ValidateFunctionPointers(const GLHookSet &real);
 namespace glEmulate
 {
 void EmulateUnsupportedFunctions(GLHookSet *hooks);
-void EmulateRequiredExtensions(const GLHookSet *real, GLHookSet *hooks);
+void EmulateRequiredExtensions(GLHookSet *hooks);
 };
 
 #include "core/core.h"
@@ -365,6 +423,7 @@ void CopyProgramAttribBindings(const GLHookSet &gl, GLuint progsrc, GLuint progd
                                ShaderReflection *refl);
 void CopyProgramFragDataBindings(const GLHookSet &gl, GLuint progsrc, GLuint progdst,
                                  ShaderReflection *refl);
+void SerialiseProgramBindings(const GLHookSet &gl, Serialiser *ser, GLuint prog, bool writing);
 
 struct DrawElementsIndirectCommand
 {

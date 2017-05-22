@@ -21,13 +21,13 @@ On the other hand regular contributors or if you have a larger amount of code th
 
 ### Windows
 
-The main [renderdoc.sln](renderdoc.sln) is a VS2010 solution. It should also compile in newer versions like the [free VS2015 community](https://www.visualstudio.com/en-us/downloads/download-visual-studio-vs.aspx), just select to update the compilers.
+The main [renderdoc.sln](renderdoc.sln) is a VS2015 solution, as of March 2017. It should also compile in VS2017, just select to update the compilers if you don't have the 2015 compilers available.
 
 There are no external dependencies, all libraries/headers needed to build are included in the git checkout. On windows, the `Development` configuration is recommended for day-to-day dev. It's debuggable but not too slow. The `Release` configuration is then obviously what you should compile for any builds you'll send out to people or if you want to evaluate performance.
 
 ### Linux
 
-Currently linux supports gcc-4.8 and clang-3.5, as these are the compilers used in CI builds. Once the linux port is more mature, more compilers can be supported, although only within reason. Distribution packages should be built with the `Release` CMake build type so that warnings do not trigger errors. To build just run:
+Currently linux should work with gcc 5+ and clang 3.4+ as it requires C++14 compiler support. The Travis CI builds with gcc-6.0 and clang-3.5. Within reason other compilers will be supported if the required patches are minimal. Distribution packages should be built with the `Release` CMake build type so that warnings do not trigger errors. To build just run:
 
 ```
 cmake -DCMAKE_BUILD_TYPE=Debug -Bbuild -H.
@@ -66,7 +66,7 @@ To make things easier for everyone, I've adopted clang-format for keeping code c
 
 Do not make any intermediate commits which don't follow the formatting conventions. Having several intermediate commits with mismatched formatting then a single 'reformatted code' commit at the end makes history and blames harder to read, which is an important tool for others to understand your code. It is much easier to enforce proper formatting on each commit as you go along, than to try and rebase and merge formatting changes in after the fact.
 
-Since it's not covered by a pure formatting check, be careful not to use overly modern C++. At the time of writing (January 2017) VS2010 is still a supported compiler, so many modern constructs are not supported. This is also partly a stylistic thing, as some modern C++ constructs do not fit with the style of the rest of the code.
+Since it's not covered by a pure formatting check, don't use overly modern C++ unnecessarily. Although the minimum compiler spec is now higher than it was in the past (as of March 2017) and modern features may be supported, some modern C++ constructs do not fit with the style of the rest of the code.
 
 ### Branch history
 
@@ -108,26 +108,28 @@ On Windows there are no dependencies - you can always compile the latest version
 
 ### Linux
 
-Requirements are linking against -lX11 and -lGL. For qrenderdoc you need qt5 along with the 'x11extras' package. You must have Qt 5.6 at least
+Requirements for the core library and renderdoccmd are libx11, libxcb, libxcb-keysyms and libGL. The exact are packages for these vary by distribution.
+
+For qrenderdoc you need Qt5 >= 5.6 along with the 'svg' and 'x11extras' packages. You also need python3-dev for the python integration, and bison, autoconf, automake and libpcre3-dev for building the custom SWIG tool for generating bindings.
 
 This is the apt-get line you'd need to install the requirements bar Qt on Ubuntu 14.04 or above:
 
 ```
-sudo apt-get install libx11-dev libx11-xcb-dev mesa-common-dev libgl1-mesa-dev libxcb-keysyms1-dev cmake
+sudo apt-get install libx11-dev libx11-xcb-dev mesa-common-dev libgl1-mesa-dev libxcb-keysyms1-dev cmake python3-dev bison autoconf automake libpcre3-dev
 ```
 
 Your version of Ubuntu might not include a recent enough Qt version, so you can use [Stephan Binner's ppas](https://launchpad.net/~beineri) to install a more recent version of Qt. At least 5.6.2 is required.
 
-For Archlinux (as of 2016.10.03) you'll need:
+For Archlinux (as of 2017.04.18) you'll need:
 
 ```
-sudo pacman -S libx11 libxcb xcb-util-keysyms mesa libgl qt5-base qt5-x11extras cmake
+sudo pacman -S libx11 libxcb xcb-util-keysyms mesa libgl qt5-base qt5-svg qt5-x11extras cmake python3 bison autoconf automake pcre
 ```
 
-For Gentoo (as of 2017.02.24), you'll need:
+For Gentoo (as of 2017.04.18), you'll need:
 
 ```
-sudo emerge --ask x11-libs/libX11 x11-libs/libxcb x11-libs/xcb-util-keysyms dev-util/cmake dev-qt/qtcore dev-qt/qtgui dev-qt/qtwidgets dev-qt/qtsvg dev-qt/qtx11extras
+sudo emerge --ask x11-libs/libX11 x11-libs/libxcb x11-libs/xcb-util-keysyms dev-util/cmake dev-qt/qtcore dev-qt/qtgui dev-qt/qtwidgets dev-qt/qtsvg dev-qt/qtx11extras sys-devel/bison sys-devel/autoconf sys-devel/automake dev-lang/python dev-libs/libpcre
 ```
 
 Checking that at least Qt 5.6 installs.
@@ -157,7 +159,7 @@ There are [several pages](https://github.com/baldurk/renderdoc/wiki/Code-Dives) 
 
     renderdoc/ 
         CMakeLists.txt                  ; The cmake file, will recurse into subdirectories to build them
-        renderdoc.sln                   ; VS2010 solution for windows building
+        renderdoc.sln                   ; VS2015 solution for windows building
         renderdoc/
             3rdparty/                   ; third party utilities & libraries included
             drivers/                    ; API-specific back-ends, can be individually skipped/removed
@@ -167,8 +169,6 @@ There are [several pages](https://github.com/baldurk/renderdoc/wiki/Code-Dives) 
         renderdocui/                    ; The .NET UI layer built on top of renderdoc/
             3rdparty/                   ; third party utilities & libraries included
         qrenderdoc/                     ; The Qt UI layer built on top of renderdoc/
-        pdblocate/                      ; a simple stub program to invoke DIA to look up symbols/pdbs
-                                        ; for callstack resolution on windows
         docs/                           ; source documentation for the .chm file or http://docs.renderdoc.org/
                                         ; in the Sandcastle help file builder
         scripts/                        ; folder for small scripts - e.g. for CI, installers, distribution

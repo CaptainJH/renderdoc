@@ -26,25 +26,32 @@
 #include <QRegularExpression>
 #include "ui_APIInspector.h"
 
-Q_DECLARE_METATYPE(FetchAPIEvent);
+Q_DECLARE_METATYPE(APIEvent);
 
-APIInspector::APIInspector(CaptureContext &ctx, QWidget *parent)
+APIInspector::APIInspector(ICaptureContext &ctx, QWidget *parent)
     : QFrame(parent), ui(new Ui::APIInspector), m_Ctx(ctx)
 {
   ui->setupUi(this);
 
-  ui->apiEvents->headerItem()->setText(0, "EID");
-  ui->apiEvents->headerItem()->setText(1, "Event");
+  ui->apiEvents->setColumns({lit("EID"), tr("Event")});
 
   ui->splitter->setCollapsible(1, true);
   ui->splitter->setSizes({1, 0});
+
+  ui->callstack->setFont(Formatter::PreferredFont());
+  ui->apiEvents->setFont(Formatter::PreferredFont());
+
+  RDSplitterHandle *handle = (RDSplitterHandle *)ui->splitter->handle(1);
+  handle->setTitle(tr("Callstack"));
+  handle->setIndex(1);
+  handle->setCollapsed(true);
 
   m_Ctx.AddLogViewer(this);
 }
 
 APIInspector::~APIInspector()
 {
-  m_Ctx.windowClosed(this);
+  m_Ctx.BuiltinWindowClosed(this);
   m_Ctx.RemoveLogViewer(this);
   delete ui;
 }
@@ -85,16 +92,17 @@ void APIInspector::addCallstack(rdctype::array<rdctype::str> calls)
 
 void APIInspector::on_apiEvents_itemSelectionChanged()
 {
-  if(ui->apiEvents->selectedItems().count() == 0)
+  RDTreeWidgetItem *node = ui->apiEvents->selectedItem();
+
+  if(!node)
     return;
 
-  FetchAPIEvent ev = ui->apiEvents->selectedItems()[0]->data(0, Qt::UserRole).value<FetchAPIEvent>();
+  APIEvent ev = node->tag().value<APIEvent>();
 
   if(ev.callstack.count > 0)
   {
-    m_Ctx.Renderer().AsyncInvoke([this, ev](IReplayRenderer *r) {
-      rdctype::array<rdctype::str> trace;
-      r->GetResolve(ev.callstack.elems, ev.callstack.count, &trace);
+    m_Ctx.Replay().AsyncInvoke([this, ev](IReplayController *r) {
+      rdctype::array<rdctype::str> trace = r->GetResolve(ev.callstack);
 
       GUIInvoke::call([this, trace]() { addCallstack(trace); });
     });
@@ -113,27 +121,25 @@ void APIInspector::fillAPIView()
   ui->apiEvents->setUpdatesEnabled(false);
   ui->apiEvents->clear();
 
-  QRegularExpression rgxopen("^\\s*{");
-  QRegularExpression rgxclose("^\\s*}");
+  QRegularExpression rgxopen(lit("^\\s*{"));
+  QRegularExpression rgxclose(lit("^\\s*}"));
 
-  const FetchDrawcall *draw = m_Ctx.CurSelectedDrawcall();
+  const DrawcallDescription *draw = m_Ctx.CurSelectedDrawcall();
 
   if(draw != NULL && draw->events.count > 0)
   {
-    int e = 0;
-    for(const FetchAPIEvent &ev : draw->events)
+    for(const APIEvent &ev : draw->events)
     {
-      QStringList lines = ToQStr(ev.eventDesc).split("\n", QString::SkipEmptyParts);
+      QStringList lines = ToQStr(ev.eventDesc).split(lit("\n"), QString::SkipEmptyParts);
 
-      QTreeWidgetItem *root =
-          new QTreeWidgetItem(ui->apiEvents, QStringList{QString::number(ev.eventID), lines[0]});
+      RDTreeWidgetItem *root = new RDTreeWidgetItem({QString::number(ev.eventID), lines[0]});
 
       int i = 1;
 
-      if(i < lines.count() && lines[i].trimmed() == "{")
+      if(i < lines.count() && lines[i].trimmed() == lit("{"))
         i++;
 
-      QList<QTreeWidgetItem *> nodestack;
+      QList<RDTreeWidgetItem *> nodestack;
       nodestack.push_back(root);
 
       for(; i < lines.count(); i++)
@@ -143,27 +149,17 @@ void APIInspector::fillAPIView()
         else if(rgxclose.match(lines[i]).hasMatch())
           nodestack.pop_back();
         else if(!nodestack.empty())
-          new QTreeWidgetItem(nodestack.back(), QStringList{"", lines[i].trimmed()});
+          nodestack.back()->addChild(new RDTreeWidgetItem({QString(), lines[i].trimmed()}));
       }
 
       if(ev.eventID == draw->eventID)
-      {
-        QFont font = root->font(0);
-        font.setBold(true);
-        root->setFont(0, font);
+        root->setBold(true);
 
-        font = root->font(1);
-        font.setBold(true);
-        root->setFont(1, font);
-      }
+      root->setTag(QVariant::fromValue(ev));
 
-      root->setData(0, Qt::UserRole, QVariant::fromValue(ev));
+      ui->apiEvents->addTopLevelItem(root);
 
-      ui->apiEvents->insertTopLevelItem(e, root);
-      e++;
-
-      ui->apiEvents->clearSelection();
-      ui->apiEvents->setItemSelected(root, true);
+      ui->apiEvents->setSelectedItem(root);
     }
   }
   ui->apiEvents->setUpdatesEnabled(true);

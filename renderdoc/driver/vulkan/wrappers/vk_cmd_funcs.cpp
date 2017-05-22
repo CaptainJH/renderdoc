@@ -601,6 +601,10 @@ bool WrappedVulkan::Serialise_vkBeginCommandBuffer(Serialiser *localSerialiser,
       cmd = GetResourceManager()->GetLiveHandle<VkCommandBuffer>(bakeId);
     }
 
+    // propagate any name there might be
+    if(m_CreationInfo.m_Names.find(cmdId) != m_CreationInfo.m_Names.end())
+      m_CreationInfo.m_Names[GetResourceManager()->GetLiveID(bakeId)] = m_CreationInfo.m_Names[cmdId];
+
     {
       VulkanDrawcallTreeNode *draw = new VulkanDrawcallTreeNode;
       m_BakedCmdBufferInfo[cmdId].draw = draw;
@@ -649,6 +653,14 @@ VkResult WrappedVulkan::vkBeginCommandBuffer(VkCommandBuffer commandBuffer,
       Serialise_vkBeginCommandBuffer(localSerialiser, commandBuffer, pBeginInfo);
 
       record->AddChunk(scope.Get());
+    }
+
+    if(pBeginInfo->pInheritanceInfo)
+    {
+      record->MarkResourceFrameReferenced(GetResID(pBeginInfo->pInheritanceInfo->renderPass),
+                                          eFrameRef_Read);
+      record->MarkResourceFrameReferenced(GetResID(pBeginInfo->pInheritanceInfo->framebuffer),
+                                          eFrameRef_Read);
     }
   }
 
@@ -734,9 +746,9 @@ bool WrappedVulkan::Serialise_vkEndCommandBuffer(Serialiser *localSerialiser,
 
     if(m_State == READING && !m_BakedCmdBufferInfo[m_LastCmdBufferID].curEvents.empty())
     {
-      FetchDrawcall draw;
+      DrawcallDescription draw;
       draw.name = "API Calls";
-      draw.flags |= eDraw_SetMarker | eDraw_APICalls;
+      draw.flags |= DrawFlags::SetMarker | DrawFlags::APICalls;
 
       AddDrawcall(draw, true);
 
@@ -882,9 +894,9 @@ bool WrappedVulkan::Serialise_vkCmdBeginRenderPass(Serialiser *localSerialiser,
     string opDesc = MakeRenderPassOpString(false);
 
     AddEvent(desc);
-    FetchDrawcall draw;
+    DrawcallDescription draw;
     draw.name = StringFormat::Fmt("vkCmdBeginRenderPass(%s)", opDesc.c_str());
-    draw.flags |= eDraw_PassBoundary | eDraw_BeginPass;
+    draw.flags |= DrawFlags::PassBoundary | DrawFlags::BeginPass;
 
     AddDrawcall(draw, true);
   }
@@ -983,10 +995,10 @@ bool WrappedVulkan::Serialise_vkCmdNextSubpass(Serialiser *localSerialiser,
     const string desc = localSerialiser->GetDebugStr();
 
     AddEvent(desc);
-    FetchDrawcall draw;
+    DrawcallDescription draw;
     draw.name = StringFormat::Fmt("vkCmdNextSubpass() => %u",
                                   m_BakedCmdBufferInfo[m_LastCmdBufferID].state.subpass);
-    draw.flags |= eDraw_PassBoundary | eDraw_BeginPass | eDraw_EndPass;
+    draw.flags |= DrawFlags::PassBoundary | DrawFlags::BeginPass | DrawFlags::EndPass;
 
     AddDrawcall(draw, true);
   }
@@ -1056,9 +1068,9 @@ bool WrappedVulkan::Serialise_vkCmdEndRenderPass(Serialiser *localSerialiser,
     string opDesc = MakeRenderPassOpString(true);
 
     AddEvent(desc);
-    FetchDrawcall draw;
+    DrawcallDescription draw;
     draw.name = StringFormat::Fmt("vkCmdEndRenderPass(%s)", opDesc.c_str());
-    draw.flags |= eDraw_PassBoundary | eDraw_EndPass;
+    draw.flags |= DrawFlags::PassBoundary | DrawFlags::EndPass;
 
     AddDrawcall(draw, true);
 
@@ -1865,6 +1877,9 @@ bool WrappedVulkan::Serialise_vkCmdPipelineBarrier(
         imgBarriers.push_back(imgMemBarriers[i]);
         ReplacePresentableImageLayout(imgBarriers.back().oldLayout);
         ReplacePresentableImageLayout(imgBarriers.back().newLayout);
+
+        ReplaceExternalQueueFamily(imgBarriers.back().srcQueueFamilyIndex,
+                                   imgBarriers.back().dstQueueFamilyIndex);
       }
     }
   }
@@ -1904,9 +1919,9 @@ bool WrappedVulkan::Serialise_vkCmdPipelineBarrier(
 
     for(size_t i = 0; i < imgBarriers.size(); i++)
     {
-      m_BakedCmdBufferInfo[cmdid].resourceUsage.push_back(
-          std::make_pair(GetResourceManager()->GetNonDispWrapper(imgBarriers[i].image)->id,
-                         EventUsage(m_BakedCmdBufferInfo[cmdid].curEventID, eUsage_Barrier)));
+      m_BakedCmdBufferInfo[cmdid].resourceUsage.push_back(std::make_pair(
+          GetResourceManager()->GetNonDispWrapper(imgBarriers[i].image)->id,
+          EventUsage(m_BakedCmdBufferInfo[cmdid].curEventID, ResourceUsage::Barrier)));
     }
   }
 
@@ -2340,9 +2355,9 @@ bool WrappedVulkan::Serialise_vkCmdExecuteCommands(Serialiser *localSerialiser,
 
     AddEvent(desc);
 
-    FetchDrawcall draw;
+    DrawcallDescription draw;
     draw.name = "vkCmdExecuteCommands(" + ToStr::Get(count) + ")";
-    draw.flags = eDraw_CmdList | eDraw_PushMarker;
+    draw.flags = DrawFlags::CmdList | DrawFlags::PushMarker;
 
     AddDrawcall(draw, true);
 
@@ -2356,9 +2371,9 @@ bool WrappedVulkan::Serialise_vkCmdExecuteCommands(Serialiser *localSerialiser,
                                       ToStr::Get(cmdids[c]).c_str());
 
       // add a fake marker
-      FetchDrawcall marker;
+      DrawcallDescription marker;
       marker.name = name;
-      marker.flags = eDraw_PassBoundary | eDraw_BeginPass;
+      marker.flags = DrawFlags::PassBoundary | DrawFlags::BeginPass;
       AddEvent(name);
       AddDrawcall(marker, true);
       parentCmdBufInfo.curEventID++;
@@ -2369,7 +2384,7 @@ bool WrappedVulkan::Serialise_vkCmdExecuteCommands(Serialiser *localSerialiser,
          (cmdBufInfo.beginFlags & VK_COMMAND_BUFFER_USAGE_RENDER_PASS_CONTINUE_BIT))
       {
         AddDebugMessage(
-            eDbgCategory_Execution, eDbgSeverity_High, eDbgSource_IncorrectAPIUse,
+            MessageCategory::Execution, MessageSeverity::High, MessageSource::IncorrectAPIUse,
             "Executing a command buffer with RENDER_PASS_CONTINUE_BIT outside of render pass");
       }
 
@@ -2395,15 +2410,15 @@ bool WrappedVulkan::Serialise_vkCmdExecuteCommands(Serialiser *localSerialiser,
       name = StringFormat::Fmt("=> vkCmdExecuteCommands()[%u]: vkEndCommandBuffer(%s)", c,
                                ToStr::Get(cmdids[c]).c_str());
       marker.name = name;
-      marker.flags = eDraw_PassBoundary | eDraw_EndPass;
+      marker.flags = DrawFlags::PassBoundary | DrawFlags::EndPass;
       AddEvent(name);
       AddDrawcall(marker, true);
       parentCmdBufInfo.curEventID++;
     }
 
     // add an extra pop marker
-    draw = FetchDrawcall();
-    draw.flags = eDraw_PopMarker;
+    draw = DrawcallDescription();
+    draw.flags = DrawFlags::PopMarker;
 
     AddDrawcall(draw, true);
 
@@ -2626,14 +2641,14 @@ bool WrappedVulkan::Serialise_vkCmdDebugMarkerBeginEXT(Serialiser *localSerialis
 
   if(m_State == READING)
   {
-    FetchDrawcall draw;
+    DrawcallDescription draw;
     draw.name = name;
-    draw.flags |= eDraw_PushMarker;
+    draw.flags |= DrawFlags::PushMarker;
 
-    draw.markerColour[0] = RDCCLAMP(color[0], 0.0f, 1.0f);
-    draw.markerColour[1] = RDCCLAMP(color[1], 0.0f, 1.0f);
-    draw.markerColour[2] = RDCCLAMP(color[2], 0.0f, 1.0f);
-    draw.markerColour[3] = RDCCLAMP(color[3], 0.0f, 1.0f);
+    draw.markerColor[0] = RDCCLAMP(color[0], 0.0f, 1.0f);
+    draw.markerColor[1] = RDCCLAMP(color[1], 0.0f, 1.0f);
+    draw.markerColor[2] = RDCCLAMP(color[2], 0.0f, 1.0f);
+    draw.markerColor[3] = RDCCLAMP(color[3], 0.0f, 1.0f);
 
     AddDrawcall(draw, false);
   }
@@ -2670,9 +2685,9 @@ bool WrappedVulkan::Serialise_vkCmdDebugMarkerEndEXT(Serialiser *localSerialiser
 
   if(m_State == READING && !m_BakedCmdBufferInfo[m_LastCmdBufferID].curEvents.empty())
   {
-    FetchDrawcall draw;
+    DrawcallDescription draw;
     draw.name = "API Calls";
-    draw.flags = eDraw_SetMarker | eDraw_APICalls;
+    draw.flags = DrawFlags::SetMarker | DrawFlags::APICalls;
 
     AddDrawcall(draw, true);
   }
@@ -2681,9 +2696,9 @@ bool WrappedVulkan::Serialise_vkCmdDebugMarkerEndEXT(Serialiser *localSerialiser
   {
     // dummy draw that is consumed when this command buffer
     // is being in-lined into the call stream
-    FetchDrawcall draw;
+    DrawcallDescription draw;
     draw.name = "Pop()";
-    draw.flags = eDraw_PopMarker;
+    draw.flags = DrawFlags::PopMarker;
 
     AddDrawcall(draw, false);
   }
@@ -2728,14 +2743,14 @@ bool WrappedVulkan::Serialise_vkCmdDebugMarkerInsertEXT(Serialiser *localSeriali
 
   if(m_State == READING)
   {
-    FetchDrawcall draw;
+    DrawcallDescription draw;
     draw.name = name;
-    draw.flags |= eDraw_SetMarker;
+    draw.flags |= DrawFlags::SetMarker;
 
-    draw.markerColour[0] = RDCCLAMP(color[0], 0.0f, 1.0f);
-    draw.markerColour[1] = RDCCLAMP(color[1], 0.0f, 1.0f);
-    draw.markerColour[2] = RDCCLAMP(color[2], 0.0f, 1.0f);
-    draw.markerColour[3] = RDCCLAMP(color[3], 0.0f, 1.0f);
+    draw.markerColor[0] = RDCCLAMP(color[0], 0.0f, 1.0f);
+    draw.markerColor[1] = RDCCLAMP(color[1], 0.0f, 1.0f);
+    draw.markerColor[2] = RDCCLAMP(color[2], 0.0f, 1.0f);
+    draw.markerColor[3] = RDCCLAMP(color[3], 0.0f, 1.0f);
 
     AddDrawcall(draw, false);
   }

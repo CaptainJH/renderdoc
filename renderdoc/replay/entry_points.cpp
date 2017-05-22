@@ -28,75 +28,70 @@
 #include "api/replay/version.h"
 #include "common/common.h"
 #include "core/core.h"
-#include "jpeg-compressor/jpgd.h"
-#include "jpeg-compressor/jpge.h"
 #include "maths/camera.h"
 #include "maths/formatpacking.h"
-#include "replay/replay_renderer.h"
-#include "serialise/serialiser.h"
+#include "replay/type_helpers.h"
 #include "serialise/string_utils.h"
-#include "stb/stb_image_resize.h"
-#include "stb/stb_image_write.h"
 
 // these entry points are for the replay/analysis side - not for the application.
 
-extern "C" RENDERDOC_API uint32_t RENDERDOC_CC Topology_NumVerticesPerPrimitive(PrimitiveTopology topology)
+extern "C" RENDERDOC_API uint32_t RENDERDOC_CC Topology_NumVerticesPerPrimitive(Topology topology)
 {
   // strips/loops/fans have the same number of indices for a single primitive
   // as their list friends
   switch(topology)
   {
     default:
-    case eTopology_Unknown: break;
-    case eTopology_PointList: return 1;
-    case eTopology_LineList:
-    case eTopology_LineStrip:
-    case eTopology_LineLoop: return 2;
-    case eTopology_TriangleList:
-    case eTopology_TriangleStrip:
-    case eTopology_TriangleFan: return 3;
-    case eTopology_LineList_Adj:
-    case eTopology_LineStrip_Adj: return 4;
-    case eTopology_TriangleList_Adj:
-    case eTopology_TriangleStrip_Adj: return 6;
-    case eTopology_PatchList_1CPs:
-    case eTopology_PatchList_2CPs:
-    case eTopology_PatchList_3CPs:
-    case eTopology_PatchList_4CPs:
-    case eTopology_PatchList_5CPs:
-    case eTopology_PatchList_6CPs:
-    case eTopology_PatchList_7CPs:
-    case eTopology_PatchList_8CPs:
-    case eTopology_PatchList_9CPs:
-    case eTopology_PatchList_10CPs:
-    case eTopology_PatchList_11CPs:
-    case eTopology_PatchList_12CPs:
-    case eTopology_PatchList_13CPs:
-    case eTopology_PatchList_14CPs:
-    case eTopology_PatchList_15CPs:
-    case eTopology_PatchList_16CPs:
-    case eTopology_PatchList_17CPs:
-    case eTopology_PatchList_18CPs:
-    case eTopology_PatchList_19CPs:
-    case eTopology_PatchList_20CPs:
-    case eTopology_PatchList_21CPs:
-    case eTopology_PatchList_22CPs:
-    case eTopology_PatchList_23CPs:
-    case eTopology_PatchList_24CPs:
-    case eTopology_PatchList_25CPs:
-    case eTopology_PatchList_26CPs:
-    case eTopology_PatchList_27CPs:
-    case eTopology_PatchList_28CPs:
-    case eTopology_PatchList_29CPs:
-    case eTopology_PatchList_30CPs:
-    case eTopology_PatchList_31CPs:
-    case eTopology_PatchList_32CPs: return uint32_t(topology - eTopology_PatchList_1CPs + 1);
+    case Topology::Unknown: break;
+    case Topology::PointList: return 1;
+    case Topology::LineList:
+    case Topology::LineStrip:
+    case Topology::LineLoop: return 2;
+    case Topology::TriangleList:
+    case Topology::TriangleStrip:
+    case Topology::TriangleFan: return 3;
+    case Topology::LineList_Adj:
+    case Topology::LineStrip_Adj: return 4;
+    case Topology::TriangleList_Adj:
+    case Topology::TriangleStrip_Adj: return 6;
+    case Topology::PatchList_1CPs:
+    case Topology::PatchList_2CPs:
+    case Topology::PatchList_3CPs:
+    case Topology::PatchList_4CPs:
+    case Topology::PatchList_5CPs:
+    case Topology::PatchList_6CPs:
+    case Topology::PatchList_7CPs:
+    case Topology::PatchList_8CPs:
+    case Topology::PatchList_9CPs:
+    case Topology::PatchList_10CPs:
+    case Topology::PatchList_11CPs:
+    case Topology::PatchList_12CPs:
+    case Topology::PatchList_13CPs:
+    case Topology::PatchList_14CPs:
+    case Topology::PatchList_15CPs:
+    case Topology::PatchList_16CPs:
+    case Topology::PatchList_17CPs:
+    case Topology::PatchList_18CPs:
+    case Topology::PatchList_19CPs:
+    case Topology::PatchList_20CPs:
+    case Topology::PatchList_21CPs:
+    case Topology::PatchList_22CPs:
+    case Topology::PatchList_23CPs:
+    case Topology::PatchList_24CPs:
+    case Topology::PatchList_25CPs:
+    case Topology::PatchList_26CPs:
+    case Topology::PatchList_27CPs:
+    case Topology::PatchList_28CPs:
+    case Topology::PatchList_29CPs:
+    case Topology::PatchList_30CPs:
+    case Topology::PatchList_31CPs:
+    case Topology::PatchList_32CPs: return PatchList_Count(topology);
   }
 
   return 0;
 }
 
-extern "C" RENDERDOC_API uint32_t RENDERDOC_CC Topology_VertexOffset(PrimitiveTopology topology,
+extern "C" RENDERDOC_API uint32_t RENDERDOC_CC Topology_VertexOffset(Topology topology,
                                                                      uint32_t primitive)
 {
   // strips/loops/fans have the same number of indices for a single primitive
@@ -104,57 +99,57 @@ extern "C" RENDERDOC_API uint32_t RENDERDOC_CC Topology_VertexOffset(PrimitiveTo
   switch(topology)
   {
     default:
-    case eTopology_Unknown:
-    case eTopology_PointList:
-    case eTopology_LineList:
-    case eTopology_TriangleList:
-    case eTopology_LineList_Adj:
-    case eTopology_TriangleList_Adj:
-    case eTopology_PatchList_1CPs:
-    case eTopology_PatchList_2CPs:
-    case eTopology_PatchList_3CPs:
-    case eTopology_PatchList_4CPs:
-    case eTopology_PatchList_5CPs:
-    case eTopology_PatchList_6CPs:
-    case eTopology_PatchList_7CPs:
-    case eTopology_PatchList_8CPs:
-    case eTopology_PatchList_9CPs:
-    case eTopology_PatchList_10CPs:
-    case eTopology_PatchList_11CPs:
-    case eTopology_PatchList_12CPs:
-    case eTopology_PatchList_13CPs:
-    case eTopology_PatchList_14CPs:
-    case eTopology_PatchList_15CPs:
-    case eTopology_PatchList_16CPs:
-    case eTopology_PatchList_17CPs:
-    case eTopology_PatchList_18CPs:
-    case eTopology_PatchList_19CPs:
-    case eTopology_PatchList_20CPs:
-    case eTopology_PatchList_21CPs:
-    case eTopology_PatchList_22CPs:
-    case eTopology_PatchList_23CPs:
-    case eTopology_PatchList_24CPs:
-    case eTopology_PatchList_25CPs:
-    case eTopology_PatchList_26CPs:
-    case eTopology_PatchList_27CPs:
-    case eTopology_PatchList_28CPs:
-    case eTopology_PatchList_29CPs:
-    case eTopology_PatchList_30CPs:
-    case eTopology_PatchList_31CPs:
-    case eTopology_PatchList_32CPs:
+    case Topology::Unknown:
+    case Topology::PointList:
+    case Topology::LineList:
+    case Topology::TriangleList:
+    case Topology::LineList_Adj:
+    case Topology::TriangleList_Adj:
+    case Topology::PatchList_1CPs:
+    case Topology::PatchList_2CPs:
+    case Topology::PatchList_3CPs:
+    case Topology::PatchList_4CPs:
+    case Topology::PatchList_5CPs:
+    case Topology::PatchList_6CPs:
+    case Topology::PatchList_7CPs:
+    case Topology::PatchList_8CPs:
+    case Topology::PatchList_9CPs:
+    case Topology::PatchList_10CPs:
+    case Topology::PatchList_11CPs:
+    case Topology::PatchList_12CPs:
+    case Topology::PatchList_13CPs:
+    case Topology::PatchList_14CPs:
+    case Topology::PatchList_15CPs:
+    case Topology::PatchList_16CPs:
+    case Topology::PatchList_17CPs:
+    case Topology::PatchList_18CPs:
+    case Topology::PatchList_19CPs:
+    case Topology::PatchList_20CPs:
+    case Topology::PatchList_21CPs:
+    case Topology::PatchList_22CPs:
+    case Topology::PatchList_23CPs:
+    case Topology::PatchList_24CPs:
+    case Topology::PatchList_25CPs:
+    case Topology::PatchList_26CPs:
+    case Topology::PatchList_27CPs:
+    case Topology::PatchList_28CPs:
+    case Topology::PatchList_29CPs:
+    case Topology::PatchList_30CPs:
+    case Topology::PatchList_31CPs:
+    case Topology::PatchList_32CPs:
       // for all lists, it's just primitive * Topology_NumVerticesPerPrimitive(topology)
       break;
-    case eTopology_LineStrip:
-    case eTopology_LineLoop:
-    case eTopology_TriangleStrip:
-    case eTopology_LineStrip_Adj:
+    case Topology::LineStrip:
+    case Topology::LineLoop:
+    case Topology::TriangleStrip:
+    case Topology::LineStrip_Adj:
       // for strips, each new vertex creates a new primitive
       return primitive;
-    case eTopology_TriangleStrip_Adj:
+    case Topology::TriangleStrip_Adj:
       // triangle strip with adjacency is a special case as every other
       // vert is purely for adjacency so it's doubled
       return primitive * 2;
-    case eTopology_TriangleFan: RDCERR("Cannot get VertexOffset for triangle fan!"); break;
+    case Topology::TriangleFan: RDCERR("Cannot get VertexOffset for triangle fan!"); break;
   }
 
   return primitive * Topology_NumVerticesPerPrimitive(topology);
@@ -239,12 +234,7 @@ extern "C" RENDERDOC_API void RENDERDOC_CC Camera_GetBasis(Camera *c, FloatVecto
 
 extern "C" RENDERDOC_API const char *RENDERDOC_CC RENDERDOC_GetVersionString()
 {
-  return RENDERDOC_VERSION_STRING;
-}
-
-extern "C" RENDERDOC_API const char *RENDERDOC_CC RENDERDOC_GetCommitHash()
-{
-  return GIT_COMMIT_HASH;
+  return MAJOR_MINOR_VERSION_STRING;
 }
 
 extern "C" RENDERDOC_API const char *RENDERDOC_CC RENDERDOC_GetConfigSetting(const char *name)
@@ -260,29 +250,23 @@ extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_SetConfigSetting(const char
 
 extern "C" RENDERDOC_API void *RENDERDOC_CC RENDERDOC_MakeEnvironmentModificationList(int numElems)
 {
-  return new Process::EnvironmentModification[numElems + 1];    // last one is a terminator
+  rdctype::array<EnvironmentModification> *ret = new rdctype::array<EnvironmentModification>();
+  create_array_uninit(*ret, (size_t)numElems);
+  return ret;
 }
 
 extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_SetEnvironmentModification(
-    void *mem, int idx, const char *variable, const char *value, EnvironmentModificationType type,
-    EnvironmentSeparator separator)
+    void *mem, int idx, const char *variable, const char *value, EnvMod type, EnvSep separator)
 {
-  Process::EnvironmentModification *mods = (Process::EnvironmentModification *)mem;
+  rdctype::array<EnvironmentModification> *mods = (rdctype::array<EnvironmentModification> *)mem;
 
-  Process::ModificationType modType = Process::eEnvModification_Replace;
-
-  if(type == eEnvMod_Append)
-    modType = Process::ModificationType(Process::eEnvModification_AppendPlatform + (int)separator);
-  if(type == eEnvMod_Prepend)
-    modType = Process::ModificationType(Process::eEnvModification_PrependPlatform + (int)separator);
-
-  mods[idx] = Process::EnvironmentModification(modType, variable, value);
+  mods->elems[idx] = EnvironmentModification(type, separator, variable, value);
 }
 
 extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_FreeEnvironmentModificationList(void *mem)
 {
-  Process::EnvironmentModification *mods = (Process::EnvironmentModification *)mem;
-  delete[] mods;
+  rdctype::array<EnvironmentModification> *mods = (rdctype::array<EnvironmentModification> *)mem;
+  delete mods;
 }
 
 extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_SetDebugLogFile(const char *log)
@@ -293,24 +277,21 @@ extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_SetDebugLogFile(const char 
 
 extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_LogText(const char *text)
 {
-  rdclog_int(RDCLog_Comment, "EXT", "external", 0, "%s", text);
+  rdclog_int(LogType::Comment, "EXT", "external", 0, "%s", text);
 }
 
-extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_LogMessage(LogMessageType type,
-                                                                const char *project, const char *file,
-                                                                unsigned int line, const char *text)
+extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_LogMessage(LogType type, const char *project,
+                                                                const char *file, unsigned int line,
+                                                                const char *text)
 {
-  RDCCOMPILE_ASSERT(
-      (int)eLogType_First == (int)RDCLog_First && (int)eLogType_NumTypes == (int)eLogType_NumTypes,
-      "Log type enum is out of sync");
-  rdclog_int((LogType)type, project ? project : "UNK?", file ? file : "unknown", line, "%s", text);
+  rdclog_int(type, project ? project : "UNK?", file ? file : "unknown", line, "%s", text);
 
 #if ENABLED(DEBUGBREAK_ON_ERROR_LOG)
-  if(type == eLogType_Error)
+  if(type == LogType::Error)
     RDCBREAK();
 #endif
 
-  if(type == eLogType_Fatal)
+  if(type == LogType::Fatal)
     RDCDUMP();
 }
 
@@ -348,74 +329,47 @@ extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_TriggerExceptionHandler(voi
 extern "C" RENDERDOC_API ReplaySupport RENDERDOC_CC RENDERDOC_SupportLocalReplay(
     const char *logfile, rdctype::str *driver, rdctype::str *recordMachineIdent)
 {
-  if(logfile == NULL)
-    return eReplaySupport_Unsupported;
-
-  RDCDriver driverType = RDC_Unknown;
-  string driverName = "";
-  uint64_t fileMachineIdent = 0;
-  RenderDoc::Inst().FillInitParams(logfile, driverType, driverName, fileMachineIdent, NULL);
+  ICaptureFile *file = RENDERDOC_OpenCaptureFile(logfile);
 
   if(driver)
-    *driver = driverName;
+    *driver = file->DriverName();
 
-  bool supported = RenderDoc::Inst().HasReplayDriver(driverType);
+  if(recordMachineIdent)
+    *recordMachineIdent = file->RecordedMachineIdent();
 
-  if(!supported)
-    return eReplaySupport_Unsupported;
+  ReplaySupport support = file->LocalReplaySupport();
 
-  if(fileMachineIdent != 0)
-  {
-    uint64_t machineIdent = OSUtility::GetMachineIdent();
+  file->Shutdown();
 
-    if(recordMachineIdent)
-      *recordMachineIdent = OSUtility::MakeMachineIdentString(fileMachineIdent);
-
-    if((machineIdent & OSUtility::MachineIdent_OS_Mask) !=
-       (fileMachineIdent & OSUtility::MachineIdent_OS_Mask))
-      return eReplaySupport_SuggestRemote;
-  }
-
-  return eReplaySupport_Supported;
+  return support;
 }
 
-extern "C" RENDERDOC_API ReplayCreateStatus RENDERDOC_CC
-RENDERDOC_CreateReplayRenderer(const char *logfile, float *progress, ReplayRenderer **rend)
+extern "C" RENDERDOC_API ReplayStatus RENDERDOC_CC
+RENDERDOC_CreateReplayRenderer(const char *logfile, float *progress, IReplayController **rend)
 {
-  if(rend == NULL)
-    return eReplayCreate_InternalError;
+  ICaptureFile *file = RENDERDOC_OpenCaptureFile(logfile);
 
-  RenderDoc::Inst().SetProgressPtr(progress);
+  ReplayStatus ret = file->OpenStatus();
 
-  ReplayRenderer *render = new ReplayRenderer();
-
-  if(!render)
+  if(ret != ReplayStatus::Succeeded)
   {
-    RenderDoc::Inst().SetProgressPtr(NULL);
-    return eReplayCreate_InternalError;
-  }
-
-  ReplayCreateStatus ret = render->CreateDevice(logfile);
-
-  if(ret != eReplayCreate_Success)
-  {
-    delete render;
-    RenderDoc::Inst().SetProgressPtr(NULL);
+    file->Shutdown();
     return ret;
   }
 
-  *rend = render;
+  std::tie(ret, *rend) = file->OpenCapture(progress);
 
-  RenderDoc::Inst().SetProgressPtr(NULL);
-  return eReplayCreate_Success;
+  file->Shutdown();
+
+  return ret;
 }
 
 extern "C" RENDERDOC_API uint32_t RENDERDOC_CC
-RENDERDOC_ExecuteAndInject(const char *app, const char *workingDir, const char *cmdLine, void *env,
-                           const char *logfile, const CaptureOptions *opts, bool32 waitForExit)
+RENDERDOC_ExecuteAndInject(const char *app, const char *workingDir, const char *cmdLine,
+                           const rdctype::array<EnvironmentModification> &env, const char *logfile,
+                           const CaptureOptions &opts, bool32 waitForExit)
 {
-  return Process::LaunchAndInjectIntoProcess(app, workingDir, cmdLine,
-                                             (Process::EnvironmentModification *)env, logfile, opts,
+  return Process::LaunchAndInjectIntoProcess(app, workingDir, cmdLine, env, logfile, opts,
                                              waitForExit != 0);
 }
 
@@ -426,154 +380,32 @@ extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_GetDefaultCaptureOptions(Ca
 
 extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_StartGlobalHook(const char *pathmatch,
                                                                      const char *logfile,
-                                                                     const CaptureOptions *opts)
+                                                                     const CaptureOptions &opts)
 {
   Process::StartGlobalHook(pathmatch, logfile, opts);
 }
 
-extern "C" RENDERDOC_API uint32_t RENDERDOC_CC RENDERDOC_InjectIntoProcess(
-    uint32_t pid, void *env, const char *logfile, const CaptureOptions *opts, bool32 waitForExit)
+extern "C" RENDERDOC_API uint32_t RENDERDOC_CC
+RENDERDOC_InjectIntoProcess(uint32_t pid, const rdctype::array<EnvironmentModification> &env,
+                            const char *logfile, const CaptureOptions &opts, bool32 waitForExit)
 {
-  return Process::InjectIntoProcess(pid, (Process::EnvironmentModification *)env, logfile, opts,
-                                    waitForExit != 0);
-}
-
-static void writeToByteVector(void *context, void *data, int size)
-{
-  std::vector<byte> *vec = (std::vector<byte> *)context;
-  byte *start = (byte *)data;
-  byte *end = start + size;
-  vec->insert(vec->end(), start, end);
+  return Process::InjectIntoProcess(pid, env, logfile, opts, waitForExit != 0);
 }
 
 extern "C" RENDERDOC_API bool32 RENDERDOC_CC RENDERDOC_GetThumbnail(const char *filename,
                                                                     FileType type, uint32_t maxsize,
                                                                     rdctype::array<byte> *buf)
 {
-  Serialiser ser(filename, Serialiser::READING, false);
+  ICaptureFile *file = RENDERDOC_OpenCaptureFile(filename);
 
-  if(ser.HasError())
-    return false;
-
-  ser.Rewind();
-
-  int chunkType = ser.PushContext(NULL, NULL, 1, false);
-
-  if(chunkType != THUMBNAIL_DATA)
-    return false;
-
-  bool HasThumbnail = false;
-  ser.Serialise(NULL, HasThumbnail);
-
-  if(!HasThumbnail)
-    return false;
-
-  byte *jpgbuf = NULL;
-  size_t thumblen = 0;
-  uint32_t thumbwidth = 0, thumbheight = 0;
+  if(file->OpenStatus() != ReplayStatus::Succeeded)
   {
-    ser.Serialise("ThumbWidth", thumbwidth);
-    ser.Serialise("ThumbHeight", thumbheight);
-    ser.SerialiseBuffer("ThumbnailPixels", jpgbuf, thumblen);
+    file->Shutdown();
+    return false;
   }
 
-  if(jpgbuf == NULL)
-    return false;
-
-  // if the desired output is jpg and either there's no max size or it's already satisfied,
-  // return the data directly
-  if(type == eFileType_JPG && (maxsize == 0 || (maxsize > thumbwidth && maxsize > thumbheight)))
-  {
-    create_array_init(*buf, thumblen, jpgbuf);
-  }
-  else
-  {
-    // otherwise we need to decode, resample maybe, and re-encode
-
-    int w = (int)thumbwidth;
-    int h = (int)thumbheight;
-    int comp = 3;
-    byte *thumbpixels =
-        jpgd::decompress_jpeg_image_from_memory(jpgbuf, (int)thumblen, &w, &h, &comp, 3);
-
-    if(maxsize != 0)
-    {
-      uint32_t clampedWidth = RDCMIN(maxsize, thumbwidth);
-      uint32_t clampedHeight = RDCMIN(maxsize, thumbheight);
-
-      if(clampedWidth != thumbwidth || clampedHeight != thumbheight)
-      {
-        // preserve aspect ratio, take the smallest scale factor and multiply both
-        float scaleX = float(clampedWidth) / float(thumbwidth);
-        float scaleY = float(clampedHeight) / float(thumbheight);
-
-        if(scaleX < scaleY)
-          clampedHeight = uint32_t(scaleX * thumbheight);
-        else if(scaleY < scaleX)
-          clampedWidth = uint32_t(scaleY * thumbwidth);
-
-        byte *resizedpixels = (byte *)malloc(3 * clampedWidth * clampedHeight);
-
-        stbir_resize_uint8_srgb(thumbpixels, thumbwidth, thumbheight, 0, resizedpixels,
-                                clampedWidth, clampedHeight, 0, 3, -1, 0);
-
-        free(thumbpixels);
-
-        thumbpixels = resizedpixels;
-        thumbwidth = clampedWidth;
-        thumbheight = clampedHeight;
-      }
-    }
-
-    std::vector<byte> encodedBytes;
-
-    switch(type)
-    {
-      case eFileType_JPG:
-      {
-        int len = thumbwidth * thumbheight * 3;
-        encodedBytes.resize(len);
-        jpge::params p;
-        p.m_quality = 90;
-        jpge::compress_image_to_jpeg_file_in_memory(&encodedBytes[0], len, (int)thumbwidth,
-                                                    (int)thumbheight, 3, thumbpixels, p);
-        encodedBytes.resize(len);
-        break;
-      }
-      case eFileType_PNG:
-      {
-        stbi_write_png_to_func(&writeToByteVector, &encodedBytes, (int)thumbwidth, (int)thumbheight,
-                               3, thumbpixels, 0);
-        break;
-      }
-      case eFileType_TGA:
-      {
-        stbi_write_tga_to_func(&writeToByteVector, &encodedBytes, (int)thumbwidth, (int)thumbheight,
-                               3, thumbpixels);
-        break;
-      }
-      case eFileType_BMP:
-      {
-        stbi_write_bmp_to_func(&writeToByteVector, &encodedBytes, (int)thumbwidth, (int)thumbheight,
-                               3, thumbpixels);
-        break;
-      }
-      default:
-      {
-        RDCERR("Unsupported file type %d in thumbnail fetch", type);
-        free(thumbpixels);
-        delete[] jpgbuf;
-        return false;
-      }
-    }
-
-    *buf = encodedBytes;
-
-    free(thumbpixels);
-  }
-
-  delete[] jpgbuf;
-
+  *buf = file->GetThumbnail(type, maxsize);
+  file->Shutdown();
   return true;
 }
 
@@ -626,7 +458,7 @@ extern "C" RENDERDOC_API uint32_t RENDERDOC_CC RENDERDOC_EnumerateRemoteTargets(
   }
 
   // tried all idents remaining and found nothing
-  return ~0U;
+  return 0;
 }
 
 extern "C" RENDERDOC_API uint32_t RENDERDOC_CC RENDERDOC_GetDefaultRemoteServerPort()
@@ -707,6 +539,16 @@ bool IsHostADB(const char *hostname)
 string adbExecCommand(const string &args)
 {
   string adbExePath = RenderDoc::Inst().GetConfigSetting("adbExePath");
+  if(adbExePath.empty())
+  {
+    static bool warnPath = true;
+    if(warnPath)
+    {
+      RDCWARN("adbExePath not set, attempting to call 'adb' in working env");
+      warnPath = false;
+    }
+    adbExePath.append("adb");
+  }
   Process::ProcessResult result;
   Process::LaunchProcess(adbExePath.c_str(), "", args.c_str(), &result);
   RDCLOG("COMMAND: adb %s", args.c_str());
@@ -744,10 +586,10 @@ uint32_t StartAndroidPackageForCapture(const char *host, const char *package)
   while(elapsed < timeout)
   {
     // Check if the target app has started yet and we can connect to it.
-    TargetControl *control = RENDERDOC_CreateTargetControl(host, ret, "testConnection", false);
+    ITargetControl *control = RENDERDOC_CreateTargetControl(host, ret, "testConnection", false);
     if(control)
     {
-      TargetControl_Shutdown(control);
+      control->Shutdown();
       break;
     }
 
@@ -799,11 +641,11 @@ extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_StartAndroidRemoteServer()
       "shell am start -n org.renderdoc.renderdoccmd/.Loader -e renderdoccmd remoteserver");
 }
 
-extern "C" RENDERDOC_API bool RENDERDOC_CC
-RENDERDOC_NeedVulkanLayerRegistration(uint32_t *flagsPtr, rdctype::array<rdctype::str> *myJSONsPtr,
-                                      rdctype::array<rdctype::str> *otherJSONsPtr)
+extern "C" RENDERDOC_API bool RENDERDOC_CC RENDERDOC_NeedVulkanLayerRegistration(
+    VulkanLayerFlags *flagsPtr, rdctype::array<rdctype::str> *myJSONsPtr,
+    rdctype::array<rdctype::str> *otherJSONsPtr)
 {
-  uint32_t flags = 0;
+  VulkanLayerFlags flags = VulkanLayerFlags::NoFlags;
   std::vector<std::string> myJSONs;
   std::vector<std::string> otherJSONs;
 

@@ -97,25 +97,11 @@ namespace renderdocui.Windows
         {
             get
             {
-                return InformationalVersion.Replace("-official", "").Replace("-beta", "");
+                return InformationalVersion;
             }
         }
 
-        private bool BetaVersion
-        {
-            get
-            {
-                return InformationalVersion.Contains("-beta");
-            }
-        }
-
-        private bool OfficialVersion
-        {
-            get
-            {
-                return InformationalVersion.Contains("-official");
-            }
-        }
+        private bool OfficialVersion { get { return /*RENDERDOC_OFFICIAL_BUILD*/false; } }
 
         private string BareVersionString
         {
@@ -203,7 +189,7 @@ namespace renderdocui.Windows
             }));
             remoteStatusThread.Start();
 
-            sendErrorReportToolStripMenuItem.Enabled = OfficialVersion || BetaVersion;
+            sendErrorReportToolStripMenuItem.Enabled = OfficialVersion;
 
             // create default layout if layout failed to load
             if (!loaded)
@@ -693,8 +679,6 @@ namespace renderdocui.Windows
             Text = prefix + "RenderDoc ";
             if(OfficialVersion)
                 Text += VersionString;
-            else if(BetaVersion)
-                Text += String.Format("{0}-beta - {1}", VersionString, GitCommitHash);
             else
                 Text += String.Format("Unofficial release ({0} - {1})", VersionString, GitCommitHash);
 
@@ -1392,7 +1376,7 @@ namespace renderdocui.Windows
         {
             if (IsVersionMismatched())
             {
-                if (!OfficialVersion && !BetaVersion)
+                if (!OfficialVersion)
                 {
                     MessageBox.Show("You are running an unofficial build with mismatched core and UI versions.\n" +
                         "Double check where you got your build from and do a sanity check!",
@@ -1431,7 +1415,7 @@ namespace renderdocui.Windows
                 return;
             }
 
-            if (!OfficialVersion && !BetaVersion)
+            if (!OfficialVersion)
             {
                 if (callback != null) callback(UpdateResult.Unofficial);
                 return;
@@ -1462,9 +1446,6 @@ namespace renderdocui.Windows
             m_Core.Config.CheckUpdate_LastUpdate = today;
 
             string versionCheck = BareVersionString;
-
-            if (BetaVersion)
-                versionCheck += String.Format("-{0}-beta", GitCommitHash.Substring(0, 8));
 
             statusText.Text = "Checking for updates...";
             statusProgress.Visible = true;
@@ -1717,24 +1698,29 @@ namespace renderdocui.Windows
                     }
                 }
 
-                if (keyData == (Keys.Control | Keys.Left))
+                Control sender = Control.FromHandle(msg.HWnd);
+
+                if (m_Core.LogLoaded && !(sender is TextBox) && !(sender is ScintillaNET.Scintilla))
                 {
-                    FetchDrawcall draw = m_Core.CurDrawcall;
+                    if (keyData == (Keys.Control | Keys.Left))
+                    {
+                        FetchDrawcall draw = m_Core.CurDrawcall;
 
-                    if (draw != null && draw.previous != null)
-                        m_Core.SetEventID(null, draw.previous.eventID);
+                        if (draw != null && draw.previous != null)
+                            m_Core.SetEventID(null, draw.previous.eventID);
 
-                    return true;
-                }
+                        return true;
+                    }
 
-                if (keyData == (Keys.Control | Keys.Right))
-                {
-                    FetchDrawcall draw = m_Core.CurDrawcall;
+                    if (keyData == (Keys.Control | Keys.Right))
+                    {
+                        FetchDrawcall draw = m_Core.CurDrawcall;
 
-                    if (draw != null && draw.next != null)
-                        m_Core.SetEventID(null, draw.next.eventID);
+                        if (draw != null && draw.next != null)
+                            m_Core.SetEventID(null, draw.next.eventID);
 
-                    return true;
+                        return true;
+                    }
                 }
             }
             return base.ProcessCmdKey(ref msg, keyData);

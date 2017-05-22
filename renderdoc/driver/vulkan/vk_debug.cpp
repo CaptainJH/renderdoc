@@ -582,7 +582,7 @@ VulkanDebugManager::VulkanDebugManager(WrappedVulkan *driver, VkDevice dev)
       VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
       NULL,
       0,
-      true,
+      false,
       false,
       VK_POLYGON_MODE_FILL,
       VK_CULL_MODE_NONE,
@@ -3874,77 +3874,6 @@ void VulkanDebugManager::CopyDepthArrayToTex2DMS(VkImage destMS, VkImage srcArra
   SAFE_DELETE_ARRAY(fb);
 }
 
-FloatVector VulkanDebugManager::InterpretVertex(byte *data, uint32_t vert, const MeshDisplay &cfg,
-                                                byte *end, bool &valid)
-{
-  FloatVector ret(0.0f, 0.0f, 0.0f, 1.0f);
-
-  data += vert * cfg.position.stride;
-
-  float *out = &ret.x;
-
-  ResourceFormat fmt;
-  fmt.compByteWidth = cfg.position.compByteWidth;
-  fmt.compCount = cfg.position.compCount;
-  fmt.compType = cfg.position.compType;
-
-  if(cfg.position.specialFormat == eSpecial_R10G10B10A2)
-  {
-    if(data + 4 >= end)
-    {
-      valid = false;
-      return ret;
-    }
-
-    Vec4f v = ConvertFromR10G10B10A2(*(uint32_t *)data);
-    ret.x = v.x;
-    ret.y = v.y;
-    ret.z = v.z;
-    ret.w = v.w;
-    return ret;
-  }
-  else if(cfg.position.specialFormat == eSpecial_R11G11B10)
-  {
-    if(data + 4 >= end)
-    {
-      valid = false;
-      return ret;
-    }
-
-    Vec3f v = ConvertFromR11G11B10(*(uint32_t *)data);
-    ret.x = v.x;
-    ret.y = v.y;
-    ret.z = v.z;
-    return ret;
-  }
-
-  if(data + cfg.position.compCount * cfg.position.compByteWidth > end)
-  {
-    valid = false;
-    return ret;
-  }
-
-  for(uint32_t i = 0; i < cfg.position.compCount; i++)
-  {
-    *out = ConvertComponent(fmt, data);
-
-    data += cfg.position.compByteWidth;
-    out++;
-  }
-
-  if(cfg.position.bgraOrder)
-  {
-    FloatVector reversed;
-    reversed.x = ret.z;
-    reversed.y = ret.y;
-    reversed.z = ret.x;
-    reversed.w = ret.w;
-    return reversed;
-  }
-
-  return ret;
-}
-
 // TODO: Point meshes don't pick correctly
 uint32_t VulkanDebugManager::PickVertex(uint32_t eventID, const MeshDisplay &cfg, uint32_t x,
                                         uint32_t y, uint32_t w, uint32_t h)
@@ -3962,7 +3891,7 @@ uint32_t VulkanDebugManager::PickVertex(uint32_t eventID, const MeshDisplay &cfg
   resFmt.compCount = cfg.position.compCount;
   resFmt.compType = cfg.position.compType;
   resFmt.special = false;
-  if(cfg.position.specialFormat != eSpecial_Unknown)
+  if(cfg.position.specialFormat != SpecialFormat::Unknown)
   {
     resFmt.special = true;
     resFmt.specialFormat = cfg.position.specialFormat;
@@ -4044,27 +3973,27 @@ uint32_t VulkanDebugManager::PickVertex(uint32_t eventID, const MeshDisplay &cfg
 
   switch(cfg.position.topo)
   {
-    case eTopology_TriangleList:
+    case Topology::TriangleList:
     {
       ubo->meshMode = MESH_TRIANGLE_LIST;
       break;
     };
-    case eTopology_TriangleStrip:
+    case Topology::TriangleStrip:
     {
       ubo->meshMode = MESH_TRIANGLE_STRIP;
       break;
     };
-    case eTopology_TriangleFan:
+    case Topology::TriangleFan:
     {
       ubo->meshMode = MESH_TRIANGLE_FAN;
       break;
     };
-    case eTopology_TriangleList_Adj:
+    case Topology::TriangleList_Adj:
     {
       ubo->meshMode = MESH_TRIANGLE_LIST_ADJ;
       break;
     };
-    case eTopology_TriangleStrip_Adj:
+    case Topology::TriangleStrip_Adj:
     {
       ubo->meshMode = MESH_TRIANGLE_STRIP_ADJ;
       break;
@@ -4179,7 +4108,7 @@ uint32_t VulkanDebugManager::PickVertex(uint32_t eventID, const MeshDisplay &cfg
       else if(cfg.position.baseVertex > 0)
         idx += cfg.position.baseVertex;
 
-      vbData[i] = InterpretVertex(data, idx, cfg, dataEnd, valid);
+      vbData[i] = HighlightCache::InterpretVertex(data, idx, cfg, dataEnd, valid);
     }
 
     m_MeshPickVBUpload.Unmap();
@@ -5053,9 +4982,9 @@ struct VulkanQuadOverdrawCallback : public VulkanDrawcallCallback
   bool PostDispatch(uint32_t eid, VkCommandBuffer cmd) { return false; }
   void PostRedispatch(uint32_t eid, VkCommandBuffer cmd) {}
   // Ditto copy/etc
-  void PreMisc(uint32_t eid, DrawcallFlags flags, VkCommandBuffer cmd) {}
-  bool PostMisc(uint32_t eid, DrawcallFlags flags, VkCommandBuffer cmd) { return false; }
-  void PostRemisc(uint32_t eid, DrawcallFlags flags, VkCommandBuffer cmd) {}
+  void PreMisc(uint32_t eid, DrawFlags flags, VkCommandBuffer cmd) {}
+  bool PostMisc(uint32_t eid, DrawFlags flags, VkCommandBuffer cmd) { return false; }
+  void PostRemisc(uint32_t eid, DrawFlags flags, VkCommandBuffer cmd) {}
   bool RecordAllCmds() { return false; }
   void AliasEvent(uint32_t primary, uint32_t alias)
   {
@@ -5071,7 +5000,7 @@ struct VulkanQuadOverdrawCallback : public VulkanDrawcallCallback
   VulkanRenderState m_PrevState;
 };
 
-ResourceId VulkanDebugManager::RenderOverlay(ResourceId texid, TextureDisplayOverlay overlay,
+ResourceId VulkanDebugManager::RenderOverlay(ResourceId texid, DebugOverlay overlay,
                                              uint32_t eventID, const vector<uint32_t> &passEvents)
 {
   const VkLayerDispatchTable *vt = ObjDisp(m_Device);
@@ -5252,10 +5181,10 @@ ResourceId VulkanDebugManager::RenderOverlay(ResourceId texid, TextureDisplayOve
 
   VkImageSubresourceRange subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
 
-  const FetchDrawcall *mainDraw = m_pDriver->GetDrawcall(eventID);
+  const DrawcallDescription *mainDraw = m_pDriver->GetDrawcall(eventID);
 
   // Secondary commands can't have render passes
-  if((mainDraw && (mainDraw->flags & eDraw_Drawcall) == 0) ||
+  if((mainDraw && !(mainDraw->flags & DrawFlags::Drawcall)) ||
      !m_pDriver->m_Partial[WrappedVulkan::Primary].renderPassActive)
   {
     // don't do anything, no drawcall capable of making overlays selected
@@ -5283,7 +5212,7 @@ ResourceId VulkanDebugManager::RenderOverlay(ResourceId texid, TextureDisplayOve
 
     DoPipelineBarrier(cmd, 1, &barrier);
   }
-  else if(overlay == eTexOverlay_NaN || overlay == eTexOverlay_Clipping)
+  else if(overlay == DebugOverlay::NaN || overlay == DebugOverlay::Clipping)
   {
     float black[] = {0.0f, 0.0f, 0.0f, 0.0f};
 
@@ -5309,11 +5238,11 @@ ResourceId VulkanDebugManager::RenderOverlay(ResourceId texid, TextureDisplayOve
 
     DoPipelineBarrier(cmd, 1, &barrier);
   }
-  else if(overlay == eTexOverlay_Drawcall || overlay == eTexOverlay_Wireframe)
+  else if(overlay == DebugOverlay::Drawcall || overlay == DebugOverlay::Wireframe)
   {
     float highlightCol[] = {0.8f, 0.1f, 0.8f, 0.0f};
 
-    if(overlay == eTexOverlay_Wireframe)
+    if(overlay == DebugOverlay::Wireframe)
     {
       highlightCol[0] = 200 / 255.0f;
       highlightCol[1] = 1.0f;
@@ -5369,9 +5298,13 @@ ResourceId VulkanDebugManager::RenderOverlay(ResourceId texid, TextureDisplayOve
         (VkPipelineRasterizationStateCreateInfo *)pipeCreateInfo.pRasterizationState;
     rs->cullMode = VK_CULL_MODE_NONE;
     rs->rasterizerDiscardEnable = false;
-    rs->depthClampEnable = true;
 
-    if(overlay == eTexOverlay_Wireframe && m_pDriver->GetDeviceFeatures().fillModeNonSolid)
+    if(m_pDriver->GetDeviceFeatures().depthClamp)
+    {
+      rs->depthClampEnable = true;
+    }
+
+    if(overlay == DebugOverlay::Wireframe && m_pDriver->GetDeviceFeatures().fillModeNonSolid)
     {
       rs->polygonMode = VK_POLYGON_MODE_LINE;
       rs->lineWidth = 1.0f;
@@ -5457,7 +5390,7 @@ ResourceId VulkanDebugManager::RenderOverlay(ResourceId texid, TextureDisplayOve
       m_pDriver->m_RenderState.scissors[i].extent.height = 16384;
     }
 
-    if(overlay == eTexOverlay_Wireframe)
+    if(overlay == DebugOverlay::Wireframe)
       m_pDriver->m_RenderState.lineWidth = 1.0f;
 
     m_pDriver->ReplayLog(0, eventID, eReplay_OnlyDraw);
@@ -5477,7 +5410,7 @@ ResourceId VulkanDebugManager::RenderOverlay(ResourceId texid, TextureDisplayOve
     m_pDriver->vkDestroyPipeline(m_Device, pipe, NULL);
     m_pDriver->vkDestroyShaderModule(m_Device, mod, NULL);
   }
-  else if(overlay == eTexOverlay_ViewportScissor)
+  else if(overlay == DebugOverlay::ViewportScissor)
   {
     // clear the whole image to opaque black. We'll overwite the render area with transparent black
     // before rendering the viewport/scissors
@@ -5592,7 +5525,7 @@ ResourceId VulkanDebugManager::RenderOverlay(ResourceId texid, TextureDisplayOve
       vt->CmdEndRenderPass(Unwrap(cmd));
     }
   }
-  else if(overlay == eTexOverlay_BackfaceCull)
+  else if(overlay == DebugOverlay::BackfaceCull)
   {
     float highlightCol[] = {0.0f, 0.0f, 0.0f, 0.0f};
 
@@ -5655,7 +5588,9 @@ ResourceId VulkanDebugManager::RenderOverlay(ResourceId texid, TextureDisplayOve
     VkCullModeFlags origCullMode = rs->cullMode;
     rs->cullMode = VK_CULL_MODE_NONE;    // first render without any culling
     rs->rasterizerDiscardEnable = false;
-    rs->depthClampEnable = true;
+
+    if(m_pDriver->GetDeviceFeatures().depthClamp)
+      rs->depthClampEnable = true;
 
     VkPipelineColorBlendStateCreateInfo *cb =
         (VkPipelineColorBlendStateCreateInfo *)pipeCreateInfo.pColorBlendState;
@@ -5769,7 +5704,7 @@ ResourceId VulkanDebugManager::RenderOverlay(ResourceId texid, TextureDisplayOve
       m_pDriver->vkDestroyShaderModule(m_Device, mod[i], NULL);
     }
   }
-  else if(overlay == eTexOverlay_Depth || overlay == eTexOverlay_Stencil)
+  else if(overlay == DebugOverlay::Depth || overlay == DebugOverlay::Stencil)
   {
     float highlightCol[] = {0.0f, 0.0f, 0.0f, 0.0f};
 
@@ -5915,7 +5850,9 @@ ResourceId VulkanDebugManager::RenderOverlay(ResourceId texid, TextureDisplayOve
         (VkPipelineRasterizationStateCreateInfo *)pipeCreateInfo.pRasterizationState;
     rs->cullMode = VK_CULL_MODE_NONE;
     rs->rasterizerDiscardEnable = false;
-    rs->depthClampEnable = true;
+
+    if(m_pDriver->GetDeviceFeatures().depthClamp)
+      rs->depthClampEnable = true;
 
     VkPipelineColorBlendStateCreateInfo *cb =
         (VkPipelineColorBlendStateCreateInfo *)pipeCreateInfo.pColorBlendState;
@@ -5986,7 +5923,7 @@ ResourceId VulkanDebugManager::RenderOverlay(ResourceId texid, TextureDisplayOve
 
     if(depthRP != VK_NULL_HANDLE)
     {
-      if(overlay == eTexOverlay_Depth)
+      if(overlay == DebugOverlay::Depth)
         ds->depthTestEnable = origDepthTest;
       else
         ds->stencilTestEnable = origStencilTest;
@@ -6048,7 +5985,7 @@ ResourceId VulkanDebugManager::RenderOverlay(ResourceId texid, TextureDisplayOve
       m_pDriver->vkDestroyFramebuffer(m_Device, depthFB, NULL);
     }
   }
-  else if(overlay == eTexOverlay_ClearBeforeDraw || overlay == eTexOverlay_ClearBeforePass)
+  else if(overlay == DebugOverlay::ClearBeforeDraw || overlay == DebugOverlay::ClearBeforePass)
   {
     // clear the overlay image itself
     float black[] = {0.0f, 0.0f, 0.0f, 0.0f};
@@ -6077,7 +6014,7 @@ ResourceId VulkanDebugManager::RenderOverlay(ResourceId texid, TextureDisplayOve
 
     vector<uint32_t> events = passEvents;
 
-    if(overlay == eTexOverlay_ClearBeforeDraw)
+    if(overlay == DebugOverlay::ClearBeforeDraw)
       events.clear();
 
     events.push_back(eventID);
@@ -6098,10 +6035,10 @@ ResourceId VulkanDebugManager::RenderOverlay(ResourceId texid, TextureDisplayOve
       // BeginRenderPassAndApplyState and a clear. If it's just the begin, we
       // just play including it, do the clear, then we won't replay anything
       // in the loop below
-      if(overlay == eTexOverlay_ClearBeforePass)
+      if(overlay == DebugOverlay::ClearBeforePass)
       {
-        const FetchDrawcall *draw = m_pDriver->GetDrawcall(events[0]);
-        if(draw && draw->flags & eDraw_BeginPass)
+        const DrawcallDescription *draw = m_pDriver->GetDrawcall(events[0]);
+        if(draw && draw->flags & DrawFlags::BeginPass)
         {
           if(events.size() == 1)
           {
@@ -6161,7 +6098,7 @@ ResourceId VulkanDebugManager::RenderOverlay(ResourceId texid, TextureDisplayOve
       {
         m_pDriver->ReplayLog(events[i], events[i], eReplay_OnlyDraw);
 
-        if(overlay == eTexOverlay_ClearBeforePass && i + 1 < events.size())
+        if(overlay == DebugOverlay::ClearBeforePass && i + 1 < events.size())
           m_pDriver->ReplayLog(events[i] + 1, events[i + 1], eReplay_WithoutDraw);
       }
 
@@ -6171,7 +6108,7 @@ ResourceId VulkanDebugManager::RenderOverlay(ResourceId texid, TextureDisplayOve
       RDCASSERTEQUAL(vkr, VK_SUCCESS);
     }
   }
-  else if(overlay == eTexOverlay_QuadOverdrawPass || overlay == eTexOverlay_QuadOverdrawDraw)
+  else if(overlay == DebugOverlay::QuadOverdrawPass || overlay == DebugOverlay::QuadOverdrawDraw)
   {
     VulkanRenderState prevstate = m_pDriver->m_RenderState;
 
@@ -6205,7 +6142,7 @@ ResourceId VulkanDebugManager::RenderOverlay(ResourceId texid, TextureDisplayOve
 
       vector<uint32_t> events = passEvents;
 
-      if(overlay == eTexOverlay_QuadOverdrawDraw)
+      if(overlay == DebugOverlay::QuadOverdrawDraw)
         events.clear();
 
       events.push_back(eventID);
@@ -6394,7 +6331,7 @@ ResourceId VulkanDebugManager::RenderOverlay(ResourceId texid, TextureDisplayOve
     vkr = vt->BeginCommandBuffer(Unwrap(cmd), &beginInfo);
     RDCASSERTEQUAL(vkr, VK_SUCCESS);
   }
-  else if(overlay == eTexOverlay_TriangleSizePass || overlay == eTexOverlay_TriangleSizeDraw)
+  else if(overlay == DebugOverlay::TriangleSizePass || overlay == DebugOverlay::TriangleSizeDraw)
   {
     VulkanRenderState prevstate = m_pDriver->m_RenderState;
 
@@ -6436,15 +6373,15 @@ ResourceId VulkanDebugManager::RenderOverlay(ResourceId texid, TextureDisplayOve
 
       vector<uint32_t> events = passEvents;
 
-      if(overlay == eTexOverlay_TriangleSizeDraw)
+      if(overlay == DebugOverlay::TriangleSizeDraw)
         events.clear();
 
       while(!events.empty())
       {
-        const FetchDrawcall *draw = m_pDriver->GetDrawcall(events[0]);
+        const DrawcallDescription *draw = m_pDriver->GetDrawcall(events[0]);
 
         // remove any non-drawcalls, like the pass boundary.
-        if((draw->flags & eDraw_Drawcall) == 0)
+        if(!(draw->flags & DrawFlags::Drawcall))
           events.erase(events.begin());
         else
           break;
@@ -6651,7 +6588,7 @@ ResourceId VulkanDebugManager::RenderOverlay(ResourceId texid, TextureDisplayOve
       pipeCreateInfo.pVertexInputState = &vi;
       pipeCreateInfo.pColorBlendState = &cb;
 
-      typedef std::pair<uint32_t, PrimitiveTopology> PipeKey;
+      typedef std::pair<uint32_t, Topology> PipeKey;
 
       map<PipeKey, VkPipeline> pipes;
 
@@ -6681,13 +6618,13 @@ ResourceId VulkanDebugManager::RenderOverlay(ResourceId texid, TextureDisplayOve
 
       for(size_t i = 0; i < events.size(); i++)
       {
-        const FetchDrawcall *draw = m_pDriver->GetDrawcall(events[i]);
+        const DrawcallDescription *draw = m_pDriver->GetDrawcall(events[i]);
 
         for(uint32_t inst = 0; draw && inst < RDCMAX(1U, draw->numInstances); inst++)
         {
-          MeshFormat fmt = GetPostVSBuffers(events[i], inst, eMeshDataStage_GSOut);
+          MeshFormat fmt = GetPostVSBuffers(events[i], inst, MeshDataStage::GSOut);
           if(fmt.buf == ResourceId())
-            fmt = GetPostVSBuffers(events[i], inst, eMeshDataStage_VSOut);
+            fmt = GetPostVSBuffers(events[i], inst, MeshDataStage::VSOut);
 
           if(fmt.buf != ResourceId())
           {
@@ -6846,7 +6783,7 @@ MeshDisplayPipelines VulkanDebugManager::CacheMeshDisplayPipelines(const MeshFor
   bit += 6;
 
   ResourceFormat fmt;
-  fmt.special = primary.specialFormat != eSpecial_Unknown;
+  fmt.special = primary.specialFormat != SpecialFormat::Unknown;
   fmt.specialFormat = primary.specialFormat;
   fmt.compByteWidth = primary.compByteWidth;
   fmt.compCount = primary.compCount;
@@ -6854,7 +6791,7 @@ MeshDisplayPipelines VulkanDebugManager::CacheMeshDisplayPipelines(const MeshFor
 
   VkFormat primaryFmt = MakeVkFormat(fmt);
 
-  fmt.special = secondary.specialFormat != eSpecial_Unknown;
+  fmt.special = secondary.specialFormat != SpecialFormat::Unknown;
   fmt.specialFormat = secondary.specialFormat;
   fmt.compByteWidth = secondary.compByteWidth;
   fmt.compCount = secondary.compCount;
@@ -6884,7 +6821,7 @@ MeshDisplayPipelines VulkanDebugManager::CacheMeshDisplayPipelines(const MeshFor
 
   MeshDisplayPipelines &cache = m_CachedMeshPipelines[key];
 
-  if(cache.pipes[eShade_None] != VK_NULL_HANDLE)
+  if(cache.pipes[(uint32_t)SolidShade::NoSolid] != VK_NULL_HANDLE)
     return cache;
 
   const VkLayerDispatchTable *vt = ObjDisp(m_Device);
@@ -6926,7 +6863,7 @@ MeshDisplayPipelines VulkanDebugManager::CacheMeshDisplayPipelines(const MeshFor
 
   VkPipelineInputAssemblyStateCreateInfo ia = {
       VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO, NULL, 0,
-      primary.topo >= eTopology_PatchList ? VK_PRIMITIVE_TOPOLOGY_POINT_LIST
+      primary.topo >= Topology::PatchList ? VK_PRIMITIVE_TOPOLOGY_POINT_LIST
                                           : MakeVkPrimitiveTopology(primary.topo),
       false,
   };
@@ -7263,13 +7200,13 @@ static void AddOutputDumping(const ShaderReflection &refl, const char *entryName
       {
         uint32_t baseID = 0;
 
-        if(refl.OutputSig[i].compType == eCompType_UInt)
+        if(refl.OutputSig[i].compType == CompType::UInt)
           baseID = uint32ID;
-        else if(refl.OutputSig[i].compType == eCompType_SInt)
+        else if(refl.OutputSig[i].compType == CompType::SInt)
           baseID = sint32ID;
-        else if(refl.OutputSig[i].compType == eCompType_Float)
+        else if(refl.OutputSig[i].compType == CompType::Float)
           baseID = floatID;
-        else if(refl.OutputSig[i].compType == eCompType_Double)
+        else if(refl.OutputSig[i].compType == CompType::Double)
           baseID = doubleID;
         else
           RDCERR("Unexpected component type for output signature element");
@@ -7325,13 +7262,13 @@ static void AddOutputDumping(const ShaderReflection &refl, const char *entryName
     // handle non-vectors once here
     if(refl.OutputSig[i].compCount == 1)
     {
-      if(refl.OutputSig[i].compType == eCompType_UInt)
+      if(refl.OutputSig[i].compType == CompType::UInt)
         outs[i].basetypeID = uint32ID;
-      else if(refl.OutputSig[i].compType == eCompType_SInt)
+      else if(refl.OutputSig[i].compType == CompType::SInt)
         outs[i].basetypeID = sint32ID;
-      else if(refl.OutputSig[i].compType == eCompType_Float)
+      else if(refl.OutputSig[i].compType == CompType::Float)
         outs[i].basetypeID = floatID;
-      else if(refl.OutputSig[i].compType == eCompType_Double)
+      else if(refl.OutputSig[i].compType == CompType::Double)
         outs[i].basetypeID = doubleID;
       else
         RDCERR("Unexpected component type for output signature element");
@@ -7668,11 +7605,11 @@ static void AddOutputDumping(const ShaderReflection &refl, const char *entryName
     for(int o = 0; o < numOutputs; o++)
     {
       uint32_t elemSize = 0;
-      if(refl.OutputSig[o].compType == eCompType_Double)
+      if(refl.OutputSig[o].compType == CompType::Double)
         elemSize = 8;
-      else if(refl.OutputSig[o].compType == eCompType_SInt ||
-              refl.OutputSig[o].compType == eCompType_UInt ||
-              refl.OutputSig[o].compType == eCompType_Float)
+      else if(refl.OutputSig[o].compType == CompType::SInt ||
+              refl.OutputSig[o].compType == CompType::UInt ||
+              refl.OutputSig[o].compType == CompType::Float)
         elemSize = 4;
       else
         RDCERR("Unexpected component type for output signature element");
@@ -7946,7 +7883,7 @@ void VulkanDebugManager::InitPostVSBuffers(uint32_t eventID)
     return;
   }
 
-  const FetchDrawcall *drawcall = m_pDriver->GetDrawcall(eventID);
+  const DrawcallDescription *drawcall = m_pDriver->GetDrawcall(eventID);
 
   if(drawcall == NULL || drawcall->numIndices == 0 || drawcall->numInstances == 0)
     return;
@@ -8051,7 +7988,7 @@ void VulkanDebugManager::InitPostVSBuffers(uint32_t eventID)
 
   uint32_t vertexIndexOffset = 0;
 
-  if((drawcall->flags & eDraw_UseIBuffer) != 0)
+  if(drawcall->flags & DrawFlags::UseIBuffer)
   {
     // fetch ibuffer
     GetBufferData(state.ibuffer.buf, state.ibuffer.offs + drawcall->indexOffset * idxsize,
@@ -8238,7 +8175,7 @@ void VulkanDebugManager::InitPostVSBuffers(uint32_t eventID)
   modifiedstate.graphics.descSets.resize(descSet + 1);
   modifiedstate.graphics.descSets[descSet].descSet = GetResID(m_MeshFetchDescSet);
 
-  if((drawcall->flags & eDraw_UseIBuffer) == 0)
+  if(!(drawcall->flags & DrawFlags::UseIBuffer))
   {
     // create buffer of sufficient size (num indices * bufStride)
     VkBufferCreateInfo bufInfo = {
@@ -8464,15 +8401,29 @@ void VulkanDebugManager::InitPostVSBuffers(uint32_t eventID)
     //
     // Note that there could also be gaps in the indices as above which must remain as
     // we don't have a 0-based dense 'vertex id' to base our SSBO indexing off, only index value.
+
+    bool stripRestart = pipeCreateInfo.pInputAssemblyState->primitiveRestartEnable == VK_TRUE &&
+                        IsStrip(drawcall->topology);
+
     if(index16)
     {
       for(uint32_t i = 0; i < numIndices; i++)
+      {
+        if(stripRestart && idx16[i] == 0xffff)
+          continue;
+
         idx16[i] = idx16[i] - uint16_t(minIndex);
+      }
     }
     else
     {
       for(uint32_t i = 0; i < numIndices; i++)
+      {
+        if(stripRestart && idx32[i] == 0xffffffff)
+          continue;
+
         idx32[i] -= minIndex;
+      }
     }
 
     // upload rebased memory
@@ -8536,7 +8487,7 @@ void VulkanDebugManager::InitPostVSBuffers(uint32_t eventID)
   // expect position at the start of the buffer, as system values are sorted first
   // and position is the first value
 
-  for(uint32_t i = 1; refl->OutputSig[0].systemValue == eAttr_Position && i < numVerts; i++)
+  for(uint32_t i = 1; refl->OutputSig[0].systemValue == ShaderBuiltin::Position && i < numVerts; i++)
   {
     //////////////////////////////////////////////////////////////////////////////////
     // derive near/far, assuming a standard perspective matrix
@@ -8613,11 +8564,11 @@ void VulkanDebugManager::InitPostVSBuffers(uint32_t eventID)
   m_PostVSData[eventID].vsout.nearPlane = nearp;
   m_PostVSData[eventID].vsout.farPlane = farp;
 
-  m_PostVSData[eventID].vsout.useIndices = (drawcall->flags & eDraw_UseIBuffer) > 0;
+  m_PostVSData[eventID].vsout.useIndices = bool(drawcall->flags & DrawFlags::UseIBuffer);
   m_PostVSData[eventID].vsout.numVerts = drawcall->numIndices;
 
   m_PostVSData[eventID].vsout.instStride = 0;
-  if(drawcall->flags & eDraw_Instanced)
+  if(drawcall->flags & DrawFlags::Instanced)
     m_PostVSData[eventID].vsout.instStride = uint32_t(bufSize / drawcall->numInstances);
 
   m_PostVSData[eventID].vsout.idxBuf = VK_NULL_HANDLE;
@@ -8629,7 +8580,7 @@ void VulkanDebugManager::InitPostVSBuffers(uint32_t eventID)
         state.ibuffer.bytewidth == 2 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32;
   }
 
-  m_PostVSData[eventID].vsout.hasPosOut = refl->OutputSig[0].systemValue == eAttr_Position;
+  m_PostVSData[eventID].vsout.hasPosOut = refl->OutputSig[0].systemValue == ShaderBuiltin::Position;
 
   // delete pipeline layout
   m_pDriver->vkDestroyPipelineLayout(dev, pipeLayout, NULL);
@@ -8680,8 +8631,8 @@ MeshFormat VulkanDebugManager::GetPostVSBuffers(uint32_t eventID, uint32_t instI
 
   ret.compCount = 4;
   ret.compByteWidth = 4;
-  ret.compType = eCompType_Float;
-  ret.specialFormat = eSpecial_Unknown;
+  ret.compType = CompType::Float;
+  ret.specialFormat = SpecialFormat::Unknown;
 
   ret.showAlpha = false;
   ret.bgraOrder = false;

@@ -32,24 +32,26 @@ namespace Ui
 class D3D11PipelineStateViewer;
 }
 
+class QXmlStreamWriter;
 class RDTreeWidget;
-class QTreeWidgetItem;
-struct ViewTag;
+class RDTreeWidgetItem;
+struct D3D11ViewTag;
 class PipelineStateViewer;
 
-class D3D11PipelineStateViewer : public QFrame, public ILogViewerForm
+class D3D11PipelineStateViewer : public QFrame, public ILogViewer
 {
   Q_OBJECT
 
 public:
-  explicit D3D11PipelineStateViewer(CaptureContext &ctx, PipelineStateViewer &common,
+  explicit D3D11PipelineStateViewer(ICaptureContext &ctx, PipelineStateViewer &common,
                                     QWidget *parent = 0);
   ~D3D11PipelineStateViewer();
 
-  void OnLogfileLoaded();
-  void OnLogfileClosed();
-  void OnSelectedEventChanged(uint32_t eventID) {}
-  void OnEventChanged(uint32_t eventID);
+  // ILogViewerForm
+  void OnLogfileLoaded() override;
+  void OnLogfileClosed() override;
+  void OnSelectedEventChanged(uint32_t eventID) override {}
+  void OnEventChanged(uint32_t eventID) override;
 
 private slots:
   // automatic slots
@@ -57,37 +59,33 @@ private slots:
   void on_showEmpty_toggled(bool checked);
   void on_exportHTML_clicked();
   void on_meshView_clicked();
-  void on_iaLayouts_itemActivated(QTreeWidgetItem *item, int column);
-  void on_iaBuffers_itemActivated(QTreeWidgetItem *item, int column);
+  void on_iaLayouts_itemActivated(RDTreeWidgetItem *item, int column);
+  void on_iaBuffers_itemActivated(RDTreeWidgetItem *item, int column);
   void on_iaLayouts_mouseMove(QMouseEvent *event);
   void on_iaBuffers_mouseMove(QMouseEvent *event);
   void on_pipeFlow_stageSelected(int index);
 
   // manual slots
   void shaderView_clicked();
+  void shaderLabel_clicked(QMouseEvent *event);
   void shaderEdit_clicked();
 
   void shaderSave_clicked();
-  void resource_itemActivated(QTreeWidgetItem *item, int column);
-  void cbuffer_itemActivated(QTreeWidgetItem *item, int column);
+  void resource_itemActivated(RDTreeWidgetItem *item, int column);
+  void cbuffer_itemActivated(RDTreeWidgetItem *item, int column);
   void vertex_leave(QEvent *e);
+
+  void on_debugThread_clicked();
 
 private:
   Ui::D3D11PipelineStateViewer *ui;
-  CaptureContext &m_Ctx;
+  ICaptureContext &m_Ctx;
   PipelineStateViewer &m_Common;
 
-  enum D3DBufferViewFlags
-  {
-    RawBuffer = 0x1,
-    AppendBuffer = 0x2,
-    CounterBuffer = 0x4,
-  };
-
-  void setShaderState(const D3D11PipelineState::ShaderStage &stage, QLabel *shader, RDTreeWidget *tex,
+  void setShaderState(const D3D11Pipe::Shader &stage, QLabel *shader, RDTreeWidget *tex,
                       RDTreeWidget *samp, RDTreeWidget *cbuffer, RDTreeWidget *classes);
 
-  void addResourceRow(const ViewTag &view, const ShaderResource *shaderInput,
+  void addResourceRow(const D3D11ViewTag &view, const ShaderResource *shaderInput,
                       RDTreeWidget *resources);
 
   void clearShaderState(QLabel *shader, RDTreeWidget *tex, RDTreeWidget *samp,
@@ -95,24 +93,30 @@ private:
   void setState();
   void clearState();
 
-  void setInactiveRow(QTreeWidgetItem *node);
-  void setEmptyRow(QTreeWidgetItem *node);
+  QVariantList exportViewHTML(D3D11Pipe::View &view, int i, ShaderReflection *refl,
+                              const QString &extraParams);
+  void exportHTML(QXmlStreamWriter &xml, D3D11Pipe::IA &ia);
+  void exportHTML(QXmlStreamWriter &xml, D3D11Pipe::Shader &sh);
+  void exportHTML(QXmlStreamWriter &xml, D3D11Pipe::SO &so);
+  void exportHTML(QXmlStreamWriter &xml, D3D11Pipe::Rasterizer &rs);
+  void exportHTML(QXmlStreamWriter &xml, D3D11Pipe::OM &om);
+
+  void setInactiveRow(RDTreeWidgetItem *node);
+  void setEmptyRow(RDTreeWidgetItem *node);
   void highlightIABind(int slot);
 
   QString formatMembers(int indent, const QString &nameprefix,
                         const rdctype::array<ShaderConstant> &vars);
-  const D3D11PipelineState::ShaderStage *stageForSender(QWidget *widget);
+  const D3D11Pipe::Shader *stageForSender(QWidget *widget);
 
-  bool HasImportantViewParams(const D3D11PipelineState::ShaderStage::ResourceView &view,
-                              FetchTexture *tex);
-  bool HasImportantViewParams(const D3D11PipelineState::ShaderStage::ResourceView &view,
-                              FetchBuffer *buf);
+  bool HasImportantViewParams(const D3D11Pipe::View &view, TextureDescription *tex);
+  bool HasImportantViewParams(const D3D11Pipe::View &view, BufferDescription *buf);
 
-  void setViewDetails(QTreeWidgetItem *node, const ViewTag &view, FetchTexture *tex);
-  void setViewDetails(QTreeWidgetItem *node, const ViewTag &view, FetchBuffer *buf);
+  void setViewDetails(RDTreeWidgetItem *node, const D3D11ViewTag &view, TextureDescription *tex);
+  void setViewDetails(RDTreeWidgetItem *node, const D3D11ViewTag &view, BufferDescription *buf);
 
   bool showNode(bool usedSlot, bool filledSlot);
 
   // keep track of the VB nodes (we want to be able to highlight them easily on hover)
-  QList<QTreeWidgetItem *> m_VBNodes;
+  QList<RDTreeWidgetItem *> m_VBNodes;
 };

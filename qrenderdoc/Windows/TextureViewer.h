@@ -35,7 +35,6 @@ class TextureViewer;
 }
 
 class ResourcePreview;
-class ShaderViewer;
 class ThumbnailStrip;
 class TextureGoto;
 class QFileSystemWatcher;
@@ -51,7 +50,7 @@ enum struct FollowType
 struct Following
 {
   FollowType Type;
-  ShaderStageType Stage;
+  ShaderStage Stage;
   int index;
   int arrayEl;
 
@@ -59,38 +58,38 @@ struct Following
 
   Following();
 
-  Following(FollowType t, ShaderStageType s, int i, int a);
+  Following(FollowType t, ShaderStage s, int i, int a);
 
   bool operator==(const Following &o);
   bool operator!=(const Following &o);
-  static void GetDrawContext(CaptureContext &ctx, bool &copy, bool &compute);
+  static void GetDrawContext(ICaptureContext &ctx, bool &copy, bool &compute);
 
-  int GetHighestMip(CaptureContext &ctx);
-  int GetFirstArraySlice(CaptureContext &ctx);
-  FormatComponentType GetTypeHint(CaptureContext &ctx);
+  int GetHighestMip(ICaptureContext &ctx);
+  int GetFirstArraySlice(ICaptureContext &ctx);
+  CompType GetTypeHint(ICaptureContext &ctx);
 
-  ResourceId GetResourceId(CaptureContext &ctx);
-  BoundResource GetBoundResource(CaptureContext &ctx, int arrayIdx);
+  ResourceId GetResourceId(ICaptureContext &ctx);
+  BoundResource GetBoundResource(ICaptureContext &ctx, int arrayIdx);
 
-  static QVector<BoundResource> GetOutputTargets(CaptureContext &ctx);
+  static QVector<BoundResource> GetOutputTargets(ICaptureContext &ctx);
 
-  static BoundResource GetDepthTarget(CaptureContext &ctx);
+  static BoundResource GetDepthTarget(ICaptureContext &ctx);
 
-  QMap<BindpointMap, QVector<BoundResource>> GetReadWriteResources(CaptureContext &ctx);
+  QMap<BindpointMap, QVector<BoundResource>> GetReadWriteResources(ICaptureContext &ctx);
 
-  static QMap<BindpointMap, QVector<BoundResource>> GetReadWriteResources(CaptureContext &ctx,
-                                                                          ShaderStageType stage);
+  static QMap<BindpointMap, QVector<BoundResource>> GetReadWriteResources(ICaptureContext &ctx,
+                                                                          ShaderStage stage);
 
-  QMap<BindpointMap, QVector<BoundResource>> GetReadOnlyResources(CaptureContext &ctx);
+  QMap<BindpointMap, QVector<BoundResource>> GetReadOnlyResources(ICaptureContext &ctx);
 
-  static QMap<BindpointMap, QVector<BoundResource>> GetReadOnlyResources(CaptureContext &ctx,
-                                                                         ShaderStageType stage);
+  static QMap<BindpointMap, QVector<BoundResource>> GetReadOnlyResources(ICaptureContext &ctx,
+                                                                         ShaderStage stage);
 
-  const ShaderReflection *GetReflection(CaptureContext &ctx);
-  static const ShaderReflection *GetReflection(CaptureContext &ctx, ShaderStageType stage);
+  const ShaderReflection *GetReflection(ICaptureContext &ctx);
+  static const ShaderReflection *GetReflection(ICaptureContext &ctx, ShaderStage stage);
 
-  const ShaderBindpointMapping &GetMapping(CaptureContext &ctx);
-  static const ShaderBindpointMapping &GetMapping(CaptureContext &ctx, ShaderStageType stage);
+  const ShaderBindpointMapping &GetMapping(ICaptureContext &ctx);
+  static const ShaderBindpointMapping &GetMapping(ICaptureContext &ctx, ShaderStage stage);
 };
 
 struct TexSettings
@@ -103,7 +102,7 @@ struct TexSettings
     slice = 0;
     minrange = 0.0f;
     maxrange = 1.0f;
-    typeHint = eCompType_None;
+    typeHint = CompType::Typeless;
   }
 
   int displayType;    // RGBA, RGBM, Custom
@@ -112,10 +111,10 @@ struct TexSettings
   bool depth, stencil;
   int mip, slice;
   float minrange, maxrange;
-  FormatComponentType typeHint;
+  CompType typeHint;
 };
 
-class TextureViewer : public QFrame, public ILogViewerForm
+class TextureViewer : public QFrame, public ITextureViewer, public ILogViewer
 {
 private:
   Q_OBJECT
@@ -123,16 +122,19 @@ private:
   Q_PROPERTY(QVariant persistData READ persistData WRITE setPersistData DESIGNABLE false SCRIPTABLE false)
 
 public:
-  explicit TextureViewer(CaptureContext &ctx, QWidget *parent = 0);
+  explicit TextureViewer(ICaptureContext &ctx, QWidget *parent = 0);
   ~TextureViewer();
 
-  void OnLogfileLoaded();
-  void OnLogfileClosed();
-  void OnSelectedEventChanged(uint32_t eventID) {}
-  void OnEventChanged(uint32_t eventID);
+  // ITextureViewer
+  QWidget *Widget() override { return this; }
+  void ViewTexture(ResourceId ID, bool focus) override;
+  void GotoLocation(int x, int y) override;
 
-  void GotoLocation(int x, int y);
-  void ViewTexture(ResourceId ID, bool focus);
+  // ILogViewerForm
+  void OnLogfileLoaded() override;
+  void OnLogfileClosed() override;
+  void OnSelectedEventChanged(uint32_t eventID) override {}
+  void OnEventChanged(uint32_t eventID) override;
 
   QVariant persistData();
   void setPersistData(const QVariant &persistData);
@@ -198,14 +200,15 @@ private slots:
 
   void customShaderModified(const QString &path);
 
+  void channelsWidget_mouseClicked(QMouseEvent *event);
   void channelsWidget_toggled(bool checked) { UI_UpdateChannels(); }
   void channelsWidget_selected(int index) { UI_UpdateChannels(); }
 private:
   void RT_FetchCurrentPixel(uint32_t x, uint32_t y, PixelValue &pickValue, PixelValue &realValue);
-  void RT_PickPixelsAndUpdate(IReplayRenderer *);
-  void RT_PickHoverAndUpdate(IReplayRenderer *);
-  void RT_UpdateAndDisplay(IReplayRenderer *);
-  void RT_UpdateVisualRange(IReplayRenderer *);
+  void RT_PickPixelsAndUpdate(IReplayController *);
+  void RT_PickHoverAndUpdate(IReplayController *);
+  void RT_UpdateAndDisplay(IReplayController *);
+  void RT_UpdateVisualRange(IReplayController *);
 
   void UI_RecreatePanels();
 
@@ -213,7 +216,7 @@ private:
   void UI_UpdateTextureDetails();
   void UI_OnTextureSelectionChanged(bool newdraw);
 
-  void UI_SetHistogramRange(const FetchTexture *tex, FormatComponentType typeHint);
+  void UI_SetHistogramRange(const TextureDescription *tex, CompType typeHint);
 
   void UI_UpdateChannels();
 
@@ -223,11 +226,10 @@ private:
 
   ResourcePreview *UI_CreateThumbnail(ThumbnailStrip *strip);
   void UI_CreateThumbnails();
-  void InitResourcePreview(ResourcePreview *prev, ResourceId id, FormatComponentType typeHint,
-                           bool force, Following &follow, const QString &bindName,
-                           const QString &slotName);
+  void InitResourcePreview(ResourcePreview *prev, ResourceId id, CompType typeHint, bool force,
+                           Following &follow, const QString &bindName, const QString &slotName);
 
-  void InitStageResourcePreviews(ShaderStageType stage,
+  void InitStageResourcePreviews(ShaderStage stage,
                                  const rdctype::array<ShaderResource> &resourceDetails,
                                  const rdctype::array<BindpointMap> &mapping,
                                  QMap<BindpointMap, QVector<BoundResource>> &ResList,
@@ -255,7 +257,7 @@ private:
   QPoint getScrollPosition();
   void setScrollPosition(const QPoint &pos);
 
-  FetchTexture *GetCurrentTexture();
+  TextureDescription *GetCurrentTexture();
   void UI_UpdateCachedTexture();
 
   void ShowGotoPopup();
@@ -297,17 +299,17 @@ private:
   TextureGoto *m_Goto;
 
   Ui::TextureViewer *ui;
-  CaptureContext &m_Ctx;
+  ICaptureContext &m_Ctx;
   IReplayOutput *m_Output = NULL;
 
-  FetchTexture *m_CachedTexture;
+  TextureDescription *m_CachedTexture;
   Following m_Following = Following::Default;
   QMap<ResourceId, TexSettings> m_TextureSettings;
 
   QFileSystemWatcher *m_Watcher = NULL;
   QStringList m_CustomShadersBusy;
   QMap<QString, ResourceId> m_CustomShaders;
-  QMap<QString, ShaderViewer *> m_CustomShaderEditor;
+  QMap<QString, IShaderViewer *> m_CustomShaderEditor;
 
   void reloadCustomShaders(const QString &filter);
 

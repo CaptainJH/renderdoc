@@ -28,8 +28,6 @@
 #include <QAction>
 #include <QMenu>
 #include "3rdparty/toolwindowmanager/ToolWindowManager.h"
-#include "Windows/BufferViewer.h"
-#include "Windows/ShaderViewer.h"
 #include "ui_PixelHistoryView.h"
 
 struct EventTag
@@ -43,33 +41,33 @@ Q_DECLARE_METATYPE(EventTag);
 class PixelHistoryItemModel : public QAbstractItemModel
 {
 public:
-  PixelHistoryItemModel(CaptureContext &ctx, ResourceId tex, const TextureDisplay &display,
+  PixelHistoryItemModel(ICaptureContext &ctx, ResourceId tex, const TextureDisplay &display,
                         QObject *parent)
       : QAbstractItemModel(parent), m_Ctx(ctx)
   {
     m_Tex = m_Ctx.GetTexture(tex);
     m_Display = display;
 
-    FormatComponentType compType = m_Tex->format.compType;
+    CompType compType = m_Tex->format.compType;
 
-    if(compType == eCompType_None)
+    if(compType == CompType::Typeless)
       compType = display.typeHint;
 
-    m_IsUint = (compType == eCompType_UInt);
-    m_IsSint = (compType == eCompType_SInt);
+    m_IsUint = (compType == CompType::UInt);
+    m_IsSint = (compType == CompType::SInt);
     m_IsFloat = (!m_IsUint && !m_IsSint);
 
-    if(compType == eCompType_Depth)
+    if(compType == CompType::Depth)
       m_IsDepth = true;
 
     if(m_Tex->format.special)
     {
       switch(m_Tex->format.specialFormat)
       {
-        case eSpecial_D16S8:
-        case eSpecial_D24S8:
-        case eSpecial_D32S8:
-        case eSpecial_S8: m_IsDepth = true; break;
+        case SpecialFormat::D16S8:
+        case SpecialFormat::D24S8:
+        case SpecialFormat::D32S8:
+        case SpecialFormat::S8: m_IsDepth = true; break;
         default: break;
       }
     }
@@ -138,9 +136,9 @@ public:
     if(isEvent(parent))
     {
       const QList<PixelModification> &mods = getMods(parent);
-      const FetchDrawcall *draw = m_Ctx.GetDrawcall(mods.front().eventID);
+      const DrawcallDescription *draw = m_Ctx.GetDrawcall(mods.front().eventID);
 
-      if(draw->flags & eDraw_Clear)
+      if(draw->flags & DrawFlags::Clear)
         return 0;
 
       return mods.count();
@@ -160,7 +158,7 @@ public:
   QVariant headerData(int section, Qt::Orientation orientation, int role) const override
   {
     if(orientation == Qt::Horizontal && role == Qt::DisplayRole && section == 0)
-      return "Event";
+      return lit("Event");
 
     // sizes for the colour previews
     if(orientation == Qt::Horizontal && role == Qt::SizeHintRole && (section == 2 || section == 4))
@@ -185,7 +183,7 @@ public:
       if(m_Loading)
       {
         if(role == Qt::DisplayRole && col == 0)
-          return "Loading...";
+          return tr("Loading...");
 
         return QVariant();
       }
@@ -198,13 +196,13 @@ public:
           if(isEvent(index))
           {
             const QList<PixelModification> &mods = getMods(index);
-            const FetchDrawcall *drawcall = m_Ctx.GetDrawcall(mods.front().eventID);
+            const DrawcallDescription *drawcall = m_Ctx.GetDrawcall(mods.front().eventID);
             if(!drawcall)
               return QVariant();
 
-            QString ret = "";
-            QList<const FetchDrawcall *> drawstack;
-            const FetchDrawcall *parent = m_Ctx.GetDrawcall(drawcall->parent);
+            QString ret;
+            QList<const DrawcallDescription *> drawstack;
+            const DrawcallDescription *parent = m_Ctx.GetDrawcall(drawcall->parent);
             while(parent)
             {
               drawstack.push_back(parent);
@@ -213,25 +211,25 @@ public:
 
             if(!drawstack.isEmpty())
             {
-              ret += "> " + ToQStr(drawstack.back()->name);
+              ret += lit("> ") + ToQStr(drawstack.back()->name);
 
               if(drawstack.count() > 3)
-                ret += " ...";
+                ret += lit(" ...");
 
-              ret += "\n";
+              ret += lit("\n");
 
               if(drawstack.count() > 2)
-                ret += "> " + ToQStr(drawstack[1]->name) + "\n";
+                ret += lit("> ") + ToQStr(drawstack[1]->name) + lit("\n");
               if(drawstack.count() > 1)
-                ret += "> " + ToQStr(drawstack[0]->name) + "\n";
+                ret += lit("> ") + ToQStr(drawstack[0]->name) + lit("\n");
 
-              ret += "\n";
+              ret += lit("\n");
             }
 
             bool passed = true;
             bool uavnowrite = false;
 
-            if(mods.front().uavWrite)
+            if(mods.front().directShaderWrite)
             {
               ret += tr("EID %1\n%2\nBound as UAV or copy - potential modification")
                          .arg(mods.front().eventID)
@@ -250,7 +248,7 @@ public:
               for(const PixelModification &m : mods)
                 passed |= m.passed();
 
-              QString failure = passed ? "" : failureString(mods[0]);
+              QString failure = passed ? QString() : failureString(mods[0]);
 
               ret += tr("EID %1\n%2%3\n%4 Fragments touching pixel\n")
                          .arg(mods.front().eventID)
@@ -265,7 +263,7 @@ public:
           {
             const PixelModification &mod = getMod(index);
 
-            if(mod.uavWrite)
+            if(mod.directShaderWrite)
             {
               QString ret = tr("Potential UAV/Copy write");
 
@@ -303,7 +301,7 @@ public:
             const PixelModification &mod = getMod(index);
             if(mod.unboundPS)
               return tr("No Pixel\nShader\nBound");
-            if(mod.uavWrite)
+            if(mod.directShaderWrite)
               return tr("Tex Before\n\n") + modString(mod.preMod);
             return tr("Shader Out\n\n") + modString(mod.shaderOut);
           }
@@ -350,7 +348,7 @@ public:
           for(const PixelModification &m : mods)
             passed |= m.passed();
 
-          if(mods[0].uavWrite &&
+          if(mods[0].directShaderWrite &&
              memcmp(mods[0].preMod.col.value_u, mods[0].postMod.col.value_u, sizeof(uint32_t) * 4) ==
                  0)
             return QBrush(QColor::fromRgb(235, 235, 235));
@@ -378,7 +376,7 @@ public:
           const PixelModification &mod = getMod(index);
 
           tag.eventID = mod.eventID;
-          if(!mod.uavWrite)
+          if(!mod.directShaderWrite)
             tag.primitive = mod.primitiveID;
         }
 
@@ -390,9 +388,9 @@ public:
   }
 
 private:
-  CaptureContext &m_Ctx;
+  ICaptureContext &m_Ctx;
 
-  const FetchTexture *m_Tex;
+  const TextureDescription *m_Tex;
   TextureDisplay m_Display;
   bool m_IsDepth = false, m_IsUint = false, m_IsSint = false, m_IsFloat = true;
 
@@ -490,51 +488,51 @@ private:
 
   QString modString(const ModificationValue &val) const
   {
-    QString s = "";
+    QString s;
 
     int numComps = (int)(m_Tex->format.compCount);
 
-    static const QString colourLetterPrefix[] = {"R: ", "G: ", "B: ", "A: "};
+    static const QString colourLetterPrefix[] = {lit("R: "), lit("G: "), lit("B: "), lit("A: ")};
 
     if(!m_IsDepth)
     {
       if(m_IsUint)
       {
         for(int i = 0; i < numComps; i++)
-          s += colourLetterPrefix[i] + Formatter::Format(val.col.value_u[i]) + "\n";
+          s += colourLetterPrefix[i] + Formatter::Format(val.col.value_u[i]) + lit("\n");
       }
       else if(m_IsSint)
       {
         for(int i = 0; i < numComps; i++)
-          s += colourLetterPrefix[i] + Formatter::Format(val.col.value_i[i]) + "\n";
+          s += colourLetterPrefix[i] + Formatter::Format(val.col.value_i[i]) + lit("\n");
       }
       else
       {
         for(int i = 0; i < numComps; i++)
-          s += colourLetterPrefix[i] + Formatter::Format(val.col.value_f[i]) + "\n";
+          s += colourLetterPrefix[i] + Formatter::Format(val.col.value_f[i]) + lit("\n");
       }
     }
 
     if(val.depth >= 0.0f)
-      s += "\nD: " + Formatter::Format(val.depth);
+      s += lit("\nD: ") + Formatter::Format(val.depth);
     else if(val.depth < -1.5f)
-      s += "\nD: ?";
+      s += lit("\nD: ?");
     else
-      s += "\nD: -";
+      s += lit("\nD: -");
 
     if(val.stencil >= 0)
-      s += "\nS: 0x" + QString("%1").arg(val.stencil, 2, 16, QChar('0')).toUpper();
+      s += lit("\nS: 0x") + Formatter::Format(uint8_t(val.stencil & 0xff), true);
     else if(val.stencil == -2)
-      s += "\nS: ?";
+      s += lit("\nS: ?");
     else
-      s += "\nS: -";
+      s += lit("\nS: -");
 
     return s;
   }
 
   QString failureString(const PixelModification &mod) const
   {
-    QString s = "";
+    QString s;
 
     if(mod.sampleMasked)
       s += tr("\nMasked by SampleMask");
@@ -555,16 +553,18 @@ private:
   }
 };
 
-PixelHistoryView::PixelHistoryView(CaptureContext &ctx, ResourceId id, QPoint point,
+PixelHistoryView::PixelHistoryView(ICaptureContext &ctx, ResourceId id, QPoint point,
                                    const TextureDisplay &display, QWidget *parent)
     : QFrame(parent), ui(new Ui::PixelHistoryView), m_Ctx(ctx)
 {
   ui->setupUi(this);
 
+  ui->events->setFont(Formatter::PreferredFont());
+
   m_Pixel = point;
   m_Display = display;
 
-  FetchTexture *tex = m_Ctx.GetTexture(id);
+  TextureDescription *tex = m_Ctx.GetTexture(id);
 
   QString title =
       tr("Pixel History on %1 for (%2, %3)").arg(ToQStr(tex->name)).arg(point.x()).arg(point.y());
@@ -572,13 +572,13 @@ PixelHistoryView::PixelHistoryView(CaptureContext &ctx, ResourceId id, QPoint po
     title += tr(" @ Sample %1").arg(display.sampleIdx);
   setWindowTitle(title);
 
-  QString channelStr = "";
+  QString channelStr;
   if(display.Red)
-    channelStr += "R";
+    channelStr += lit("R");
   if(display.Green)
-    channelStr += "G";
+    channelStr += lit("G");
   if(display.Blue)
-    channelStr += "B";
+    channelStr += lit("B");
 
   if(channelStr.length() > 1)
     channelStr += tr(" channels");
@@ -586,7 +586,7 @@ PixelHistoryView::PixelHistoryView(CaptureContext &ctx, ResourceId id, QPoint po
     channelStr += tr(" channel");
 
   if(!display.Red && !display.Green && !display.Blue && display.Alpha)
-    channelStr = "Alpha";
+    channelStr = lit("Alpha");
 
   QString text;
   text = tr("Preview colours displayed in visible range %1 - %2 with %3 visible.\n\n")
@@ -594,8 +594,8 @@ PixelHistoryView::PixelHistoryView(CaptureContext &ctx, ResourceId id, QPoint po
              .arg(Formatter::Format(display.rangemax))
              .arg(channelStr);
   text +=
-      "Double click to jump to an event.\n"
-      "Right click to debug an event, or hide failed events.";
+      tr("Double click to jump to an event.\n"
+         "Right click to debug an event, or hide failed events.");
 
   ui->label->setText(text);
 
@@ -611,11 +611,14 @@ PixelHistoryView::PixelHistoryView(CaptureContext &ctx, ResourceId id, QPoint po
   ui->events->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
   ui->events->header()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
   ui->events->header()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
+
+  m_Ctx.AddLogViewer(this);
 }
 
 PixelHistoryView::~PixelHistoryView()
 {
   ui->events->setModel(NULL);
+  m_Ctx.RemoveLogViewer(this);
   delete ui;
 }
 
@@ -628,7 +631,7 @@ void PixelHistoryView::OnLogfileClosed()
   ToolWindowManager::closeToolWindow(this);
 }
 
-void PixelHistoryView::setHistory(const rdctype::array<PixelModification> &history)
+void PixelHistoryView::SetHistory(const rdctype::array<PixelModification> &history)
 {
   m_Model->setHistory(history);
 }
@@ -637,51 +640,43 @@ void PixelHistoryView::startDebug(EventTag tag)
 {
   m_Ctx.SetEventID({this}, tag.eventID, tag.eventID);
 
-  ShaderDebugTrace *trace = new ShaderDebugTrace;
+  ShaderDebugTrace *trace = NULL;
 
-  bool success = false;
-
-  m_Ctx.Renderer().BlockInvoke([this, &success, trace](IReplayRenderer *r) {
-    success =
-        r->DebugPixel((uint32_t)m_Pixel.x(), (uint32_t)m_Pixel.y(), m_Display.sampleIdx, ~0U, trace);
+  m_Ctx.Replay().BlockInvoke([this, &trace](IReplayController *r) {
+    trace = r->DebugPixel((uint32_t)m_Pixel.x(), (uint32_t)m_Pixel.y(), m_Display.sampleIdx, ~0U);
   });
 
-  if(!success || trace->states.count == 0)
+  if(trace->states.count == 0)
   {
     RDDialog::critical(this, tr("Debug Error"), tr("Error debugging pixel."));
-    delete trace;
+    m_Ctx.Replay().AsyncInvoke([trace](IReplayController *r) { r->FreeTrace(trace); });
     return;
   }
 
   GUIInvoke::call([this, trace]() {
-    QString debugContext = QString("Pixel %1,%2").arg(m_Pixel.x()).arg(m_Pixel.y());
+    QString debugContext = QFormatStr("Pixel %1,%2").arg(m_Pixel.x()).arg(m_Pixel.y());
 
     const ShaderReflection *shaderDetails =
-        m_Ctx.CurPipelineState.GetShaderReflection(eShaderStage_Pixel);
+        m_Ctx.CurPipelineState().GetShaderReflection(ShaderStage::Pixel);
     const ShaderBindpointMapping &bindMapping =
-        m_Ctx.CurPipelineState.GetBindpointMapping(eShaderStage_Pixel);
+        m_Ctx.CurPipelineState().GetBindpointMapping(ShaderStage::Pixel);
 
     // viewer takes ownership of the trace
-    ShaderViewer *s = ShaderViewer::debugShader(m_Ctx, &bindMapping, shaderDetails,
-                                                eShaderStage_Pixel, trace, debugContext, this);
+    IShaderViewer *s =
+        m_Ctx.DebugShader(&bindMapping, shaderDetails, ShaderStage::Pixel, trace, debugContext);
 
-    m_Ctx.setupDockWindow(s);
-
-    ToolWindowManager *manager = ToolWindowManager::managerOf(this);
-
-    ToolWindowManager::AreaReference ref(ToolWindowManager::AddTo, manager->areaOf(this));
-    manager->addToolWindow(s, ref);
+    m_Ctx.AddDockWindow(s->Widget(), DockReference::MainToolArea, NULL);
   });
 }
 
 void PixelHistoryView::jumpToPrimitive(EventTag tag)
 {
   m_Ctx.SetEventID({this}, tag.eventID, tag.eventID);
-  m_Ctx.showMeshPreview();
+  m_Ctx.ShowMeshPreview();
 
-  BufferViewer *viewer = m_Ctx.meshPreview();
+  IBufferViewer *viewer = m_Ctx.GetMeshPreview();
 
-  const FetchDrawcall *draw = m_Ctx.CurDrawcall();
+  const DrawcallDescription *draw = m_Ctx.CurDrawcall();
 
   if(draw)
   {

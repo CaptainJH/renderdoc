@@ -36,7 +36,7 @@ CustomPaintWidget::CustomPaintWidget(QWidget *parent) : QWidget(parent)
   setMouseTracking(true);
 }
 
-CustomPaintWidget::CustomPaintWidget(CaptureContext *c, QWidget *parent) : QWidget(parent)
+CustomPaintWidget::CustomPaintWidget(ICaptureContext *c, QWidget *parent) : QWidget(parent)
 {
   m_Ctx = c;
   m_Output = NULL;
@@ -90,7 +90,7 @@ void CustomPaintWidget::paintEvent(QPaintEvent *e)
   if(m_Ctx)
   {
     if(m_Output != NULL)
-      m_Ctx->Renderer().AsyncInvoke([this](IReplayRenderer *r) { m_Output->Display(); });
+      m_Ctx->Replay().AsyncInvoke([this](IReplayController *r) { m_Output->Display(); });
   }
   else if(m_Dark == m_Light)
   {

@@ -148,10 +148,10 @@ void ToolWindowManager::moveToolWindows(QList<QWidget *> toolWindows,
   if (area.type() == NoArea) {
     //do nothing
   } else if (area.type() == NewFloatingArea) {
-    ToolWindowManagerArea* area = createArea();
-    area->addToolWindows(toolWindows);
+    ToolWindowManagerArea* floatArea = createArea();
+    floatArea->addToolWindows(toolWindows);
     ToolWindowManagerWrapper* wrapper = new ToolWindowManagerWrapper(this);
-    wrapper->layout()->addWidget(area);
+    wrapper->layout()->addWidget(floatArea);
     wrapper->move(QCursor::pos());
     wrapper->show();
   } else if (area.type() == AddTo) {
@@ -358,25 +358,25 @@ void ToolWindowManager::setAllowFloatingWindow(bool allow) {
 
 QVariantMap ToolWindowManager::saveState() {
   QVariantMap result;
-  result["toolWindowManagerStateFormat"] = 1;
+  result[QStringLiteral("toolWindowManagerStateFormat")] = 1;
   ToolWindowManagerWrapper* mainWrapper = findChild<ToolWindowManagerWrapper*>();
   if (!mainWrapper) {
     qWarning("can't find main wrapper");
     return QVariantMap();
   }
-  result["mainWrapper"] = mainWrapper->saveState();
+  result[QStringLiteral("mainWrapper")] = mainWrapper->saveState();
   QVariantList floatingWindowsData;
   foreach(ToolWindowManagerWrapper* wrapper, m_wrappers) {
     if (!wrapper->isWindow()) { continue; }
     floatingWindowsData << wrapper->saveState();
   }
-  result["floatingWindows"] = floatingWindowsData;
+  result[QStringLiteral("floatingWindows")] = floatingWindowsData;
   return result;
 }
 
 void ToolWindowManager::restoreState(const QVariantMap &dataMap) {
   if (dataMap.isEmpty()) { return; }
-  if (dataMap["toolWindowManagerStateFormat"].toInt() != 1) {
+  if (dataMap[QStringLiteral("toolWindowManagerStateFormat")].toInt() != 1) {
     qWarning("state format is not recognized");
     return;
   }
@@ -386,8 +386,9 @@ void ToolWindowManager::restoreState(const QVariantMap &dataMap) {
     qWarning("can't find main wrapper");
     return;
   }
-  mainWrapper->restoreState(dataMap["mainWrapper"].toMap());
-  foreach(QVariant windowData, dataMap["floatingWindows"].toList()) {
+  mainWrapper->restoreState(dataMap[QStringLiteral("mainWrapper")].toMap());
+  QVariantList floatWins = dataMap[QStringLiteral("floatingWindows")].toList();
+  foreach(QVariant windowData, floatWins) {
     ToolWindowManagerWrapper* wrapper = new ToolWindowManagerWrapper(this);
     wrapper->restoreState(windowData.toMap());
     wrapper->show();
@@ -512,8 +513,8 @@ void ToolWindowManager::startDrag(const QList<QWidget *> &toolWindows) {
 
 QVariantMap ToolWindowManager::saveSplitterState(QSplitter *splitter) {
   QVariantMap result;
-  result["state"] = splitter->saveState().toBase64();
-  result["type"] = "splitter";
+  result[QStringLiteral("state")] = splitter->saveState().toBase64();
+  result[QStringLiteral("type")] = QStringLiteral("splitter");
   QVariantList items;
   for(int i = 0; i < splitter->count(); i++) {
     QWidget* item = splitter->widget(i);
@@ -531,22 +532,23 @@ QVariantMap ToolWindowManager::saveSplitterState(QSplitter *splitter) {
     }
     items << itemValue;
   }
-  result["items"] = items;
+  result[QStringLiteral("items")] = items;
   return result;
 }
 
-QSplitter *ToolWindowManager::restoreSplitterState(const QVariantMap &data) {
-  if (data["items"].toList().count() < 2) {
+QSplitter *ToolWindowManager::restoreSplitterState(const QVariantMap &savedData) {
+  if (savedData[QStringLiteral("items")].toList().count() < 2) {
     qWarning("invalid splitter encountered");
   }
   QSplitter* splitter = createSplitter();
 
-  foreach(QVariant itemData, data["items"].toList()) {
+  QVariantList itemList = savedData[QStringLiteral("items")].toList();
+  foreach(QVariant itemData, itemList) {
     QVariantMap itemValue = itemData.toMap();
-    QString itemType = itemValue["type"].toString();
-    if (itemType == "splitter") {
+    QString itemType = itemValue[QStringLiteral("type")].toString();
+    if (itemType == QStringLiteral("splitter")) {
       splitter->addWidget(restoreSplitterState(itemValue));
-    } else if (itemType == "area") {
+    } else if (itemType == QStringLiteral("area")) {
       ToolWindowManagerArea* area = createArea();
       area->restoreState(itemValue);
       splitter->addWidget(area);
@@ -554,7 +556,7 @@ QSplitter *ToolWindowManager::restoreSplitterState(const QVariantMap &data) {
       qWarning("unknown item type");
     }
   }
-  splitter->restoreState(QByteArray::fromBase64(data["state"].toByteArray()));
+  splitter->restoreState(QByteArray::fromBase64(savedData[QStringLiteral("state")].toByteArray()));
   return splitter;
 }
 
@@ -650,14 +652,14 @@ void ToolWindowManager::findSuggestions(ToolWindowManagerWrapper* wrapper) {
         continue;
       }
 
-      ToolWindowManagerArea* area = qobject_cast<ToolWindowManagerArea*>(parent);
-      ToolWindowManagerWrapper* wrapper = qobject_cast<ToolWindowManagerWrapper*>(parent);
+      ToolWindowManagerArea* areaParent = qobject_cast<ToolWindowManagerArea*>(parent);
+      ToolWindowManagerWrapper* wrapperParent = qobject_cast<ToolWindowManagerWrapper*>(parent);
 
       // if it's an area or wrapper, check if it's ours
-      if(area)
-        valid = area->manager() == this;
-      else if(wrapper)
-        valid = wrapper->manager() == this;
+      if(areaParent)
+        valid = areaParent->manager() == this;
+      else if(wrapperParent)
+        valid = wrapperParent->manager() == this;
 
       // we're done now, whether we checked for validity, or if we
       // found something that's none of the above
@@ -672,7 +674,7 @@ void ToolWindowManager::findSuggestions(ToolWindowManagerWrapper* wrapper) {
       candidates << area;
     }
   }
-  foreach(QWidget* widget, candidates) {
+  for(QWidget* widget : candidates) {
     QSplitter* splitter = qobject_cast<QSplitter*>(widget);
     ToolWindowManagerArea* area = qobject_cast<ToolWindowManagerArea*>(widget);
     if (!splitter && !area) {
@@ -700,7 +702,7 @@ void ToolWindowManager::findSuggestions(ToolWindowManagerWrapper* wrapper) {
         allowedSides << BottomOf;
       }
     }
-    foreach(AreaReferenceType side, allowedSides) {
+    for(AreaReferenceType side : allowedSides) {
       if (sideSensitiveArea(widget, side).contains(widget->mapFromGlobal(globalPos))) {
         m_suggestions << AreaReference(side, widget);
       }

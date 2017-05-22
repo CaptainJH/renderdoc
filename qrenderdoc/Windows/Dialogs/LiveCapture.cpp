@@ -41,7 +41,7 @@ static const int PIDRole = Qt::UserRole + 1;
 static const int IdentRole = Qt::UserRole + 2;
 static const int LogPtrRole = Qt::UserRole + 3;
 
-LiveCapture::LiveCapture(CaptureContext &ctx, const QString &hostname, uint32_t ident,
+LiveCapture::LiveCapture(ICaptureContext &ctx, const QString &hostname, uint32_t ident,
                          MainWindow *main, QWidget *parent)
     : QFrame(parent),
       ui(new Ui::LiveCapture),
@@ -84,7 +84,7 @@ LiveCapture::LiveCapture(CaptureContext &ctx, const QString &hostname, uint32_t 
     rightAlign->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     bottomTools->addWidget(rightAlign);
 
-    previewToggle = new QAction("Preview", this);
+    previewToggle = new QAction(tr("Preview"), this);
     previewToggle->setCheckable(true);
 
     bottomTools->addAction(previewToggle);
@@ -97,7 +97,7 @@ LiveCapture::LiveCapture(CaptureContext &ctx, const QString &hostname, uint32_t 
     openMenu->addAction(newWindowAction);
 
     openButton = new QToolButton(this);
-    openButton->setText("Open");
+    openButton->setText(tr("Open"));
     openButton->setPopupMode(QToolButton::MenuButtonPopup);
     openButton->setMenu(openMenu);
 
@@ -119,8 +119,8 @@ LiveCapture::LiveCapture(CaptureContext &ctx, const QString &hostname, uint32_t 
     ui->mainLayout->addWidget(bottomTools);
 
     bottomTools->setStyleSheet(
-        "background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,"
-        "stop: 0 #E1E1E1, stop: 1.0 #D3D3D3);");
+        lit("background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,"
+            "stop: 0 #E1E1E1, stop: 1.0 #D3D3D3);"));
   }
 }
 
@@ -155,6 +155,14 @@ void LiveCapture::on_captures_mouseClicked(QMouseEvent *e)
 {
   if(e->buttons() & Qt::RightButton && !ui->captures->selectedItems().empty())
   {
+    QListWidgetItem *item = ui->captures->itemAt(e->pos());
+
+    if(item != NULL)
+    {
+      ui->captures->clearSelection();
+      item->setSelected(true);
+    }
+
     QMenu contextMenu(this);
 
     QMenu contextOpenMenu(tr("&Open in..."), this);
@@ -264,7 +272,7 @@ void LiveCapture::openNewWindow_triggered()
     }
 
     QStringList args;
-    args << "--tempfile" << temppath;
+    args << lit("--tempfile") << temppath;
     QProcess::startDetached(qApp->applicationFilePath(), args);
   }
 }
@@ -305,14 +313,14 @@ void LiveCapture::deleteCapture_triggered()
         }
         else
         {
-          m_Ctx.Renderer().DeleteCapture(log->path, log->local);
+          m_Ctx.Replay().DeleteCapture(log->path, log->local);
         }
       }
     }
 
     delete log;
 
-    ui->captures->removeItemWidget(item);
+    delete ui->captures->takeItem(ui->captures->row(item));
   }
 }
 
@@ -377,7 +385,7 @@ void LiveCapture::childUpdate()
       {
         if(!m_Children[i].added)
         {
-          QString name = "unknown";
+          QString name = tr("Unknown Process");
 
           // find the name
           for(QProcessInfo &p : processes)
@@ -389,7 +397,7 @@ void LiveCapture::childUpdate()
             }
           }
 
-          QString text = QString("%1 [PID %2]").arg(name).arg(m_Children[i].PID);
+          QString text = QFormatStr("%1 [PID %2]").arg(name).arg(m_Children[i].PID);
 
           m_Children[i].added = true;
           QListWidgetItem *item = new QListWidgetItem(text, ui->childProcesses);
@@ -442,7 +450,7 @@ void LiveCapture::killThread()
 
 void LiveCapture::setTitle(const QString &title)
 {
-  setWindowTitle((m_Hostname != "" ? (m_Hostname + " - ") : "") + title);
+  setWindowTitle((!m_Hostname.isEmpty() ? (m_Hostname + lit(" - ")) : QString()) + title);
 }
 
 LiveCapture::CaptureLog *LiveCapture::GetLog(QListWidgetItem *item)
@@ -517,10 +525,10 @@ QString LiveCapture::MakeText(CaptureLog *log)
 {
   QString text = log->exe;
   if(!log->local)
-    text += " (Remote)";
+    text += tr(" (Remote)");
 
-  text += "\n" + log->api;
-  text += "\n" + log->timestamp.toString("yyyy-MM-dd HH:mm:ss");
+  text += lit("\n") + log->api;
+  text += lit("\n") + log->timestamp.toString(lit("yyyy-MM-dd HH:mm:ss"));
 
   return text;
 }
@@ -548,11 +556,11 @@ bool LiveCapture::checkAllowClose()
 
     if(!suppressRemoteWarning)
     {
-      res =
-          RDDialog::question(this, tr("Unsaved log"), tr("Save this logfile from %1 at %2?")
-                                                          .arg(log->exe)
-                                                          .arg(log->timestamp.toString("HH:mm:ss")),
-                             RDDialog::YesNoCancel);
+      res = RDDialog::question(this, tr("Unsaved log"),
+                               tr("Save this logfile from %1 at %2?")
+                                   .arg(log->exe)
+                                   .arg(log->timestamp.toString(lit("HH:mm:ss"))),
+                               RDDialog::YesNoCancel);
     }
 
     if(res == QMessageBox::Cancel)
@@ -565,8 +573,8 @@ bool LiveCapture::checkAllowClose()
     // to by having an active connection or replay context on that host.
     if(suppressRemoteWarning == false && (!m_Connection || !m_Connection->Connected()) &&
        !log->local &&
-       (!m_Ctx.Renderer().remote() || m_Ctx.Renderer().remote()->Hostname != m_Hostname ||
-        !m_Ctx.Renderer().remote()->Connected))
+       (!m_Ctx.Replay().CurrentRemote() || m_Ctx.Replay().CurrentRemote()->Hostname != m_Hostname ||
+        !m_Ctx.Replay().CurrentRemote()->Connected))
     {
       QMessageBox::StandardButton res2 = RDDialog::question(
           this, tr("No active replay context"),
@@ -611,8 +619,9 @@ void LiveCapture::openCapture(CaptureLog *log)
 {
   log->opened = true;
 
-  if(!log->local && (!m_Ctx.Renderer().remote() || m_Ctx.Renderer().remote()->Hostname != m_Hostname ||
-                     !m_Ctx.Renderer().remote()->Connected))
+  if(!log->local &&
+     (!m_Ctx.Replay().CurrentRemote() || m_Ctx.Replay().CurrentRemote()->Hostname != m_Hostname ||
+      !m_Ctx.Replay().CurrentRemote()->Connected))
   {
     RDDialog::critical(
         this, tr("No active replay context"),
@@ -632,7 +641,7 @@ bool LiveCapture::saveCapture(CaptureLog *log)
 
   // we copy the temp log to the desired path, but the log item remains referring to the temp path.
   // This ensures that if the user deletes the saved path we can still open or re-save it.
-  if(path != "")
+  if(!path.isEmpty())
   {
     if(log->local)
     {
@@ -665,8 +674,8 @@ bool LiveCapture::saveCapture(CaptureLog *log)
     }
     else
     {
-      if(!m_Ctx.Renderer().remote() || m_Ctx.Renderer().remote()->Hostname != m_Hostname ||
-         !m_Ctx.Renderer().remote()->Connected)
+      if(!m_Ctx.Replay().CurrentRemote() || m_Ctx.Replay().CurrentRemote()->Hostname != m_Hostname ||
+         !m_Ctx.Replay().CurrentRemote()->Connected)
       {
         RDDialog::critical(this, tr("No active replay context"),
                            tr("This capture is on remote host %1 and there is no active replay "
@@ -677,7 +686,7 @@ bool LiveCapture::saveCapture(CaptureLog *log)
         return false;
       }
 
-      m_Ctx.Renderer().CopyCaptureFromRemote(log->path, path, this);
+      m_Ctx.Replay().CopyCaptureFromRemote(log->path, path, this);
 
       if(!QFile::exists(path))
       {
@@ -686,12 +695,12 @@ bool LiveCapture::saveCapture(CaptureLog *log)
         return false;
       }
 
-      m_Ctx.Renderer().DeleteCapture(log->path, false);
+      m_Ctx.Replay().DeleteCapture(log->path, false);
     }
 
     log->saved = true;
     log->path = path;
-    PersistantConfig::AddRecentFile(m_Ctx.Config.RecentLogFiles, path, 10);
+    AddRecentFile(m_Ctx.Config().RecentLogFiles, path, 10);
     m_Main->PopulateRecentFiles();
     return true;
   }
@@ -721,7 +730,7 @@ void LiveCapture::cleanItems()
         }
         else
         {
-          m_Ctx.Renderer().DeleteCapture(log->path, log->local);
+          m_Ctx.Replay().DeleteCapture(log->path, log->local);
         }
       }
     }
@@ -875,8 +884,8 @@ void LiveCapture::connectionClosed()
       // to this machine as a remote context
       if(!log->local)
       {
-        if(!m_Ctx.Renderer().remote() || m_Ctx.Renderer().remote()->Hostname != m_Hostname ||
-           !m_Ctx.Renderer().remote()->Connected)
+        if(!m_Ctx.Replay().CurrentRemote() || m_Ctx.Replay().CurrentRemote()->Hostname != m_Hostname ||
+           !m_Ctx.Replay().CurrentRemote()->Connected)
           return;
       }
 
@@ -921,7 +930,7 @@ void LiveCapture::connectionThreadEntry()
   if(!m_Connection || !m_Connection->Connected())
   {
     GUIInvoke::call([this]() {
-      setTitle("Connection failed");
+      setTitle(tr("Connection failed"));
       ui->connectionStatus->setText(tr("Connection failed"));
       ui->connectionIcon->setPixmap(Pixmaps::del());
 
@@ -933,7 +942,7 @@ void LiveCapture::connectionThreadEntry()
 
   GUIInvoke::call([this]() {
     QString api = QString::fromUtf8(m_Connection->GetAPI());
-    if(api == "")
+    if(api.isEmpty())
       api = tr("No API detected");
 
     QString target = QString::fromUtf8(m_Connection->GetTarget());
@@ -948,7 +957,7 @@ void LiveCapture::connectionThreadEntry()
     {
       ui->connectionStatus->setText(
           tr("Connection established to %1 [PID %2] (%3)").arg(target).arg(pid).arg(api));
-      setTitle(QString("%1 [PID %2]").arg(target).arg(pid));
+      setTitle(QFormatStr("%1 [PID %2]").arg(target).arg(pid));
     }
     ui->connectionIcon->setPixmap(Pixmaps::connect());
   });
@@ -968,10 +977,10 @@ void LiveCapture::connectionThreadEntry()
       m_CaptureFrameNum = 0;
     }
 
-    if(m_CopyLogLocalPath != "")
+    if(!m_CopyLogLocalPath.isEmpty())
     {
       m_Connection->CopyCapture(m_CopyLogID, m_CopyLogLocalPath.toUtf8().data());
-      m_CopyLogLocalPath = "";
+      m_CopyLogLocalPath = QString();
       m_CopyLogID = ~0U;
     }
 
@@ -991,10 +1000,9 @@ void LiveCapture::connectionThreadEntry()
       return;
     }
 
-    TargetControlMessage msg;
-    m_Connection->ReceiveMessage(&msg);
+    TargetControlMessage msg = m_Connection->ReceiveMessage();
 
-    if(msg.Type == eTargetControlMsg_RegisterAPI)
+    if(msg.Type == TargetControlMessageType::RegisterAPI)
     {
       QString api = ToQStr(msg.RegisterAPI.APIName);
       GUIInvoke::call([this, api]() {
@@ -1010,13 +1018,13 @@ void LiveCapture::connectionThreadEntry()
         {
           ui->connectionStatus->setText(
               tr("Connection established to %1 [PID %2] (%3)").arg(target).arg(pid).arg(api));
-          setTitle(QString("%1 [PID %2]").arg(target).arg(pid));
+          setTitle(QFormatStr("%1 [PID %2]").arg(target).arg(pid));
         }
         ui->connectionIcon->setPixmap(Pixmaps::connect());
       });
     }
 
-    if(msg.Type == eTargetControlMsg_NewCapture)
+    if(msg.Type == TargetControlMessageType::NewCapture)
     {
       uint32_t capID = msg.NewCapture.ID;
       QDateTime timestamp = QDateTime(QDate(1970, 1, 1), QTime(0, 0, 0));
@@ -1033,7 +1041,7 @@ void LiveCapture::connectionThreadEntry()
       });
     }
 
-    if(msg.Type == eTargetControlMsg_CaptureCopied)
+    if(msg.Type == TargetControlMessageType::CaptureCopied)
     {
       uint32_t capID = msg.NewCapture.ID;
       QString path = ToQStr(msg.NewCapture.path);
@@ -1041,7 +1049,7 @@ void LiveCapture::connectionThreadEntry()
       GUIInvoke::call([=]() { captureCopied(capID, path); });
     }
 
-    if(msg.Type == eTargetControlMsg_NewChild)
+    if(msg.Type == TargetControlMessageType::NewChild)
     {
       if(msg.NewChild.PID != 0)
       {

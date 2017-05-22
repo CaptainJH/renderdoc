@@ -7,12 +7,6 @@ set(RDOC_INCLUDES
     PRIVATE ${RDOC_SOURCE_DIR}/3rdparty)
 set(RDOC_LIBRARIES)
 
-# get git commit hash
-get_git_hash(GIT_COMMIT_HASH)
-string(STRIP ${GIT_COMMIT_HASH} GIT_COMMIT_HASH)
-list(APPEND RDOC_DEFINITIONS
-    PRIVATE -DGIT_COMMIT_HASH="${GIT_COMMIT_HASH}")
-
 if(ANDROID)
     list(APPEND RDOC_LIBRARIES
         PRIVATE m
@@ -96,6 +90,7 @@ set(sources
     data/glsl/debuguniforms.h
     data/glsl/vk_texsample.h
     data/glsl/gl_texsample.h
+    data/glsl/gles_texsample.h
     data/glsl_shaders.cpp
     data/glsl_shaders.h
     hooks/hooks.cpp
@@ -112,11 +107,13 @@ set(sources
     os/os_specific.h
     replay/app_api.cpp
     replay/capture_options.cpp
+    replay/capture_file.cpp
     replay/entry_points.cpp
+    replay/replay_driver.cpp
     replay/replay_driver.h
     replay/replay_output.cpp
-    replay/replay_renderer.cpp
-    replay/replay_renderer.h
+    replay/replay_controller.cpp
+    replay/replay_controller.h
     replay/type_helpers.cpp
     replay/type_helpers.h
     serialise/grisu2.cpp
@@ -227,6 +224,7 @@ set(data
     data/glsl/quadwrite.frag
     data/glsl/texdisplay.frag
     data/glsl/gl_texsample.h
+    data/glsl/gles_texsample.h
     data/glsl/vk_texsample.h
     data/glsl/text.frag
     data/glsl/text.vert
@@ -301,12 +299,8 @@ target_compile_definitions(renderdoc ${RDOC_DEFINITIONS})
 target_include_directories(renderdoc ${RDOC_INCLUDES})
 target_link_libraries(renderdoc ${RDOC_LIBRARIES})
 
-install (TARGETS renderdoc DESTINATION lib)
+install (TARGETS renderdoc DESTINATION lib${LIB_SUFFIX})
 
 # Copy in application API header to include
 install (FILES api/app/renderdoc_app.h DESTINATION include RENAME renderdoc.h)
 
-add_custom_command(TARGET renderdoc POST_BUILD
-	COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_SOURCE_DIR}/bin/)
-add_custom_command(TARGET renderdoc POST_BUILD
-	COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:renderdoc> ${CMAKE_SOURCE_DIR}/bin/)

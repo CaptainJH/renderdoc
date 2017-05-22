@@ -66,8 +66,8 @@ APIProperties D3D12Replay::GetAPIProperties()
 {
   APIProperties ret;
 
-  ret.pipelineType = eGraphicsAPI_D3D12;
-  ret.localRenderer = eGraphicsAPI_D3D12;
+  ret.pipelineType = GraphicsAPI::D3D12;
+  ret.localRenderer = GraphicsAPI::D3D12;
   ret.degraded = false;
 
   return ret;
@@ -105,9 +105,9 @@ vector<ResourceId> D3D12Replay::GetTextures()
   return ret;
 }
 
-FetchBuffer D3D12Replay::GetBuffer(ResourceId id)
+BufferDescription D3D12Replay::GetBuffer(ResourceId id)
 {
-  FetchBuffer ret;
+  BufferDescription ret;
   ret.ID = m_pDevice->GetResourceManager()->GetOriginalID(id);
 
   auto it = WrappedID3D12Resource::GetList().find(id);
@@ -130,33 +130,36 @@ FetchBuffer D3D12Replay::GetBuffer(ResourceId id)
 
   ret.length = desc.Width;
 
-  ret.creationFlags = 0;
+  ret.creationFlags = BufferCategory::NoFlags;
 
   const std::vector<EventUsage> &usage = m_pDevice->GetQueue()->GetUsage(id);
 
   for(size_t i = 0; i < usage.size(); i++)
   {
-    if(usage[i].usage == eUsage_VS_RWResource || usage[i].usage == eUsage_HS_RWResource ||
-       usage[i].usage == eUsage_DS_RWResource || usage[i].usage == eUsage_GS_RWResource ||
-       usage[i].usage == eUsage_PS_RWResource || usage[i].usage == eUsage_CS_RWResource)
-      ret.creationFlags |= eBufferCreate_UAV;
-    else if(usage[i].usage == eUsage_VertexBuffer)
-      ret.creationFlags |= eBufferCreate_VB;
-    else if(usage[i].usage == eUsage_IndexBuffer)
-      ret.creationFlags |= eBufferCreate_IB;
-    else if(usage[i].usage == eUsage_Indirect)
-      ret.creationFlags |= eBufferCreate_Indirect;
+    if(usage[i].usage == ResourceUsage::VS_RWResource ||
+       usage[i].usage == ResourceUsage::HS_RWResource ||
+       usage[i].usage == ResourceUsage::DS_RWResource ||
+       usage[i].usage == ResourceUsage::GS_RWResource ||
+       usage[i].usage == ResourceUsage::PS_RWResource ||
+       usage[i].usage == ResourceUsage::CS_RWResource)
+      ret.creationFlags |= BufferCategory::ReadWrite;
+    else if(usage[i].usage == ResourceUsage::VertexBuffer)
+      ret.creationFlags |= BufferCategory::Vertex;
+    else if(usage[i].usage == ResourceUsage::IndexBuffer)
+      ret.creationFlags |= BufferCategory::Index;
+    else if(usage[i].usage == ResourceUsage::Indirect)
+      ret.creationFlags |= BufferCategory::Indirect;
   }
 
   if(desc.Flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)
-    ret.creationFlags |= eBufferCreate_UAV;
+    ret.creationFlags |= BufferCategory::ReadWrite;
 
   return ret;
 }
 
-FetchTexture D3D12Replay::GetTexture(ResourceId id)
+TextureDescription D3D12Replay::GetTexture(ResourceId id)
 {
-  FetchTexture ret;
+  TextureDescription ret;
   ret.ID = m_pDevice->GetResourceManager()->GetOriginalID(id);
 
   auto it = WrappedID3D12Resource::GetList().find(id);
@@ -183,31 +186,33 @@ FetchTexture D3D12Replay::GetTexture(ResourceId id)
 
   switch(ret.dimension)
   {
-    case 1: ret.resType = ret.arraysize > 1 ? eResType_Texture1DArray : eResType_Texture1D; break;
+    case 1:
+      ret.resType = ret.arraysize > 1 ? TextureDim::Texture1DArray : TextureDim::Texture1D;
+      break;
     case 2:
       if(ret.msSamp > 1)
-        ret.resType = ret.arraysize > 1 ? eResType_Texture2DMSArray : eResType_Texture2DMS;
+        ret.resType = ret.arraysize > 1 ? TextureDim::Texture2DMSArray : TextureDim::Texture2DMS;
       else
-        ret.resType = ret.arraysize > 1 ? eResType_Texture2DArray : eResType_Texture2D;
+        ret.resType = ret.arraysize > 1 ? TextureDim::Texture2DArray : TextureDim::Texture2D;
       break;
-    case 3: ret.resType = eResType_Texture3D; break;
+    case 3: ret.resType = TextureDim::Texture3D; break;
   }
 
   ret.cubemap = m_pDevice->IsCubemap(id);
 
-  ret.creationFlags = eTextureCreate_SRV;
+  ret.creationFlags = TextureCategory::ShaderRead;
 
   if(desc.Flags & D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET)
-    ret.creationFlags |= eTextureCreate_RTV;
+    ret.creationFlags |= TextureCategory::ColorTarget;
   if(desc.Flags & D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL)
-    ret.creationFlags |= eTextureCreate_DSV;
+    ret.creationFlags |= TextureCategory::DepthTarget;
   if(desc.Flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)
-    ret.creationFlags |= eTextureCreate_UAV;
+    ret.creationFlags |= TextureCategory::ShaderReadWrite;
 
   if(ret.ID == m_pDevice->GetQueue()->GetBackbufferResourceID())
   {
-    ret.format = MakeResourceFormat(GetTypedFormat(desc.Format, eCompType_UNorm));
-    ret.creationFlags |= eTextureCreate_SwapBuffer;
+    ret.format = MakeResourceFormat(GetTypedFormat(desc.Format, CompType::UNorm));
+    ret.creationFlags |= TextureCategory::SwapBuffer;
   }
 
   ret.customName = true;
@@ -221,9 +226,9 @@ FetchTexture D3D12Replay::GetTexture(ResourceId id)
     if(ret.msSamp > 1)
       ms = "MS";
 
-    if(ret.creationFlags & eTextureCreate_RTV)
+    if(ret.creationFlags & TextureCategory::ColorTarget)
       suffix = " RTV";
-    if(ret.creationFlags & eTextureCreate_DSV)
+    if(ret.creationFlags & TextureCategory::DepthTarget)
       suffix = " DSV";
 
     ret.customName = false;
@@ -270,7 +275,7 @@ void D3D12Replay::FreeCustomShader(ResourceId id)
   }
 }
 
-FetchFrameRecord D3D12Replay::GetFrameRecord()
+FrameRecord D3D12Replay::GetFrameRecord()
 {
   return m_pDevice->GetFrameRecord();
 }
@@ -285,7 +290,7 @@ vector<EventUsage> D3D12Replay::GetUsage(ResourceId id)
   return m_pDevice->GetQueue()->GetUsage(id);
 }
 
-void D3D12Replay::FillResourceView(D3D12PipelineState::ResourceView &view, D3D12Descriptor *desc)
+void D3D12Replay::FillResourceView(D3D12Pipe::View &view, D3D12Descriptor *desc)
 {
   D3D12ResourceManager *rm = m_pDevice->GetResourceManager();
 
@@ -320,7 +325,7 @@ void D3D12Replay::FillResourceView(D3D12PipelineState::ResourceView &view, D3D12
 
     if(desc->GetType() == D3D12Descriptor::TypeRTV)
     {
-      view.Type = ToStr::Get(desc->nonsamp.rtv.ViewDimension);
+      view.Type = MakeTextureDim(desc->nonsamp.rtv.ViewDimension);
 
       if(desc->nonsamp.rtv.ViewDimension == D3D12_RTV_DIMENSION_BUFFER)
       {
@@ -364,7 +369,7 @@ void D3D12Replay::FillResourceView(D3D12PipelineState::ResourceView &view, D3D12
     }
     else if(desc->GetType() == D3D12Descriptor::TypeDSV)
     {
-      view.Type = ToStr::Get(desc->nonsamp.dsv.ViewDimension);
+      view.Type = MakeTextureDim(desc->nonsamp.dsv.ViewDimension);
 
       if(desc->nonsamp.dsv.ViewDimension == D3D12_DSV_DIMENSION_TEXTURE1D)
       {
@@ -397,7 +402,7 @@ void D3D12Replay::FillResourceView(D3D12PipelineState::ResourceView &view, D3D12
     }
     else if(desc->GetType() == D3D12Descriptor::TypeSRV)
     {
-      view.Type = ToStr::Get(desc->nonsamp.srv.ViewDimension);
+      view.Type = MakeTextureDim(desc->nonsamp.srv.ViewDimension);
 
       view.swizzle[0] = (TextureSwizzle)D3D12_DECODE_SHADER_4_COMPONENT_MAPPING(
           0, desc->nonsamp.srv.Shader4ComponentMapping);
@@ -413,7 +418,7 @@ void D3D12Replay::FillResourceView(D3D12PipelineState::ResourceView &view, D3D12
         view.FirstElement = desc->nonsamp.srv.Buffer.FirstElement;
         view.NumElements = desc->nonsamp.srv.Buffer.NumElements;
 
-        view.BufferFlags = desc->nonsamp.srv.Buffer.Flags;
+        view.BufferFlags = D3DBufferViewFlags(desc->nonsamp.srv.Buffer.Flags);
         if(desc->nonsamp.srv.Buffer.StructureByteStride > 0)
           view.ElementSize = desc->nonsamp.srv.Buffer.StructureByteStride;
       }
@@ -466,14 +471,14 @@ void D3D12Replay::FillResourceView(D3D12PipelineState::ResourceView &view, D3D12
 
       view.CounterResource = rm->GetOriginalID(GetResID(desc->nonsamp.uav.counterResource));
 
-      view.Type = ToStr::Get(uav.ViewDimension);
+      view.Type = MakeTextureDim(uav.ViewDimension);
 
       if(uav.ViewDimension == D3D12_UAV_DIMENSION_BUFFER)
       {
         view.FirstElement = uav.Buffer.FirstElement;
         view.NumElements = uav.Buffer.NumElements;
 
-        view.BufferFlags = uav.Buffer.Flags;
+        view.BufferFlags = D3DBufferViewFlags(uav.Buffer.Flags);
         if(uav.Buffer.StructureByteStride > 0)
           view.ElementSize = uav.Buffer.StructureByteStride;
 
@@ -518,10 +523,9 @@ void D3D12Replay::FillResourceView(D3D12PipelineState::ResourceView &view, D3D12
   }
 }
 
-void D3D12Replay::FillRegisterSpaces(
-    const D3D12RenderState::RootSignature &rootSig,
-    rdctype::array<D3D12PipelineState::ShaderStage::RegisterSpace> &dstSpaces,
-    D3D12_SHADER_VISIBILITY visibility)
+void D3D12Replay::FillRegisterSpaces(const D3D12RenderState::RootSignature &rootSig,
+                                     rdctype::array<D3D12Pipe::RegisterSpace> &dstSpaces,
+                                     D3D12_SHADER_VISIBILITY visibility)
 {
   D3D12ResourceManager *rm = m_pDevice->GetResourceManager();
 
@@ -530,10 +534,10 @@ void D3D12Replay::FillRegisterSpaces(
 
   struct Space
   {
-    vector<D3D12PipelineState::CBuffer> cbuffers;
-    vector<D3D12PipelineState::Sampler> samplers;
-    vector<D3D12PipelineState::ResourceView> srvs;
-    vector<D3D12PipelineState::ResourceView> uavs;
+    vector<D3D12Pipe::CBuffer> cbuffers;
+    vector<D3D12Pipe::Sampler> samplers;
+    vector<D3D12Pipe::View> srvs;
+    vector<D3D12Pipe::View> uavs;
   };
 
   Space *spaces = new Space[sig->sig.numSpaces];
@@ -548,7 +552,7 @@ void D3D12Replay::FillRegisterSpaces(
 
     if(p.ParameterType == D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS)
     {
-      D3D12PipelineState::CBuffer &cb =
+      D3D12Pipe::CBuffer &cb =
           resize_and_add(spaces[p.Constants.RegisterSpace].cbuffers, p.Constants.ShaderRegister);
       cb.Immediate = true;
       cb.RootElement = (uint32_t)rootEl;
@@ -567,7 +571,7 @@ void D3D12Replay::FillRegisterSpaces(
     }
     else if(p.ParameterType == D3D12_ROOT_PARAMETER_TYPE_CBV)
     {
-      D3D12PipelineState::CBuffer &cb =
+      D3D12Pipe::CBuffer &cb =
           resize_and_add(spaces[p.Descriptor.RegisterSpace].cbuffers, p.Descriptor.ShaderRegister);
       cb.Immediate = true;
       cb.RootElement = (uint32_t)rootEl;
@@ -587,7 +591,7 @@ void D3D12Replay::FillRegisterSpaces(
     }
     else if(p.ParameterType == D3D12_ROOT_PARAMETER_TYPE_SRV)
     {
-      D3D12PipelineState::ResourceView &view =
+      D3D12Pipe::View &view =
           resize_and_add(spaces[p.Descriptor.RegisterSpace].srvs, p.Descriptor.ShaderRegister);
       view.Immediate = true;
       view.RootElement = (uint32_t)rootEl;
@@ -601,7 +605,7 @@ void D3D12Replay::FillRegisterSpaces(
 
           // parameters from resource/view
           view.Resource = rm->GetOriginalID(e.id);
-          view.Type = ToStr::Get(D3D12_SRV_DIMENSION_BUFFER);
+          view.Type = TextureDim::Buffer;
           view.Format = MakeResourceFormat(DXGI_FORMAT_R32_UINT);
 
           view.ElementSize = sizeof(uint32_t);
@@ -612,7 +616,7 @@ void D3D12Replay::FillRegisterSpaces(
     }
     else if(p.ParameterType == D3D12_ROOT_PARAMETER_TYPE_UAV)
     {
-      D3D12PipelineState::ResourceView &view =
+      D3D12Pipe::View &view =
           resize_and_add(spaces[p.Descriptor.RegisterSpace].uavs, p.Descriptor.ShaderRegister);
       view.Immediate = true;
       view.RootElement = (uint32_t)rootEl;
@@ -626,7 +630,7 @@ void D3D12Replay::FillRegisterSpaces(
 
           // parameters from resource/view
           view.Resource = rm->GetOriginalID(e.id);
-          view.Type = ToStr::Get(D3D12_UAV_DIMENSION_BUFFER);
+          view.Type = TextureDim::Buffer;
           view.Format = MakeResourceFormat(DXGI_FORMAT_R32_UINT);
 
           view.ElementSize = sizeof(uint32_t);
@@ -663,24 +667,39 @@ void D3D12Replay::FillRegisterSpaces(
         if(range.OffsetInDescriptorsFromTableStart == D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND)
           offset = prevTableOffset;
 
+        UINT num = range.NumDescriptors;
+
         if(heap)
         {
           desc = (D3D12Descriptor *)heap->GetCPUDescriptorHandleForHeapStart().ptr;
           desc += e->offset;
           desc += offset;
+
+          if(num == UINT_MAX)
+          {
+            // find out how many descriptors are left after
+            num = heap->GetNumDescriptors() - offset - UINT(e->offset);
+          }
+        }
+        else if(num == UINT_MAX)
+        {
+          RDCWARN(
+              "Heap not available on replay with unbounded descriptor range, clamping to 1 "
+              "descriptor.");
+          num = 1;
         }
 
-        prevTableOffset = offset + range.NumDescriptors;
+        prevTableOffset = offset + num;
 
         if(range.RangeType == D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER)
         {
-          UINT maxReg = shaderReg + range.NumDescriptors - 1;
+          UINT maxReg = shaderReg + num - 1;
           if(maxReg >= spaces[regSpace].samplers.size())
             spaces[regSpace].samplers.resize(maxReg + 1);
 
-          for(UINT i = 0; i < range.NumDescriptors; i++, shaderReg++)
+          for(UINT i = 0; i < num; i++, shaderReg++)
           {
-            D3D12PipelineState::Sampler &samp = spaces[regSpace].samplers[shaderReg];
+            D3D12Pipe::Sampler &samp = spaces[regSpace].samplers[shaderReg];
             samp.Immediate = false;
             samp.RootElement = (uint32_t)rootEl;
             samp.TableIndex = offset + i;
@@ -689,28 +708,20 @@ void D3D12Replay::FillRegisterSpaces(
             {
               D3D12_SAMPLER_DESC &sampDesc = desc->samp.desc;
 
-              samp.AddressU = ToStr::Get(sampDesc.AddressU);
-              samp.AddressV = ToStr::Get(sampDesc.AddressV);
-              samp.AddressW = ToStr::Get(sampDesc.AddressW);
+              samp.AddressU = MakeAddressMode(sampDesc.AddressU);
+              samp.AddressV = MakeAddressMode(sampDesc.AddressV);
+              samp.AddressW = MakeAddressMode(sampDesc.AddressW);
 
               memcpy(samp.BorderColor, sampDesc.BorderColor, sizeof(FLOAT) * 4);
 
-              samp.Comparison = ToStr::Get(sampDesc.ComparisonFunc);
-              samp.Filter = ToStr::Get(sampDesc.Filter);
+              samp.Comparison = MakeCompareFunc(sampDesc.ComparisonFunc);
+              samp.Filter = MakeFilter(sampDesc.Filter);
               samp.MaxAniso = 0;
-              if(sampDesc.Filter == D3D12_FILTER_ANISOTROPIC ||
-                 sampDesc.Filter == D3D12_FILTER_COMPARISON_ANISOTROPIC ||
-                 sampDesc.Filter == D3D12_FILTER_MINIMUM_ANISOTROPIC ||
-                 sampDesc.Filter == D3D12_FILTER_MAXIMUM_ANISOTROPIC)
+              if(samp.Filter.minify == FilterMode::Anisotropic)
                 samp.MaxAniso = sampDesc.MaxAnisotropy;
               samp.MaxLOD = sampDesc.MaxLOD;
               samp.MinLOD = sampDesc.MinLOD;
               samp.MipLODBias = sampDesc.MipLODBias;
-              samp.UseComparison = (sampDesc.Filter >= D3D12_FILTER_COMPARISON_MIN_MAG_MIP_POINT &&
-                                    sampDesc.Filter <= D3D12_FILTER_COMPARISON_ANISOTROPIC);
-              samp.UseBorder = (sampDesc.AddressU == D3D12_TEXTURE_ADDRESS_MODE_BORDER ||
-                                sampDesc.AddressV == D3D12_TEXTURE_ADDRESS_MODE_BORDER ||
-                                sampDesc.AddressW == D3D12_TEXTURE_ADDRESS_MODE_BORDER);
 
               desc++;
             }
@@ -718,13 +729,13 @@ void D3D12Replay::FillRegisterSpaces(
         }
         else if(range.RangeType == D3D12_DESCRIPTOR_RANGE_TYPE_CBV)
         {
-          UINT maxReg = shaderReg + range.NumDescriptors - 1;
+          UINT maxReg = shaderReg + num - 1;
           if(maxReg >= spaces[regSpace].cbuffers.size())
             spaces[regSpace].cbuffers.resize(maxReg + 1);
 
-          for(UINT i = 0; i < range.NumDescriptors; i++, shaderReg++)
+          for(UINT i = 0; i < num; i++, shaderReg++)
           {
-            D3D12PipelineState::CBuffer &cb = spaces[regSpace].cbuffers[shaderReg];
+            D3D12Pipe::CBuffer &cb = spaces[regSpace].cbuffers[shaderReg];
             cb.Immediate = false;
             cb.RootElement = (uint32_t)rootEl;
             cb.TableIndex = offset + i;
@@ -742,13 +753,13 @@ void D3D12Replay::FillRegisterSpaces(
         }
         else if(range.RangeType == D3D12_DESCRIPTOR_RANGE_TYPE_SRV)
         {
-          UINT maxReg = shaderReg + range.NumDescriptors - 1;
+          UINT maxReg = shaderReg + num - 1;
           if(maxReg >= spaces[regSpace].srvs.size())
             spaces[regSpace].srvs.resize(maxReg + 1);
 
-          for(UINT i = 0; i < range.NumDescriptors; i++, shaderReg++)
+          for(UINT i = 0; i < num; i++, shaderReg++)
           {
-            D3D12PipelineState::ResourceView &view = spaces[regSpace].srvs[shaderReg];
+            D3D12Pipe::View &view = spaces[regSpace].srvs[shaderReg];
             view.Immediate = false;
             view.RootElement = (uint32_t)rootEl;
             view.TableIndex = offset + i;
@@ -763,13 +774,13 @@ void D3D12Replay::FillRegisterSpaces(
         }
         else if(range.RangeType == D3D12_DESCRIPTOR_RANGE_TYPE_UAV)
         {
-          UINT maxReg = shaderReg + range.NumDescriptors - 1;
+          UINT maxReg = shaderReg + num - 1;
           if(maxReg >= spaces[regSpace].uavs.size())
             spaces[regSpace].uavs.resize(maxReg + 1);
 
-          for(UINT i = 0; i < range.NumDescriptors; i++, shaderReg++)
+          for(UINT i = 0; i < num; i++, shaderReg++)
           {
-            D3D12PipelineState::ResourceView &view = spaces[regSpace].uavs[shaderReg];
+            D3D12Pipe::View &view = spaces[regSpace].uavs[shaderReg];
             view.Immediate = false;
             view.RootElement = (uint32_t)rootEl;
             view.TableIndex = offset + i;
@@ -794,14 +805,14 @@ void D3D12Replay::FillRegisterSpaces(
        sampDesc.ShaderVisibility != visibility)
       continue;
 
-    D3D12PipelineState::Sampler &samp =
+    D3D12Pipe::Sampler &samp =
         resize_and_add(spaces[sampDesc.RegisterSpace].samplers, sampDesc.ShaderRegister);
     samp.Immediate = true;
     samp.RootElement = (uint32_t)i;
 
-    samp.AddressU = ToStr::Get(sampDesc.AddressU);
-    samp.AddressV = ToStr::Get(sampDesc.AddressV);
-    samp.AddressW = ToStr::Get(sampDesc.AddressW);
+    samp.AddressU = MakeAddressMode(sampDesc.AddressU);
+    samp.AddressV = MakeAddressMode(sampDesc.AddressV);
+    samp.AddressW = MakeAddressMode(sampDesc.AddressW);
 
     if(sampDesc.BorderColor == D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK)
     {
@@ -829,22 +840,14 @@ void D3D12Replay::FillRegisterSpaces(
       RDCERR("Unexpected static border colour: %u", sampDesc.BorderColor);
     }
 
-    samp.Comparison = ToStr::Get(sampDesc.ComparisonFunc);
-    samp.Filter = ToStr::Get(sampDesc.Filter);
+    samp.Comparison = MakeCompareFunc(sampDesc.ComparisonFunc);
+    samp.Filter = MakeFilter(sampDesc.Filter);
     samp.MaxAniso = 0;
-    if(sampDesc.Filter == D3D12_FILTER_ANISOTROPIC ||
-       sampDesc.Filter == D3D12_FILTER_COMPARISON_ANISOTROPIC ||
-       sampDesc.Filter == D3D12_FILTER_MINIMUM_ANISOTROPIC ||
-       sampDesc.Filter == D3D12_FILTER_MAXIMUM_ANISOTROPIC)
+    if(samp.Filter.minify == FilterMode::Anisotropic)
       samp.MaxAniso = sampDesc.MaxAnisotropy;
     samp.MaxLOD = sampDesc.MaxLOD;
     samp.MinLOD = sampDesc.MinLOD;
     samp.MipLODBias = sampDesc.MipLODBias;
-    samp.UseComparison = (sampDesc.Filter >= D3D12_FILTER_COMPARISON_MIN_MAG_MIP_POINT &&
-                          sampDesc.Filter <= D3D12_FILTER_COMPARISON_ANISOTROPIC);
-    samp.UseBorder = (sampDesc.AddressU == D3D12_TEXTURE_ADDRESS_MODE_BORDER ||
-                      sampDesc.AddressV == D3D12_TEXTURE_ADDRESS_MODE_BORDER ||
-                      sampDesc.AddressW == D3D12_TEXTURE_ADDRESS_MODE_BORDER);
   }
 
   for(uint32_t i = 0; i < sig->sig.numSpaces; i++)
@@ -862,7 +865,7 @@ void D3D12Replay::MakePipelineState()
 {
   const D3D12RenderState &rs = m_pDevice->GetQueue()->GetCommandData()->m_RenderState;
 
-  D3D12PipelineState state;
+  D3D12Pipe::State state;
 
   /////////////////////////////////////////////////
   // Input Assembler
@@ -891,7 +894,7 @@ void D3D12Replay::MakePipelineState()
       str = "Unbound";
   }
 
-  state.PipelineName = str;
+  state.name = str;
 
   if(pipe && pipe->IsGraphics())
   {
@@ -901,7 +904,7 @@ void D3D12Replay::MakePipelineState()
     create_array_uninit(state.m_IA.layouts, numInput);
     for(UINT i = 0; i < numInput; i++)
     {
-      D3D12PipelineState::InputAssembler::LayoutInput &l = state.m_IA.layouts[i];
+      D3D12Pipe::Layout &l = state.m_IA.layouts[i];
 
       l.ByteOffset = inputEl[i].AlignedByteOffset;
       l.Format = MakeResourceFormat(inputEl[i].Format);
@@ -925,7 +928,7 @@ void D3D12Replay::MakePipelineState()
     create_array_uninit(state.m_IA.vbuffers, rs.vbuffers.size());
     for(size_t i = 0; i < rs.vbuffers.size(); i++)
     {
-      D3D12PipelineState::InputAssembler::VertexBuffer &vb = state.m_IA.vbuffers[i];
+      D3D12Pipe::VB &vb = state.m_IA.vbuffers[i];
 
       vb.Buffer = rm->GetOriginalID(rs.vbuffers[i].buf);
       vb.Offset = rs.vbuffers[i].offs;
@@ -946,8 +949,8 @@ void D3D12Replay::MakePipelineState()
   {
     WrappedID3D12Shader *sh = (WrappedID3D12Shader *)pipe->compute->CS.pShaderBytecode;
 
-    state.m_CS.Shader = sh->GetResourceID();
-    state.m_CS.stage = eShaderStage_Compute;
+    state.m_CS.Object = sh->GetResourceID();
+    state.m_CS.stage = ShaderStage::Compute;
     state.m_CS.BindpointMapping = sh->GetMapping();
 
     state.rootSig = rm->GetOriginalID(rs.compute.rootsig);
@@ -957,8 +960,7 @@ void D3D12Replay::MakePipelineState()
   }
   else if(pipe)
   {
-    D3D12PipelineState::ShaderStage *dstArr[] = {&state.m_VS, &state.m_HS, &state.m_DS, &state.m_GS,
-                                                 &state.m_PS};
+    D3D12Pipe::Shader *dstArr[] = {&state.m_VS, &state.m_HS, &state.m_DS, &state.m_GS, &state.m_PS};
 
     D3D12_SHADER_BYTECODE *srcArr[] = {&pipe->graphics->VS, &pipe->graphics->HS, &pipe->graphics->DS,
                                        &pipe->graphics->GS, &pipe->graphics->PS};
@@ -969,16 +971,16 @@ void D3D12Replay::MakePipelineState()
 
     for(size_t stage = 0; stage < 5; stage++)
     {
-      D3D12PipelineState::ShaderStage &dst = *dstArr[stage];
+      D3D12Pipe::Shader &dst = *dstArr[stage];
       D3D12_SHADER_BYTECODE &src = *srcArr[stage];
 
-      dst.stage = (ShaderStageType)stage;
+      dst.stage = (ShaderStage)stage;
 
       WrappedID3D12Shader *sh = (WrappedID3D12Shader *)src.pShaderBytecode;
 
       if(sh)
       {
-        dst.Shader = sh->GetResourceID();
+        dst.Object = sh->GetResourceID();
         dst.BindpointMapping = sh->GetMapping();
       }
 
@@ -1013,20 +1015,20 @@ void D3D12Replay::MakePipelineState()
     state.m_RS.SampleMask = pipe->graphics->SampleMask;
 
     {
-      D3D12PipelineState::Rasterizer::RasterizerState &dst = state.m_RS.m_State;
+      D3D12Pipe::RasterizerState &dst = state.m_RS.m_State;
       D3D12_RASTERIZER_DESC &src = pipe->graphics->RasterizerState;
 
       dst.AntialiasedLineEnable = src.AntialiasedLineEnable == TRUE;
 
-      dst.CullMode = eCull_None;
+      dst.cullMode = CullMode::NoCull;
       if(src.CullMode == D3D12_CULL_MODE_FRONT)
-        dst.CullMode = eCull_Front;
+        dst.cullMode = CullMode::Front;
       if(src.CullMode == D3D12_CULL_MODE_BACK)
-        dst.CullMode = eCull_Back;
+        dst.cullMode = CullMode::Back;
 
-      dst.FillMode = eFill_Solid;
+      dst.fillMode = FillMode::Solid;
       if(src.FillMode == D3D12_FILL_MODE_WIREFRAME)
-        dst.FillMode = eFill_Wireframe;
+        dst.fillMode = FillMode::Wireframe;
 
       dst.DepthBias = src.DepthBias;
       dst.DepthBiasClamp = src.DepthBiasClamp;
@@ -1041,14 +1043,14 @@ void D3D12Replay::MakePipelineState()
 
     create_array_uninit(state.m_RS.Scissors, rs.scissors.size());
     for(size_t i = 0; i < rs.scissors.size(); i++)
-      state.m_RS.Scissors[i] = D3D12PipelineState::Rasterizer::Scissor(
-          rs.scissors[i].left, rs.scissors[i].top, rs.scissors[i].right, rs.scissors[i].bottom);
+      state.m_RS.Scissors[i] = D3D12Pipe::Scissor(rs.scissors[i].left, rs.scissors[i].top,
+                                                  rs.scissors[i].right, rs.scissors[i].bottom);
 
     create_array_uninit(state.m_RS.Viewports, rs.views.size());
     for(size_t i = 0; i < rs.views.size(); i++)
-      state.m_RS.Viewports[i] = D3D12PipelineState::Rasterizer::Viewport(
-          rs.views[i].TopLeftX, rs.views[i].TopLeftY, rs.views[i].Width, rs.views[i].Height,
-          rs.views[i].MinDepth, rs.views[i].MaxDepth);
+      state.m_RS.Viewports[i] =
+          D3D12Pipe::Viewport(rs.views[i].TopLeftX, rs.views[i].TopLeftY, rs.views[i].Width,
+                              rs.views[i].Height, rs.views[i].MinDepth, rs.views[i].MaxDepth);
 
     /////////////////////////////////////////////////
     // Output Merger
@@ -1057,7 +1059,7 @@ void D3D12Replay::MakePipelineState()
     create_array(state.m_OM.RenderTargets, rs.rts.size());
     for(size_t i = 0; i < rs.rts.size(); i++)
     {
-      D3D12PipelineState::ResourceView &view = state.m_OM.RenderTargets[i];
+      D3D12Pipe::View &view = state.m_OM.RenderTargets[i];
 
       PortableHandle h = rs.rtSingle ? rs.rts[0] : rs.rts[i];
 
@@ -1076,7 +1078,7 @@ void D3D12Replay::MakePipelineState()
     }
 
     {
-      D3D12PipelineState::ResourceView &view = state.m_OM.DepthTarget;
+      D3D12Pipe::View &view = state.m_OM.DepthTarget;
 
       if(rs.dsv.heap != ResourceId())
       {
@@ -1100,21 +1102,21 @@ void D3D12Replay::MakePipelineState()
       create_array_uninit(state.m_OM.m_BlendState.Blends, 8);
       for(size_t i = 0; i < 8; i++)
       {
-        D3D12PipelineState::OutputMerger::BlendState::RTBlend &blend =
-            state.m_OM.m_BlendState.Blends[i];
+        D3D12Pipe::Blend &blend = state.m_OM.m_BlendState.Blends[i];
 
         blend.Enabled = src.RenderTarget[i].BlendEnable == TRUE;
 
         blend.LogicEnabled = src.RenderTarget[i].LogicOpEnable == TRUE;
-        blend.LogicOp = ToStr::Get(src.RenderTarget[i].LogicOp);
+        blend.Logic = MakeLogicOp(src.RenderTarget[i].LogicOp);
 
-        blend.m_AlphaBlend.Source = ToStr::Get(src.RenderTarget[i].SrcBlendAlpha);
-        blend.m_AlphaBlend.Destination = ToStr::Get(src.RenderTarget[i].DestBlendAlpha);
-        blend.m_AlphaBlend.Operation = ToStr::Get(src.RenderTarget[i].BlendOpAlpha);
+        blend.m_AlphaBlend.Source = MakeBlendMultiplier(src.RenderTarget[i].SrcBlendAlpha, true);
+        blend.m_AlphaBlend.Destination =
+            MakeBlendMultiplier(src.RenderTarget[i].DestBlendAlpha, true);
+        blend.m_AlphaBlend.Operation = MakeBlendOp(src.RenderTarget[i].BlendOpAlpha);
 
-        blend.m_Blend.Source = ToStr::Get(src.RenderTarget[i].SrcBlend);
-        blend.m_Blend.Destination = ToStr::Get(src.RenderTarget[i].DestBlend);
-        blend.m_Blend.Operation = ToStr::Get(src.RenderTarget[i].BlendOp);
+        blend.m_Blend.Source = MakeBlendMultiplier(src.RenderTarget[i].SrcBlend, false);
+        blend.m_Blend.Destination = MakeBlendMultiplier(src.RenderTarget[i].DestBlend, false);
+        blend.m_Blend.Operation = MakeBlendOp(src.RenderTarget[i].BlendOp);
 
         blend.WriteMask = src.RenderTarget[i].RenderTargetWriteMask;
       }
@@ -1124,22 +1126,22 @@ void D3D12Replay::MakePipelineState()
       D3D12_DEPTH_STENCIL_DESC &src = pipe->graphics->DepthStencilState;
 
       state.m_OM.m_State.DepthEnable = src.DepthEnable == TRUE;
-      state.m_OM.m_State.DepthFunc = ToStr::Get(src.DepthFunc);
+      state.m_OM.m_State.DepthFunc = MakeCompareFunc(src.DepthFunc);
       state.m_OM.m_State.DepthWrites = src.DepthWriteMask == D3D12_DEPTH_WRITE_MASK_ALL;
       state.m_OM.m_State.StencilEnable = src.StencilEnable == TRUE;
       state.m_OM.m_State.StencilRef = rs.stencilRef;
       state.m_OM.m_State.StencilReadMask = src.StencilReadMask;
       state.m_OM.m_State.StencilWriteMask = src.StencilWriteMask;
 
-      state.m_OM.m_State.m_FrontFace.Func = ToStr::Get(src.FrontFace.StencilFunc);
-      state.m_OM.m_State.m_FrontFace.DepthFailOp = ToStr::Get(src.FrontFace.StencilDepthFailOp);
-      state.m_OM.m_State.m_FrontFace.PassOp = ToStr::Get(src.FrontFace.StencilPassOp);
-      state.m_OM.m_State.m_FrontFace.FailOp = ToStr::Get(src.FrontFace.StencilFailOp);
+      state.m_OM.m_State.m_FrontFace.Func = MakeCompareFunc(src.FrontFace.StencilFunc);
+      state.m_OM.m_State.m_FrontFace.DepthFailOp = MakeStencilOp(src.FrontFace.StencilDepthFailOp);
+      state.m_OM.m_State.m_FrontFace.PassOp = MakeStencilOp(src.FrontFace.StencilPassOp);
+      state.m_OM.m_State.m_FrontFace.FailOp = MakeStencilOp(src.FrontFace.StencilFailOp);
 
-      state.m_OM.m_State.m_BackFace.Func = ToStr::Get(src.BackFace.StencilFunc);
-      state.m_OM.m_State.m_BackFace.DepthFailOp = ToStr::Get(src.BackFace.StencilDepthFailOp);
-      state.m_OM.m_State.m_BackFace.PassOp = ToStr::Get(src.BackFace.StencilPassOp);
-      state.m_OM.m_State.m_BackFace.FailOp = ToStr::Get(src.BackFace.StencilFailOp);
+      state.m_OM.m_State.m_BackFace.Func = MakeCompareFunc(src.BackFace.StencilFunc);
+      state.m_OM.m_State.m_BackFace.DepthFailOp = MakeStencilOp(src.BackFace.StencilDepthFailOp);
+      state.m_OM.m_State.m_BackFace.PassOp = MakeStencilOp(src.BackFace.StencilPassOp);
+      state.m_OM.m_State.m_BackFace.FailOp = MakeStencilOp(src.BackFace.StencilFailOp);
     }
   }
 
@@ -1150,7 +1152,7 @@ void D3D12Replay::MakePipelineState()
     size_t i = 0;
     for(auto it = states.begin(); it != states.end(); ++it)
     {
-      D3D12PipelineState::ResourceData &res = state.Resources[i];
+      D3D12Pipe::ResourceData &res = state.Resources[i];
 
       res.id = rm->GetOriginalID(it->first);
 
@@ -1187,23 +1189,22 @@ void D3D12Replay::RenderMesh(uint32_t eventID, const vector<MeshFormat> &seconda
 }
 
 bool D3D12Replay::GetMinMax(ResourceId texid, uint32_t sliceFace, uint32_t mip, uint32_t sample,
-                            FormatComponentType typeHint, float *minval, float *maxval)
+                            CompType typeHint, float *minval, float *maxval)
 {
   return m_pDevice->GetDebugManager()->GetMinMax(texid, sliceFace, mip, sample, typeHint, minval,
                                                  maxval);
 }
 
 bool D3D12Replay::GetHistogram(ResourceId texid, uint32_t sliceFace, uint32_t mip, uint32_t sample,
-                               FormatComponentType typeHint, float minval, float maxval,
-                               bool channels[4], vector<uint32_t> &histogram)
+                               CompType typeHint, float minval, float maxval, bool channels[4],
+                               vector<uint32_t> &histogram)
 {
   return m_pDevice->GetDebugManager()->GetHistogram(texid, sliceFace, mip, sample, typeHint, minval,
                                                     maxval, channels, histogram);
 }
 
-ResourceId D3D12Replay::RenderOverlay(ResourceId texid, FormatComponentType typeHint,
-                                      TextureDisplayOverlay overlay, uint32_t eventID,
-                                      const vector<uint32_t> &passEvents)
+ResourceId D3D12Replay::RenderOverlay(ResourceId texid, CompType typeHint, DebugOverlay overlay,
+                                      uint32_t eventID, const vector<uint32_t> &passEvents)
 {
   return m_pDevice->GetDebugManager()->RenderOverlay(texid, typeHint, overlay, eventID, passEvents);
 }
@@ -1245,23 +1246,23 @@ vector<uint32_t> D3D12Replay::GetPassEvents(uint32_t eventID)
 {
   vector<uint32_t> passEvents;
 
-  const FetchDrawcall *draw = m_pDevice->GetDrawcall(eventID);
+  const DrawcallDescription *draw = m_pDevice->GetDrawcall(eventID);
 
   if(!draw)
     return passEvents;
 
   // for D3D12 a pass == everything writing to the same RTs in a command list.
-  const FetchDrawcall *start = draw;
+  const DrawcallDescription *start = draw;
   while(start)
   {
     // if we've come to the beginning of a list, break out of the loop, we've
     // found the start.
-    if(start->flags & eDraw_BeginPass)
+    if(start->flags & DrawFlags::BeginPass)
       break;
 
     // if we come to the END of a list, since we were iterating backwards that
     // means we started outside of a list, so return empty set.
-    if(start->flags & eDraw_EndPass)
+    if(start->flags & DrawFlags::EndPass)
       return passEvents;
 
     // if we've come to the start of the log we were outside of a list
@@ -1270,7 +1271,7 @@ vector<uint32_t> D3D12Replay::GetPassEvents(uint32_t eventID)
       return passEvents;
 
     // step back
-    const FetchDrawcall *prev = m_pDevice->GetDrawcall((uint32_t)start->previous);
+    const DrawcallDescription *prev = m_pDevice->GetDrawcall((uint32_t)start->previous);
 
     // something went wrong, start->previous was non-zero but we didn't
     // get a draw. Abort
@@ -1295,7 +1296,7 @@ vector<uint32_t> D3D12Replay::GetPassEvents(uint32_t eventID)
     // so we don't actually do anything (init postvs/draw overlay)
     // but it's useful to have the first part of the pass as part
     // of the list
-    if(start->flags & (eDraw_Drawcall | eDraw_PassBoundary))
+    if(start->flags & (DrawFlags::Drawcall | DrawFlags::PassBoundary))
       passEvents.push_back(start->eventID);
 
     start = m_pDevice->GetDrawcall((uint32_t)start->next);
@@ -1315,8 +1316,7 @@ void D3D12Replay::GetBufferData(ResourceId buff, uint64_t offset, uint64_t len, 
 }
 
 void D3D12Replay::PickPixel(ResourceId texture, uint32_t x, uint32_t y, uint32_t sliceFace,
-                            uint32_t mip, uint32_t sample, FormatComponentType typeHint,
-                            float pixel[4])
+                            uint32_t mip, uint32_t sample, CompType typeHint, float pixel[4])
 {
   m_pDevice->GetDebugManager()->PickPixel(texture, x, y, sliceFace, mip, sample, typeHint, pixel);
 }
@@ -1494,9 +1494,9 @@ void D3D12Replay::GetOutputWindowDimensions(uint64_t id, int32_t &w, int32_t &h)
   m_pDevice->GetDebugManager()->GetOutputWindowDimensions(id, w, h);
 }
 
-void D3D12Replay::ClearOutputWindowColour(uint64_t id, float col[4])
+void D3D12Replay::ClearOutputWindowColor(uint64_t id, float col[4])
 {
-  m_pDevice->GetDebugManager()->ClearOutputWindowColour(id, col);
+  m_pDevice->GetDebugManager()->ClearOutputWindowColor(id, col);
 }
 
 void D3D12Replay::ClearOutputWindowDepth(uint64_t id, float depth, uint8_t stencil)
@@ -1540,7 +1540,7 @@ vector<DebugMessage> D3D12Replay::GetDebugMessages()
 }
 
 void D3D12Replay::BuildTargetShader(string source, string entry, const uint32_t compileFlags,
-                                    ShaderStageType type, ResourceId *id, string *errors)
+                                    ShaderStage type, ResourceId *id, string *errors)
 {
   m_pDevice->GetDebugManager()->BuildShader(source, entry, D3DCOMPILE_DEBUG | compileFlags, type,
                                             id, errors);
@@ -1647,14 +1647,13 @@ byte *D3D12Replay::GetTextureData(ResourceId tex, uint32_t arrayIdx, uint32_t mi
 }
 
 void D3D12Replay::BuildCustomShader(string source, string entry, const uint32_t compileFlags,
-                                    ShaderStageType type, ResourceId *id, string *errors)
+                                    ShaderStage type, ResourceId *id, string *errors)
 {
   m_pDevice->GetDebugManager()->BuildShader(source, entry, compileFlags, type, id, errors);
 }
 
 ResourceId D3D12Replay::ApplyCustomShader(ResourceId shader, ResourceId texid, uint32_t mip,
-                                          uint32_t arrayIdx, uint32_t sampleIdx,
-                                          FormatComponentType typeHint)
+                                          uint32_t arrayIdx, uint32_t sampleIdx, CompType typeHint)
 {
   return m_pDevice->GetDebugManager()->ApplyCustomShader(shader, texid, mip, arrayIdx, sampleIdx,
                                                          typeHint);
@@ -1665,7 +1664,7 @@ ResourceId D3D12Replay::ApplyCustomShader(ResourceId shader, ResourceId texid, u
 vector<PixelModification> D3D12Replay::PixelHistory(vector<EventUsage> events, ResourceId target,
                                                     uint32_t x, uint32_t y, uint32_t slice,
                                                     uint32_t mip, uint32_t sampleIdx,
-                                                    FormatComponentType typeHint)
+                                                    CompType typeHint)
 {
   return vector<PixelModification>();
 }
@@ -1682,12 +1681,13 @@ ShaderDebugTrace D3D12Replay::DebugPixel(uint32_t eventID, uint32_t x, uint32_t 
   return ShaderDebugTrace();
 }
 
-ShaderDebugTrace D3D12Replay::DebugThread(uint32_t eventID, uint32_t groupid[3], uint32_t threadid[3])
+ShaderDebugTrace D3D12Replay::DebugThread(uint32_t eventID, const uint32_t groupid[3],
+                                          const uint32_t threadid[3])
 {
   return ShaderDebugTrace();
 }
 
-ResourceId D3D12Replay::CreateProxyTexture(const FetchTexture &templateTex)
+ResourceId D3D12Replay::CreateProxyTexture(const TextureDescription &templateTex)
 {
   return ResourceId();
 }
@@ -1697,7 +1697,7 @@ void D3D12Replay::SetProxyTextureData(ResourceId texid, uint32_t arrayIdx, uint3
 {
 }
 
-ResourceId D3D12Replay::CreateProxyBuffer(const FetchBuffer &templateBuf)
+ResourceId D3D12Replay::CreateProxyBuffer(const BufferDescription &templateBuf)
 {
   return ResourceId();
 }
@@ -1714,7 +1714,7 @@ extern "C" __declspec(dllexport) HRESULT
                                                void **ppDevice);
 ID3DDevice *GetD3D12DeviceIfAlloc(IUnknown *dev);
 
-ReplayCreateStatus D3D12_CreateReplayDevice(const char *logfile, IReplayDriver **driver)
+ReplayStatus D3D12_CreateReplayDevice(const char *logfile, IReplayDriver **driver)
 {
   RDCDEBUG("Creating a D3D12 replay device");
 
@@ -1725,20 +1725,20 @@ ReplayCreateStatus D3D12_CreateReplayDevice(const char *logfile, IReplayDriver *
   if(lib == NULL)
   {
     RDCERR("Failed to load d3d12.dll");
-    return eReplayCreate_APIInitFailed;
+    return ReplayStatus::APIInitFailed;
   }
 
   lib = LoadLibraryA("dxgi.dll");
   if(lib == NULL)
   {
     RDCERR("Failed to load dxgi.dll");
-    return eReplayCreate_APIInitFailed;
+    return ReplayStatus::APIInitFailed;
   }
 
   if(GetD3DCompiler() == NULL)
   {
     RDCERR("Failed to load d3dcompiler_??.dll");
-    return eReplayCreate_APIInitFailed;
+    return ReplayStatus::APIInitFailed;
   }
 
   D3D12InitParams initParams;
@@ -1749,7 +1749,7 @@ ReplayCreateStatus D3D12_CreateReplayDevice(const char *logfile, IReplayDriver *
   {
     auto status = RenderDoc::Inst().FillInitParams(logfile, driverFileType, driverName,
                                                    machineIdent, (RDCInitParams *)&initParams);
-    if(status != eReplayCreate_Success)
+    if(status != ReplayStatus::Succeeded)
       return status;
   }
 
@@ -1770,7 +1770,7 @@ ReplayCreateStatus D3D12_CreateReplayDevice(const char *logfile, IReplayDriver *
   {
     RDCERR("Couldn't create a d3d12 device :(.");
 
-    return eReplayCreate_APIHardwareUnsupported;
+    return ReplayStatus::APIHardwareUnsupported;
   }
 
   WrappedID3D12Device *wrappedDev = (WrappedID3D12Device *)dev;
@@ -1781,7 +1781,7 @@ ReplayCreateStatus D3D12_CreateReplayDevice(const char *logfile, IReplayDriver *
   if(logfile && wrappedDev->GetMainSerialiser()->HasError())
   {
     SAFE_RELEASE(wrappedDev);
-    return eReplayCreate_FileIOFailed;
+    return ReplayStatus::FileIOFailed;
   }
 
   RDCLOG("Created device.");
@@ -1790,7 +1790,7 @@ ReplayCreateStatus D3D12_CreateReplayDevice(const char *logfile, IReplayDriver *
   replay->SetProxy(logfile == NULL);
 
   *driver = (IReplayDriver *)replay;
-  return eReplayCreate_Success;
+  return ReplayStatus::Succeeded;
 }
 
 static DriverRegistration D3D12DriverRegistration(RDC_D3D12, "D3D12", &D3D12_CreateReplayDevice);

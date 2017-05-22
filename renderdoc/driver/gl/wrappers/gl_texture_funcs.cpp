@@ -122,7 +122,7 @@ bool WrappedOpenGL::Serialise_glCreateTextures(GLenum target, GLsizei n, GLuint 
 
     m_Textures[live].resource = res;
     m_Textures[live].curType = TextureTarget(Target);
-    m_Textures[live].creationFlags |= eTextureCreate_SRV;
+    m_Textures[live].creationFlags |= TextureCategory::ShaderRead;
   }
 
   return true;
@@ -162,7 +162,7 @@ void WrappedOpenGL::glCreateTextures(GLenum target, GLsizei n, GLuint *textures)
       GetResourceManager()->AddLiveResource(id, res);
       m_Textures[id].resource = res;
       m_Textures[id].curType = TextureTarget(target);
-      m_Textures[id].creationFlags |= eTextureCreate_SRV;
+      m_Textures[id].creationFlags |= TextureCategory::ShaderRead;
     }
   }
 }
@@ -214,7 +214,7 @@ bool WrappedOpenGL::Serialise_glBindTexture(GLenum target, GLuint texture)
       if(m_State == READING)
       {
         m_Textures[GetResourceManager()->GetLiveID(Id)].curType = TextureTarget(Target);
-        m_Textures[GetResourceManager()->GetLiveID(Id)].creationFlags |= eTextureCreate_SRV;
+        m_Textures[GetResourceManager()->GetLiveID(Id)].creationFlags |= TextureCategory::ShaderRead;
       }
     }
   }
@@ -305,7 +305,8 @@ bool WrappedOpenGL::Serialise_glBindTextures(GLuint first, GLsizei count, const 
       {
         texs[i] = GetResourceManager()->GetLiveResource(id).name;
         if(m_State == READING)
-          m_Textures[GetResourceManager()->GetLiveID(id)].creationFlags |= eTextureCreate_SRV;
+          m_Textures[GetResourceManager()->GetLiveID(id)].creationFlags |=
+              TextureCategory::ShaderRead;
       }
       else
       {
@@ -382,7 +383,7 @@ bool WrappedOpenGL::Serialise_glBindMultiTextureEXT(GLenum texunit, GLenum targe
       if(m_State == READING)
       {
         m_Textures[GetResourceManager()->GetLiveID(Id)].curType = TextureTarget(Target);
-        m_Textures[GetResourceManager()->GetLiveID(Id)].creationFlags |= eTextureCreate_SRV;
+        m_Textures[GetResourceManager()->GetLiveID(Id)].creationFlags |= TextureCategory::ShaderRead;
       }
     }
   }
@@ -522,7 +523,8 @@ bool WrappedOpenGL::Serialise_glBindImageTexture(GLuint unit, GLuint texture, GL
     m_Real.glBindImageTexture(Unit, tex, Level, Layered, Layer, Access, Format);
 
     if(m_State == READING)
-      m_Textures[GetResourceManager()->GetLiveID(texid)].creationFlags |= eTextureCreate_UAV;
+      m_Textures[GetResourceManager()->GetLiveID(texid)].creationFlags |=
+          TextureCategory::ShaderReadWrite;
   }
 
   return true;
@@ -571,7 +573,8 @@ bool WrappedOpenGL::Serialise_glBindImageTextures(GLuint first, GLsizei count, c
       {
         texs[i] = GetResourceManager()->GetLiveResource(id).name;
         if(m_State == READING)
-          m_Textures[GetResourceManager()->GetLiveID(id)].creationFlags |= eTextureCreate_UAV;
+          m_Textures[GetResourceManager()->GetLiveID(id)].creationFlags |=
+              TextureCategory::ShaderReadWrite;
       }
       else
       {
@@ -720,14 +723,14 @@ bool WrappedOpenGL::Serialise_glGenerateTextureMipmapEXT(GLuint texture, GLenum 
     AddEvent(desc);
     string name = "glGenerateMipmap(" + ToStr::Get(id) + ")";
 
-    FetchDrawcall draw;
+    DrawcallDescription draw;
     draw.name = name;
-    draw.flags |= eDraw_GenMips;
+    draw.flags |= DrawFlags::GenMips;
 
     AddDrawcall(draw, true);
 
     m_ResourceUses[GetResourceManager()->GetLiveID(id)].push_back(
-        EventUsage(m_CurEventID, eUsage_GenMips));
+        EventUsage(m_CurEventID, ResourceUsage::GenMips));
   }
 
   return true;
@@ -856,9 +859,9 @@ bool WrappedOpenGL::Serialise_glCopyImageSubData(GLuint srcName, GLenum srcTarge
     AddEvent(desc);
     string name = "glCopyImageSubData(" + ToStr::Get(srcid) + ", " + ToStr::Get(dstid) + ")";
 
-    FetchDrawcall draw;
+    DrawcallDescription draw;
     draw.name = name;
-    draw.flags |= eDraw_Copy;
+    draw.flags |= DrawFlags::Copy;
 
     draw.copySource = srcid;
     draw.copyDestination = dstid;
@@ -868,14 +871,14 @@ bool WrappedOpenGL::Serialise_glCopyImageSubData(GLuint srcName, GLenum srcTarge
     if(srcid == dstid)
     {
       m_ResourceUses[GetResourceManager()->GetLiveID(srcid)].push_back(
-          EventUsage(m_CurEventID, eUsage_Copy));
+          EventUsage(m_CurEventID, ResourceUsage::Copy));
     }
     else
     {
       m_ResourceUses[GetResourceManager()->GetLiveID(srcid)].push_back(
-          EventUsage(m_CurEventID, eUsage_CopySrc));
+          EventUsage(m_CurEventID, ResourceUsage::CopySrc));
       m_ResourceUses[GetResourceManager()->GetLiveID(dstid)].push_back(
-          EventUsage(m_CurEventID, eUsage_CopyDst));
+          EventUsage(m_CurEventID, ResourceUsage::CopyDst));
     }
   }
 
@@ -2024,7 +2027,7 @@ void WrappedOpenGL::Common_glTextureImage1DEXT(ResourceId texId, GLenum target, 
   if(IsProxyTarget(target) || internalformat == 0)
     return;
 
-  internalformat = GetSizedFormat(m_Real, target, (GLenum)internalformat);
+  internalformat = GetSizedFormat(m_Real, target, (GLenum)internalformat, type);
 
   bool fromunpackbuf = false;
   {
@@ -2256,7 +2259,7 @@ void WrappedOpenGL::Common_glTextureImage2DEXT(ResourceId texId, GLenum target, 
   if(IsProxyTarget(target) || internalformat == 0)
     return;
 
-  internalformat = GetSizedFormat(m_Real, target, (GLenum)internalformat);
+  internalformat = GetSizedFormat(m_Real, target, (GLenum)internalformat, type);
 
   bool fromunpackbuf = false;
   {
@@ -2470,7 +2473,7 @@ void WrappedOpenGL::Common_glTextureImage3DEXT(ResourceId texId, GLenum target, 
   if(IsProxyTarget(target) || internalformat == 0)
     return;
 
-  internalformat = GetSizedFormat(m_Real, target, (GLenum)internalformat);
+  internalformat = GetSizedFormat(m_Real, target, (GLenum)internalformat, type);
 
   bool fromunpackbuf = false;
   {
@@ -4339,9 +4342,7 @@ bool WrappedOpenGL::Serialise_glTextureSubImage1DEXT(GLuint texture, GLenum targ
       m_Real.glBindBuffer(eGL_PIXEL_UNPACK_BUFFER, 0);
 
       unpack.Fetch(&m_Real, false);
-      PixelUnpackState empty = {};
-      empty.alignment = 1;
-      empty.Apply(&m_Real, false);
+      ResetPixelUnpackState(m_Real, false, 1);
     }
 
     if(Format == eGL_LUMINANCE)
@@ -4533,9 +4534,7 @@ bool WrappedOpenGL::Serialise_glTextureSubImage2DEXT(GLuint texture, GLenum targ
       m_Real.glBindBuffer(eGL_PIXEL_UNPACK_BUFFER, 0);
 
       unpack.Fetch(&m_Real, false);
-      PixelUnpackState empty = {};
-      empty.alignment = 1;
-      empty.Apply(&m_Real, false);
+      ResetPixelUnpackState(m_Real, false, 1);
     }
 
     if(Format == eGL_LUMINANCE)
@@ -4735,9 +4734,7 @@ bool WrappedOpenGL::Serialise_glTextureSubImage3DEXT(GLuint texture, GLenum targ
       m_Real.glBindBuffer(eGL_PIXEL_UNPACK_BUFFER, 0);
 
       unpack.Fetch(&m_Real, false);
-      PixelUnpackState empty = {};
-      empty.alignment = 1;
-      empty.Apply(&m_Real, false);
+      ResetPixelUnpackState(m_Real, false, 1);
     }
 
     if(Format == eGL_LUMINANCE)
@@ -4938,9 +4935,7 @@ bool WrappedOpenGL::Serialise_glCompressedTextureSubImage1DEXT(GLuint texture, G
       m_Real.glBindBuffer(eGL_PIXEL_UNPACK_BUFFER, 0);
 
       unpack.Fetch(&m_Real, true);
-      PixelUnpackState empty = {};
-      empty.alignment = 1;
-      empty.Apply(&m_Real, true);
+      ResetPixelUnpackState(m_Real, true, 1);
     }
 
     if(Target != eGL_NONE)
@@ -5123,9 +5118,7 @@ bool WrappedOpenGL::Serialise_glCompressedTextureSubImage2DEXT(GLuint texture, G
       m_Real.glBindBuffer(eGL_PIXEL_UNPACK_BUFFER, 0);
 
       unpack.Fetch(&m_Real, true);
-      PixelUnpackState empty = {};
-      empty.alignment = 1;
-      empty.Apply(&m_Real, true);
+      ResetPixelUnpackState(m_Real, true, 1);
     }
 
     if(Target != eGL_NONE)
@@ -5318,9 +5311,7 @@ bool WrappedOpenGL::Serialise_glCompressedTextureSubImage3DEXT(GLuint texture, G
       m_Real.glBindBuffer(eGL_PIXEL_UNPACK_BUFFER, 0);
 
       unpack.Fetch(&m_Real, true);
-      PixelUnpackState empty = {};
-      empty.alignment = 1;
-      empty.Apply(&m_Real, true);
+      ResetPixelUnpackState(m_Real, true, 1);
     }
 
     if(Target != eGL_NONE)

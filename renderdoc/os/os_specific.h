@@ -37,6 +37,7 @@
 #include <map>
 #include <string>
 #include <vector>
+#include "api/replay/renderdoc_replay.h"
 #include "common/common.h"
 
 using std::string;
@@ -47,41 +48,13 @@ struct CaptureOptions;
 
 namespace Process
 {
-enum ModificationType
-{
-  eEnvModification_Replace = 0,
-
-  // prepend/append options will replace if there is no existing variable
-  eEnvModification_AppendPlatform,     // append, separated by colons for linux & semi-colons for
-                                       // windows
-  eEnvModification_AppendSemiColon,    // append, separated by semi-colons
-  eEnvModification_AppendColon,        // append, separated by colons
-  eEnvModification_Append,             // append with no separators
-
-  eEnvModification_PrependPlatform,     // prepend, separated by colons for linux & semi-colons for
-                                        // windows
-  eEnvModification_PrependSemiColon,    // prepend, separated by semi-colons
-  eEnvModification_PrependColon,        // prepend, separated by colons
-  eEnvModification_Prepend,             // prepend with no separators
-};
-struct EnvironmentModification
-{
-  EnvironmentModification() : type(eEnvModification_Replace), name(""), value("") {}
-  EnvironmentModification(ModificationType t, const char *n, const char *v)
-      : type(t), name(n), value(v)
-  {
-  }
-  ModificationType type;
-  string name;
-  string value;
-};
 void RegisterEnvironmentModification(EnvironmentModification modif);
 
 void ApplyEnvironmentModification();
 
-void StartGlobalHook(const char *pathmatch, const char *logfile, const CaptureOptions *opts);
-uint32_t InjectIntoProcess(uint32_t pid, EnvironmentModification *env, const char *logfile,
-                           const CaptureOptions *opts, bool waitForExit);
+void StartGlobalHook(const char *pathmatch, const char *logfile, const CaptureOptions &opts);
+uint32_t InjectIntoProcess(uint32_t pid, const rdctype::array<EnvironmentModification> &env,
+                           const char *logfile, const CaptureOptions &opts, bool waitForExit);
 struct ProcessResult
 {
   string strStdout, strStderror;
@@ -90,8 +63,9 @@ struct ProcessResult
 uint32_t LaunchProcess(const char *app, const char *workingDir, const char *cmdLine,
                        ProcessResult *result = NULL);
 uint32_t LaunchAndInjectIntoProcess(const char *app, const char *workingDir, const char *cmdLine,
-                                    EnvironmentModification *env, const char *logfile,
-                                    const CaptureOptions *opts, bool waitForExit);
+                                    const rdctype::array<EnvironmentModification> &env,
+                                    const char *logfile, const CaptureOptions &opts,
+                                    bool waitForExit);
 void *LoadModule(const char *module);
 void *GetFunctionAddress(void *module, const char *function);
 uint32_t GetCurrentPID();
@@ -271,34 +245,14 @@ uint64_t GetModifiedTimestamp(const string &filename);
 
 void Copy(const char *from, const char *to, bool allowOverwrite);
 void Delete(const char *path);
-
-enum
-{
-  eFileProp_Directory = 0x1,
-  eFileProp_Hidden = 0x2,
-  eFileProp_Executable = 0x4,
-
-  eFileProp_ErrorUnknown = 0x2000,
-  eFileProp_ErrorAccessDenied = 0x4000,
-  eFileProp_ErrorInvalidPath = 0x8000,
-};
-
-struct FoundFile
-{
-  FoundFile() : flags(0) {}
-  FoundFile(string fn, uint32_t f) : filename(fn), flags(f), lastmod(0), size(0) {}
-  string filename;
-  uint32_t flags;
-  uint32_t lastmod;
-  uint64_t size;
-};
-
-vector<FoundFile> GetFilesInDirectory(const char *path);
+std::vector<PathEntry> GetFilesInDirectory(const char *path);
 
 FILE *fopen(const char *filename, const char *mode);
 
 size_t fread(void *buf, size_t elementSize, size_t count, FILE *f);
 size_t fwrite(const void *buf, size_t elementSize, size_t count, FILE *f);
+
+bool exists(const char *filename);
 
 std::string getline(FILE *f);
 
@@ -311,9 +265,9 @@ int fclose(FILE *f);
 
 // functions for atomically appending to a log that may be in use in multiple
 // processes
-void *logfile_open(const char *filename);
-void logfile_append(void *handle, const char *msg, size_t length);
-void logfile_close(void *handle);
+bool logfile_open(const char *filename);
+void logfile_append(const char *msg, size_t length);
+void logfile_close(const char *filename);
 
 // utility functions
 inline bool dump(const char *filename, const void *buffer, size_t size)
@@ -363,9 +317,6 @@ namespace StringFormat
 {
 void sntimef(char *str, size_t bufSize, const char *format);
 
-// forwards to vsnprintf below, needed to be here due to va_copy differences
-string Fmt(const char *format, ...);
-
 string Wide2UTF8(const std::wstring &s);
 };
 
@@ -375,6 +326,8 @@ namespace StringFormat
 {
 int vsnprintf(char *str, size_t bufSize, const char *format, va_list v);
 int snprintf(char *str, size_t bufSize, const char *format, ...);
+
+string Fmt(const char *format, ...);
 
 int Wide2UTF8(wchar_t chr, char mbchr[4]);
 };

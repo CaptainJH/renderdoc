@@ -32,23 +32,26 @@ namespace Ui
 class GLPipelineStateViewer;
 }
 
+class QXmlStreamWriter;
+
 class RDTreeWidget;
-class QTreeWidgetItem;
+class RDTreeWidgetItem;
 class PipelineStateViewer;
 
-class GLPipelineStateViewer : public QFrame, public ILogViewerForm
+class GLPipelineStateViewer : public QFrame, public ILogViewer
 {
   Q_OBJECT
 
 public:
-  explicit GLPipelineStateViewer(CaptureContext &ctx, PipelineStateViewer &common,
+  explicit GLPipelineStateViewer(ICaptureContext &ctx, PipelineStateViewer &common,
                                  QWidget *parent = 0);
   ~GLPipelineStateViewer();
 
-  void OnLogfileLoaded();
-  void OnLogfileClosed();
-  void OnSelectedEventChanged(uint32_t eventID) {}
-  void OnEventChanged(uint32_t eventID);
+  // ILogViewerForm
+  void OnLogfileLoaded() override;
+  void OnLogfileClosed() override;
+  void OnSelectedEventChanged(uint32_t eventID) override {}
+  void OnEventChanged(uint32_t eventID) override;
 
 private slots:
   // automatic slots
@@ -56,23 +59,24 @@ private slots:
   void on_showEmpty_toggled(bool checked);
   void on_exportHTML_clicked();
   void on_meshView_clicked();
-  void on_viAttrs_itemActivated(QTreeWidgetItem *item, int column);
-  void on_viBuffers_itemActivated(QTreeWidgetItem *item, int column);
+  void on_viAttrs_itemActivated(RDTreeWidgetItem *item, int column);
+  void on_viBuffers_itemActivated(RDTreeWidgetItem *item, int column);
   void on_viAttrs_mouseMove(QMouseEvent *event);
   void on_viBuffers_mouseMove(QMouseEvent *event);
   void on_pipeFlow_stageSelected(int index);
 
   // manual slots
   void shaderView_clicked();
+  void shaderLabel_clicked(QMouseEvent *event);
   void shaderEdit_clicked();
   void shaderSave_clicked();
-  void resource_itemActivated(QTreeWidgetItem *item, int column);
-  void ubo_itemActivated(QTreeWidgetItem *item, int column);
+  void resource_itemActivated(RDTreeWidgetItem *item, int column);
+  void ubo_itemActivated(RDTreeWidgetItem *item, int column);
   void vertex_leave(QEvent *e);
 
 private:
   Ui::GLPipelineStateViewer *ui;
-  CaptureContext &m_Ctx;
+  ICaptureContext &m_Ctx;
   PipelineStateViewer &m_Common;
 
   enum class GLReadWriteType
@@ -82,27 +86,33 @@ private:
     Image,
   };
 
-  QString MakeGenericValueString(uint32_t compCount, FormatComponentType compType,
-                                 const GLPipelineState::VertexInput::VertexAttribute &val);
+  QString MakeGenericValueString(uint32_t compCount, CompType compType,
+                                 const GLPipe::VertexAttribute &val);
   GLReadWriteType GetGLReadWriteType(ShaderResource res);
 
-  void setShaderState(const GLPipelineState::ShaderStage &stage, QLabel *shader, RDTreeWidget *tex,
+  void setShaderState(const GLPipe::Shader &stage, QLabel *shader, RDTreeWidget *tex,
                       RDTreeWidget *samp, RDTreeWidget *ubo, RDTreeWidget *sub, RDTreeWidget *rw);
   void clearShaderState(QLabel *shader, RDTreeWidget *tex, RDTreeWidget *samp, RDTreeWidget *ubo,
                         RDTreeWidget *sub, RDTreeWidget *rw);
   void setState();
   void clearState();
 
-  void setInactiveRow(QTreeWidgetItem *node);
-  void setEmptyRow(QTreeWidgetItem *node);
+  void setInactiveRow(RDTreeWidgetItem *node);
+  void setEmptyRow(RDTreeWidgetItem *node);
   void highlightIABind(int slot);
 
   QString formatMembers(int indent, const QString &nameprefix,
                         const rdctype::array<ShaderConstant> &vars);
-  const GLPipelineState::ShaderStage *stageForSender(QWidget *widget);
+  const GLPipe::Shader *stageForSender(QWidget *widget);
 
   bool showNode(bool usedSlot, bool filledSlot);
 
+  void exportHTML(QXmlStreamWriter &xml, GLPipe::VertexInput &vtx);
+  void exportHTML(QXmlStreamWriter &xml, GLPipe::Shader &sh);
+  void exportHTML(QXmlStreamWriter &xml, GLPipe::Feedback &xfb);
+  void exportHTML(QXmlStreamWriter &xml, GLPipe::Rasterizer &rs);
+  void exportHTML(QXmlStreamWriter &xml, GLPipe::FrameBuffer &fb);
+
   // keep track of the VB nodes (we want to be able to highlight them easily on hover)
-  QList<QTreeWidgetItem *> m_VBNodes;
+  QList<RDTreeWidgetItem *> m_VBNodes;
 };

@@ -33,14 +33,14 @@ class SettingsDialog;
 
 class QListWidgetItem;
 
-class CaptureContext;
+struct ICaptureContext;
 
 class SettingsDialog : public QDialog
 {
   Q_OBJECT
 
 public:
-  explicit SettingsDialog(CaptureContext &ctx, QWidget *parent = 0);
+  explicit SettingsDialog(ICaptureContext &ctx, QWidget *parent = 0);
   ~SettingsDialog();
 
 private slots:
@@ -75,10 +75,11 @@ private slots:
 
   // event browser
   void on_EventBrowser_TimeUnit_currentIndexChanged(int index);
+  void on_EventBrowser_AddFake_toggled(bool checked);
   void on_EventBrowser_HideEmpty_toggled(bool checked);
   void on_EventBrowser_HideAPICalls_toggled(bool checked);
-  void on_EventBrowser_ApplyColours_toggled(bool checked);
-  void on_EventBrowser_ColourEventRow_toggled(bool checked);
+  void on_EventBrowser_ApplyColors_toggled(bool checked);
+  void on_EventBrowser_ColorEventRow_toggled(bool checked);
 
   // android
   void on_browseTempCaptureDirectory_clicked();
@@ -92,6 +93,6 @@ private slots:
 private:
   Ui::SettingsDialog *ui;
 
-  CaptureContext &m_Ctx;
+  ICaptureContext &m_Ctx;
   bool m_Init = false;
 };

@@ -203,7 +203,6 @@ namespace renderdocui.Windows
 
         private byte[] m_Zeroes = null;
 
-        private OutputConfig m_OutConfig = new OutputConfig();
         private MeshDisplay m_MeshDisplay = new MeshDisplay();
 
         private IntPtr RenderHandle = IntPtr.Zero;
@@ -301,8 +300,6 @@ namespace renderdocui.Windows
 
         private void ResetConfig()
         {
-            m_OutConfig.m_Type = OutputType.MeshDisplay;
-
             m_MeshDisplay = new MeshDisplay();
             m_MeshDisplay.type = MeshDataStage.VSIn;
             m_MeshDisplay.fov = 90.0f;
@@ -558,7 +555,6 @@ namespace renderdocui.Windows
                         return;
 
                     m_Output = r.CreateOutput(RenderHandle, OutputType.MeshDisplay);
-                    m_Output.SetOutputConfig(m_OutConfig);
                     RT_UpdateRenderOutput(r);
                     m_Output.Display(); // pump the display once, this will fetch postvs data
 
@@ -824,7 +820,7 @@ namespace renderdocui.Windows
                 if (IsDisposed || MeshView) return int.MaxValue;
                 int maxrows = 0;
                 int.TryParse(rowRange.Text, out maxrows);
-                return maxrows;
+                return Math.Max(0, maxrows);
             }
         }
 
@@ -979,7 +975,6 @@ namespace renderdocui.Windows
                     f[i].format.compCount = sig.compCount;
                     f[i].format.compType = sig.compType;
                     f[i].format.special = false;
-                    f[i].format.rawType = 0;
                     f[i].perinstance = false;
                     f[i].instancerate = 1;
                     f[i].rowmajor = false;
@@ -1882,12 +1877,13 @@ namespace renderdocui.Windows
 
                 ScrollToRow(bufView, RowOffset);
 
-                if (m_QueuedRowSelect != -1)
+                if (m_QueuedRowSelect != -1 && state.m_Stage == m_MeshDisplay.type)
                 {
                     ScrollToRow(bufView, m_QueuedRowSelect);
 
                     bufView.ClearSelection();
-                    bufView.Rows[m_QueuedRowSelect].Selected = true;
+                    if(m_QueuedRowSelect < bufView.RowCount)
+                        bufView.Rows[m_QueuedRowSelect].Selected = true;
 
                     SyncViews(bufView, true, true);
 
@@ -2390,7 +2386,7 @@ namespace renderdocui.Windows
             if (!m_Core.LogLoaded)
                 return;
 
-            m_Core.Renderer.BeginInvoke((ReplayRenderer r) =>
+            m_Core.Renderer.BeginInvoke("PickVertex", (ReplayRenderer r) =>
             {
                 UInt32 instanceSelected = 0;
                 UInt32 vertSelected = m_Output.PickVertex(m_Core.CurEvent, (UInt32)p.X, (UInt32)p.Y, out instanceSelected);
@@ -2597,7 +2593,7 @@ namespace renderdocui.Windows
                 return;
             }
 
-            m_Core.Renderer.InvokeForPaint((ReplayRenderer r) => { RT_UpdateRenderOutput(r); if (m_Output != null) m_Output.Display(); });
+            m_Core.Renderer.InvokeForPaint("bufferpaint", (ReplayRenderer r) => { RT_UpdateRenderOutput(r); if (m_Output != null) m_Output.Display(); });
         }
 
         private void BufferViewer_Load(object sender, EventArgs e)

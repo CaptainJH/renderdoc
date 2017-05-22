@@ -32,7 +32,7 @@ static const int EIDRole = Qt::UserRole + 1;
 class DebugMessageItemModel : public QAbstractItemModel
 {
 public:
-  DebugMessageItemModel(CaptureContext &ctx, QObject *parent)
+  DebugMessageItemModel(ICaptureContext &ctx, QObject *parent)
       : QAbstractItemModel(parent), m_Ctx(ctx)
   {
   }
@@ -54,7 +54,7 @@ public:
   QModelIndex parent(const QModelIndex &index) const override { return QModelIndex(); }
   int rowCount(const QModelIndex &parent = QModelIndex()) const override
   {
-    return m_Ctx.DebugMessages.count();
+    return m_Ctx.DebugMessages().count();
   }
   int columnCount(const QModelIndex &parent = QModelIndex()) const override { return 6; }
   Qt::ItemFlags flags(const QModelIndex &index) const override
@@ -71,12 +71,12 @@ public:
     {
       switch(section)
       {
-        case 0: return "EID";
-        case 1: return "Source";
-        case 2: return "Severity";
-        case 3: return "Category";
-        case 4: return "ID";
-        case 5: return "Description";
+        case 0: return lit("EID");
+        case 1: return lit("Source");
+        case 2: return lit("Severity");
+        case 3: return lit("Category");
+        case 4: return lit("ID");
+        case 5: return lit("Description");
         default: break;
       }
     }
@@ -93,7 +93,7 @@ public:
 
       if(col >= 0 && col < columnCount() && row < rowCount())
       {
-        const DebugMessage &msg = m_Ctx.DebugMessages[row];
+        const DebugMessage &msg = m_Ctx.DebugMessages()[row];
 
         switch(col)
         {
@@ -109,34 +109,34 @@ public:
     }
 
     if(index.isValid() && role == EIDRole && index.row() >= 0 &&
-       index.row() < m_Ctx.DebugMessages.count())
-      return m_Ctx.DebugMessages[index.row()].eventID;
+       index.row() < m_Ctx.DebugMessages().count())
+      return m_Ctx.DebugMessages()[index.row()].eventID;
 
     return QVariant();
   }
 
 private:
-  CaptureContext &m_Ctx;
+  ICaptureContext &m_Ctx;
 };
 
 class DebugMessageFilterModel : public QSortFilterProxyModel
 {
 public:
-  DebugMessageFilterModel(CaptureContext &ctx, QObject *parent)
+  DebugMessageFilterModel(ICaptureContext &ctx, QObject *parent)
       : QSortFilterProxyModel(parent), m_Ctx(ctx)
   {
   }
 
-  typedef QPair<QPair<DebugMessageSource, DebugMessageCategory>, uint32_t> DebugMessageType;
-  static DebugMessageType makeType(const DebugMessage &msg)
+  typedef QPair<QPair<MessageSource, MessageCategory>, uint32_t> MessageType;
+  static MessageType makeType(const DebugMessage &msg)
   {
     return qMakePair(qMakePair(msg.source, msg.category), msg.messageID);
   }
 
-  QList<DebugMessageSource> m_HiddenSources;
-  QList<DebugMessageCategory> m_HiddenCategories;
-  QList<DebugMessageSeverity> m_HiddenSeverities;
-  QList<DebugMessageType> m_HiddenTypes;
+  QList<MessageSource> m_HiddenSources;
+  QList<MessageCategory> m_HiddenCategories;
+  QList<MessageSeverity> m_HiddenSeverities;
+  QList<MessageType> m_HiddenTypes;
 
   bool showHidden = false;
 
@@ -164,7 +164,7 @@ protected:
 
   bool isVisibleRow(int sourceRow) const
   {
-    const DebugMessage &msg = m_Ctx.DebugMessages[sourceRow];
+    const DebugMessage &msg = m_Ctx.DebugMessages()[sourceRow];
 
     if(m_HiddenSources.contains(msg.source))
       return false;
@@ -183,8 +183,8 @@ protected:
 
   bool lessThan(const QModelIndex &left, const QModelIndex &right) const override
   {
-    const DebugMessage &leftMsg = m_Ctx.DebugMessages[left.row()];
-    const DebugMessage &rightMsg = m_Ctx.DebugMessages[right.row()];
+    const DebugMessage &leftMsg = m_Ctx.DebugMessages()[left.row()];
+    const DebugMessage &rightMsg = m_Ctx.DebugMessages()[right.row()];
 
     if(leftMsg.eventID < rightMsg.eventID)
       return true;
@@ -205,10 +205,10 @@ protected:
   }
 
 private:
-  CaptureContext &m_Ctx;
+  ICaptureContext &m_Ctx;
 };
 
-DebugMessageView::DebugMessageView(CaptureContext &ctx, QWidget *parent)
+DebugMessageView::DebugMessageView(ICaptureContext &ctx, QWidget *parent)
     : QFrame(parent), ui(new Ui::DebugMessageView), m_Ctx(ctx)
 {
   ui->setupUi(this);
@@ -223,15 +223,17 @@ DebugMessageView::DebugMessageView(CaptureContext &ctx, QWidget *parent)
   QObject::connect(ui->messages, &QWidget::customContextMenuRequested, this,
                    &DebugMessageView::messages_contextMenu);
 
+  ui->messages->setFont(Formatter::PreferredFont());
+
   m_Ctx.AddLogViewer(this);
 
   m_ContextMenu = new QMenu(this);
 
   m_ShowHidden = new QAction(tr("Show hidden rows"), this);
-  m_ToggleSource = new QAction("", this);
-  m_ToggleSeverity = new QAction("", this);
-  m_ToggleCategory = new QAction("", this);
-  m_ToggleMessageType = new QAction("", this);
+  m_ToggleSource = new QAction(QString(), this);
+  m_ToggleSeverity = new QAction(QString(), this);
+  m_ToggleCategory = new QAction(QString(), this);
+  m_ToggleMessageType = new QAction(QString(), this);
 
   m_ShowHidden->setCheckable(true);
 
@@ -254,7 +256,7 @@ DebugMessageView::DebugMessageView(CaptureContext &ctx, QWidget *parent)
 
 DebugMessageView::~DebugMessageView()
 {
-  m_Ctx.windowClosed(this);
+  m_Ctx.BuiltinWindowClosed(this);
 
   m_Ctx.RemoveLogViewer(this);
   delete ui;
@@ -278,8 +280,8 @@ void DebugMessageView::RefreshMessageList()
 
   ui->messages->resizeColumnsToContents();
 
-  if(m_Ctx.UnreadMessageCount > 0)
-    setWindowTitle(tr("(%1) Errors and Warnings").arg(m_Ctx.UnreadMessageCount));
+  if(m_Ctx.UnreadMessageCount() > 0)
+    setWindowTitle(tr("(%1) Errors and Warnings").arg(m_Ctx.UnreadMessageCount()));
   else
     setWindowTitle(tr("Errors and Warnings"));
 }
@@ -348,7 +350,7 @@ void DebugMessageView::messages_contextMenu(const QPoint &pos)
   {
     index = m_FilterModel->mapToSource(index);
 
-    const DebugMessage &msg = m_Ctx.DebugMessages[index.row()];
+    const DebugMessage &msg = m_Ctx.DebugMessages()[index.row()];
 
     QString hide = tr("Hide");
     QString show = tr("Show");
@@ -375,9 +377,9 @@ void DebugMessageView::messages_contextMenu(const QPoint &pos)
 
 void DebugMessageView::paintEvent(QPaintEvent *e)
 {
-  if(m_Ctx.UnreadMessageCount > 0)
+  if(m_Ctx.UnreadMessageCount() > 0)
   {
-    m_Ctx.UnreadMessageCount = 0;
+    m_Ctx.MarkMessagesRead();
     RefreshMessageList();
   }
 

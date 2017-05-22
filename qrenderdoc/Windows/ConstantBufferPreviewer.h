@@ -32,23 +32,28 @@ namespace Ui
 class ConstantBufferPreviewer;
 }
 
+class RDTreeWidgetItem;
 struct FormatElement;
 
-class ConstantBufferPreviewer : public QFrame, public ILogViewerForm
+class ConstantBufferPreviewer : public QFrame, public IConstantBufferPreviewer, public ILogViewer
 {
   Q_OBJECT
 
 public:
-  explicit ConstantBufferPreviewer(CaptureContext &ctx, const ShaderStageType stage, uint32_t slot,
+  explicit ConstantBufferPreviewer(ICaptureContext &ctx, const ShaderStage stage, uint32_t slot,
                                    uint32_t idx, QWidget *parent = 0);
   ~ConstantBufferPreviewer();
 
-  static ConstantBufferPreviewer *has(ShaderStageType stage, uint32_t slot, uint32_t idx);
+  static ConstantBufferPreviewer *has(ShaderStage stage, uint32_t slot, uint32_t idx);
+  static ConstantBufferPreviewer *getOne();
 
-  void OnLogfileLoaded();
-  void OnLogfileClosed();
-  void OnSelectedEventChanged(uint32_t eventID) {}
-  void OnEventChanged(uint32_t eventID);
+  // IConstantBufferPreviewer
+  QWidget *Widget() override { return this; }
+  // ILogViewerForm
+  void OnLogfileLoaded() override;
+  void OnLogfileClosed() override;
+  void OnSelectedEventChanged(uint32_t eventID) override {}
+  void OnEventChanged(uint32_t eventID) override;
 
 private slots:
   // automatic slots
@@ -60,18 +65,23 @@ private slots:
 
 private:
   Ui::ConstantBufferPreviewer *ui;
-  CaptureContext &m_Ctx;
+  ICaptureContext &m_Ctx;
 
   ResourceId m_cbuffer;
   ResourceId m_shader;
-  ShaderStageType m_stage = eShaderStage_Vertex;
+  ShaderStage m_stage = ShaderStage::Vertex;
   uint32_t m_slot = 0;
   uint32_t m_arrayIdx = 0;
 
   rdctype::array<ShaderVariable> applyFormatOverride(const rdctype::array<byte> &data);
 
-  void addVariables(QTreeWidgetItem *root, const rdctype::array<ShaderVariable> &vars);
+  void addVariables(RDTreeWidgetItem *root, const rdctype::array<ShaderVariable> &vars);
   void setVariables(const rdctype::array<ShaderVariable> &vars);
+
+  rdctype::array<ShaderVariable> m_Vars;
+
+  bool updateVariables(RDTreeWidgetItem *root, const rdctype::array<ShaderVariable> &prevVars,
+                       const rdctype::array<ShaderVariable> &newVars);
 
   void updateLabels();
 

@@ -31,7 +31,9 @@ static volatile int64_t globalIDCounter = 1;
 
 ResourceId GetNewUniqueID()
 {
-  return ResourceId(Atomic::Inc64(&globalIDCounter), true);
+  ResourceId ret;
+  ret.id = Atomic::Inc64(&globalIDCounter);
+  return ret;
 }
 
 void SetReplayResourceIDs()
@@ -47,11 +49,11 @@ void SetReplayResourceIDs()
 }
 };
 
-void ResourceRecord::MarkResourceFrameReferenced(ResourceId id, FrameRefType refType)
+bool ResourceRecord::MarkResourceFrameReferenced(ResourceId id, FrameRefType refType)
 {
   if(id == ResourceId())
-    return;
-  ResourceManager<void *, void *, ResourceRecord>::MarkReferenced(m_FrameRefs, id, refType);
+    return false;
+  return ResourceManager<void *, void *, ResourceRecord>::MarkReferenced(m_FrameRefs, id, refType);
 }
 
 void ResourceRecord::AddResourceReferences(ResourceRecordHandler *mgr)

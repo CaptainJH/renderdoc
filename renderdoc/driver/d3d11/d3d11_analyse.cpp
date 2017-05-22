@@ -93,7 +93,7 @@ void D3D11DebugManager::FillCBufferVariables(const string &prefix, size_t &offse
       ShaderVariable var;
       var.name = basename;
       var.rows = var.columns = 0;
-      var.type = eVar_Float;
+      var.type = VarType::Float;
 
       std::vector<ShaderVariable> varmembers;
 
@@ -113,7 +113,7 @@ void D3D11DebugManager::FillCBufferVariables(const string &prefix, size_t &offse
             ShaderVariable vr;
             vr.name = basename + buf;
             vr.rows = vr.columns = 0;
-            vr.type = eVar_Float;
+            vr.type = VarType::Float;
 
             std::vector<ShaderVariable> mems;
 
@@ -159,17 +159,17 @@ void D3D11DebugManager::FillCBufferVariables(const string &prefix, size_t &offse
     }
 
     size_t elemByteSize = 4;
-    VarType type = eVar_Float;
+    VarType type = VarType::Float;
     switch(invars[v].type.descriptor.type)
     {
-      case VARTYPE_INT: type = eVar_Int; break;
-      case VARTYPE_FLOAT: type = eVar_Float; break;
+      case VARTYPE_INT: type = VarType::Int; break;
+      case VARTYPE_FLOAT: type = VarType::Float; break;
       case VARTYPE_BOOL:
       case VARTYPE_UINT:
-      case VARTYPE_UINT8: type = eVar_UInt; break;
+      case VARTYPE_UINT8: type = VarType::UInt; break;
       case VARTYPE_DOUBLE:
         elemByteSize = 8;
-        type = eVar_Double;
+        type = VarType::Double;
         break;
       default:
         RDCERR("Unexpected type %d for variable '%s' in cbuffer", invars[v].type.descriptor.type,
@@ -360,6 +360,12 @@ void D3D11DebugManager::FillCBufferVariables(const string &prefix, size_t &offse
             rowDataOffset = AlignUp(rowDataOffset, sizeof(Vec4f));
           }
 
+          // arrays are also aligned to the nearest Vec4f for each element
+          if(!flatten && isArray)
+          {
+            rowDataOffset = AlignUp(rowDataOffset, sizeof(Vec4f));
+          }
+
           if(rowDataOffset < data.size())
           {
             const byte *d = &data[rowDataOffset];
@@ -466,10 +472,10 @@ ShaderDebug::State D3D11DebugManager::CreateShaderDebugState(ShaderDebugTrace &t
                                                            ? 2
                                                            : sig.regChannelMask & 0x1 ? 1 : 0;
 
-      if(sig.compType == eCompType_UInt)
-        v.type = eVar_UInt;
-      else if(sig.compType == eCompType_SInt)
-        v.type = eVar_Int;
+      if(sig.compType == CompType::UInt)
+        v.type = VarType::UInt;
+      else if(sig.compType == CompType::SInt)
+        v.type = VarType::Int;
 
       if(trace.inputs[sig.regIndex].columns == 0)
         trace.inputs[sig.regIndex] = v;
@@ -536,15 +542,15 @@ ShaderDebug::State D3D11DebugManager::CreateShaderDebugState(ShaderDebugTrace &t
 
       ShaderVariable v;
 
-      if(sig.systemValue == eAttr_OutputControlPointIndex)
+      if(sig.systemValue == ShaderBuiltin::OutputControlPointIndex)
         v.name = "vOutputControlPointID";
-      else if(sig.systemValue == eAttr_DepthOutput)
+      else if(sig.systemValue == ShaderBuiltin::DepthOutput)
         v.name = "oDepth";
-      else if(sig.systemValue == eAttr_DepthOutputLessEqual)
+      else if(sig.systemValue == ShaderBuiltin::DepthOutputLessEqual)
         v.name = "oDepthLessEqual";
-      else if(sig.systemValue == eAttr_DepthOutputGreaterEqual)
+      else if(sig.systemValue == ShaderBuiltin::DepthOutputGreaterEqual)
         v.name = "oDepthGreaterEqual";
-      else if(sig.systemValue == eAttr_MSAACoverage)
+      else if(sig.systemValue == ShaderBuiltin::MSAACoverage)
         v.name = "oMask";
       // if(sig.systemValue == TYPE_OUTPUT_CONTROL_POINT)							str = "oOutputControlPoint";
       else
@@ -883,7 +889,7 @@ void D3D11DebugManager::CreateShaderGlobalState(ShaderDebug::GlobalState &global
 // want to copy the data to
 struct DataOutput
 {
-  DataOutput(int regster, int element, int numWords, SystemAttribute attr, bool inc)
+  DataOutput(int regster, int element, int numWords, ShaderBuiltin attr, bool inc)
   {
     reg = regster;
     elem = element;
@@ -894,7 +900,7 @@ struct DataOutput
 
   int reg;
   int elem;
-  SystemAttribute sysattribute;
+  ShaderBuiltin sysattribute;
 
   int numwords;
 
@@ -926,7 +932,7 @@ ShaderDebugTrace D3D11DebugManager::DebugVertex(uint32_t eventID, uint32_t verti
 
   ShaderDebugTrace empty;
 
-  const FetchDrawcall *draw = m_WrappedDevice->GetDrawcall(eventID);
+  const DrawcallDescription *draw = m_WrappedDevice->GetDrawcall(eventID);
 
   D3D11RenderStateTracker tracker(m_WrappedContext);
 
@@ -1019,10 +1025,11 @@ ShaderDebugTrace D3D11DebugManager::DebugVertex(uint32_t eventID, uint32_t verti
 
   for(int32_t i = 0; i < ret.inputs.count; i++)
   {
-    if(dxbc->m_InputSig[i].systemValue == eAttr_None ||
-       dxbc->m_InputSig[i].systemValue == eAttr_Position)    // SV_Position seems to get promoted
-                                                             // automatically, but it's invalid for
-                                                             // vertex input
+    if(dxbc->m_InputSig[i].systemValue == ShaderBuiltin::Undefined ||
+       dxbc->m_InputSig[i].systemValue ==
+           ShaderBuiltin::Position)    // SV_Position seems to get promoted
+                                       // automatically, but it's invalid for
+                                       // vertex input
     {
       const D3D11_INPUT_ELEMENT_DESC *el = NULL;
 
@@ -1062,7 +1069,7 @@ ShaderDebugTrace D3D11DebugManager::DebugVertex(uint32_t eventID, uint32_t verti
       }
       else
       {
-        if(el->InstanceDataStepRate >= draw->numInstances)
+        if(el->InstanceDataStepRate == 0 || el->InstanceDataStepRate >= draw->numInstances)
         {
           srcData = &staticData[el->InputSlot][el->AlignedByteOffset];
           dataSize = staticData[el->InputSlot].size() - el->AlignedByteOffset;
@@ -1085,7 +1092,7 @@ ShaderDebugTrace D3D11DebugManager::DebugVertex(uint32_t eventID, uint32_t verti
       {
         ret.inputs[i].value.u.w = 1;
 
-        if(fmt.compType == eCompType_Float)
+        if(fmt.compType == CompType::Float)
           ret.inputs[i].value.f.w = 1.0f;
       }
 
@@ -1099,8 +1106,8 @@ ShaderDebugTrace D3D11DebugManager::DebugVertex(uint32_t eventID, uint32_t verti
         // if there's only e.g. 3 bytes remaining don't read and unpack some of
         // a 4-byte special format
         size_t packedsize = 4;
-        if(fmt.specialFormat == eSpecial_R5G5B5A1 || fmt.specialFormat == eSpecial_R5G6B5 ||
-           fmt.specialFormat == eSpecial_R4G4B4A4)
+        if(fmt.specialFormat == SpecialFormat::R5G5B5A1 ||
+           fmt.specialFormat == SpecialFormat::R5G6B5 || fmt.specialFormat == SpecialFormat::R4G4B4A4)
           packedsize = 2;
 
         if(srcData == NULL || packedsize > dataSize)
@@ -1108,29 +1115,29 @@ ShaderDebugTrace D3D11DebugManager::DebugVertex(uint32_t eventID, uint32_t verti
           ret.inputs[i].value.u.x = ret.inputs[i].value.u.y = ret.inputs[i].value.u.z =
               ret.inputs[i].value.u.w = 0;
         }
-        else if(fmt.specialFormat == eSpecial_R5G5B5A1)
+        else if(fmt.specialFormat == SpecialFormat::R5G5B5A1)
         {
           RDCASSERT(fmt.bgraOrder);
           uint16_t packed = ((uint16_t *)srcData)[0];
           *v4 = ConvertFromB5G5R5A1(packed);
         }
-        else if(fmt.specialFormat == eSpecial_R5G6B5)
+        else if(fmt.specialFormat == SpecialFormat::R5G6B5)
         {
           RDCASSERT(fmt.bgraOrder);
           uint16_t packed = ((uint16_t *)srcData)[0];
           *v3 = ConvertFromB5G6R5(packed);
         }
-        else if(fmt.specialFormat == eSpecial_R4G4B4A4)
+        else if(fmt.specialFormat == SpecialFormat::R4G4B4A4)
         {
           RDCASSERT(fmt.bgraOrder);
           uint16_t packed = ((uint16_t *)srcData)[0];
           *v4 = ConvertFromB4G4R4A4(packed);
         }
-        else if(fmt.specialFormat == eSpecial_R10G10B10A2)
+        else if(fmt.specialFormat == SpecialFormat::R10G10B10A2)
         {
           uint32_t packed = ((uint32_t *)srcData)[0];
 
-          if(fmt.compType == eCompType_UInt)
+          if(fmt.compType == CompType::UInt)
           {
             ret.inputs[i].value.u.z = (packed >> 0) & 0x3ff;
             ret.inputs[i].value.u.y = (packed >> 10) & 0x3ff;
@@ -1142,7 +1149,7 @@ ShaderDebugTrace D3D11DebugManager::DebugVertex(uint32_t eventID, uint32_t verti
             *v4 = ConvertFromR10G10B10A2(packed);
           }
         }
-        else if(fmt.special && fmt.specialFormat == eSpecial_R11G11B10)
+        else if(fmt.special && fmt.specialFormat == SpecialFormat::R11G11B10)
         {
           uint32_t packed = ((uint32_t *)srcData)[0];
           *v3 = ConvertFromR11G11B10(packed);
@@ -1164,13 +1171,13 @@ ShaderDebugTrace D3D11DebugManager::DebugVertex(uint32_t eventID, uint32_t verti
           {
             byte *src = srcData + c * fmt.compByteWidth;
 
-            if(fmt.compType == eCompType_UInt)
+            if(fmt.compType == CompType::UInt)
               ret.inputs[i].value.uv[c] = *src;
-            else if(fmt.compType == eCompType_SInt)
+            else if(fmt.compType == CompType::SInt)
               ret.inputs[i].value.iv[c] = *((int8_t *)src);
-            else if(fmt.compType == eCompType_UNorm)
+            else if(fmt.compType == CompType::UNorm)
               ret.inputs[i].value.fv[c] = float(*src) / 255.0f;
-            else if(fmt.compType == eCompType_SNorm)
+            else if(fmt.compType == CompType::SNorm)
             {
               signed char *schar = (signed char *)src;
 
@@ -1187,15 +1194,15 @@ ShaderDebugTrace D3D11DebugManager::DebugVertex(uint32_t eventID, uint32_t verti
           {
             uint16_t *src = (uint16_t *)(srcData + c * fmt.compByteWidth);
 
-            if(fmt.compType == eCompType_Float)
+            if(fmt.compType == CompType::Float)
               ret.inputs[i].value.fv[c] = ConvertFromHalf(*src);
-            else if(fmt.compType == eCompType_UInt)
+            else if(fmt.compType == CompType::UInt)
               ret.inputs[i].value.uv[c] = *src;
-            else if(fmt.compType == eCompType_SInt)
+            else if(fmt.compType == CompType::SInt)
               ret.inputs[i].value.iv[c] = *((int16_t *)src);
-            else if(fmt.compType == eCompType_UNorm)
+            else if(fmt.compType == CompType::UNorm)
               ret.inputs[i].value.fv[c] = float(*src) / float(UINT16_MAX);
-            else if(fmt.compType == eCompType_SNorm)
+            else if(fmt.compType == CompType::SNorm)
             {
               int16_t *sint = (int16_t *)src;
 
@@ -1212,8 +1219,8 @@ ShaderDebugTrace D3D11DebugManager::DebugVertex(uint32_t eventID, uint32_t verti
           {
             uint32_t *src = (uint32_t *)(srcData + c * fmt.compByteWidth);
 
-            if(fmt.compType == eCompType_Float || fmt.compType == eCompType_UInt ||
-               fmt.compType == eCompType_SInt)
+            if(fmt.compType == CompType::Float || fmt.compType == CompType::UInt ||
+               fmt.compType == CompType::SInt)
               memcpy(&ret.inputs[i].value.uv[c], src, 4);
             else
               RDCERR("Unexpected component type");
@@ -1227,23 +1234,23 @@ ShaderDebugTrace D3D11DebugManager::DebugVertex(uint32_t eventID, uint32_t verti
         }
       }
     }
-    else if(dxbc->m_InputSig[i].systemValue == eAttr_VertexIndex)
+    else if(dxbc->m_InputSig[i].systemValue == ShaderBuiltin::VertexIndex)
     {
       uint32_t sv_vertid = vertid;
 
-      if(draw->flags & eDraw_UseIBuffer)
+      if(draw->flags & DrawFlags::UseIBuffer)
         sv_vertid = idx;
 
-      if(dxbc->m_InputSig[i].compType == eCompType_Float)
+      if(dxbc->m_InputSig[i].compType == CompType::Float)
         ret.inputs[i].value.f.x = ret.inputs[i].value.f.y = ret.inputs[i].value.f.z =
             ret.inputs[i].value.f.w = (float)sv_vertid;
       else
         ret.inputs[i].value.u.x = ret.inputs[i].value.u.y = ret.inputs[i].value.u.z =
             ret.inputs[i].value.u.w = sv_vertid;
     }
-    else if(dxbc->m_InputSig[i].systemValue == eAttr_InstanceIndex)
+    else if(dxbc->m_InputSig[i].systemValue == ShaderBuiltin::InstanceIndex)
     {
-      if(dxbc->m_InputSig[i].compType == eCompType_Float)
+      if(dxbc->m_InputSig[i].compType == CompType::Float)
         ret.inputs[i].value.f.x = ret.inputs[i].value.f.y = ret.inputs[i].value.f.z =
             ret.inputs[i].value.f.w = (float)instid;
       else
@@ -1358,7 +1365,7 @@ ShaderDebugTrace D3D11DebugManager::DebugPixel(uint32_t eventID, uint32_t x, uin
   {
     extractHlsl += "float4 input_dummy : SV_Position;\n";
 
-    initialValues.push_back(DataOutput(-1, 0, 4, eAttr_None, true));
+    initialValues.push_back(DataOutput(-1, 0, 4, ShaderBuiltin::Undefined, true));
 
     structureStride += 4;
   }
@@ -1376,10 +1383,10 @@ ShaderDebugTrace D3D11DebugManager::DebugPixel(uint32_t eventID, uint32_t x, uin
     bool included = true;
 
     // handled specially to account for SV_ ordering
-    if(dxbc->m_InputSig[i].systemValue == eAttr_PrimitiveIndex ||
-       dxbc->m_InputSig[i].systemValue == eAttr_MSAACoverage ||
-       dxbc->m_InputSig[i].systemValue == eAttr_IsFrontFace ||
-       dxbc->m_InputSig[i].systemValue == eAttr_MSAASampleIndex)
+    if(dxbc->m_InputSig[i].systemValue == ShaderBuiltin::PrimitiveIndex ||
+       dxbc->m_InputSig[i].systemValue == ShaderBuiltin::MSAACoverage ||
+       dxbc->m_InputSig[i].systemValue == ShaderBuiltin::IsFrontFace ||
+       dxbc->m_InputSig[i].systemValue == ShaderBuiltin::MSAASampleIndex)
     {
       extractHlsl += "//";
       included = false;
@@ -1415,11 +1422,11 @@ ShaderDebugTrace D3D11DebugManager::DebugPixel(uint32_t eventID, uint32_t x, uin
           {
             filled = true;
 
-            if(prevdxbc->m_OutputSig[os].compType == eCompType_Float)
+            if(prevdxbc->m_OutputSig[os].compType == CompType::Float)
               extractHlsl += "float";
-            else if(prevdxbc->m_OutputSig[os].compType == eCompType_SInt)
+            else if(prevdxbc->m_OutputSig[os].compType == CompType::SInt)
               extractHlsl += "int";
-            else if(prevdxbc->m_OutputSig[os].compType == eCompType_UInt)
+            else if(prevdxbc->m_OutputSig[os].compType == CompType::UInt)
               extractHlsl += "uint";
             else
               RDCERR("Unexpected input signature type: %d", prevdxbc->m_OutputSig[os].compType);
@@ -1431,7 +1438,7 @@ ShaderDebugTrace D3D11DebugManager::DebugPixel(uint32_t eventID, uint32_t x, uin
 
             structureStride += 4 * numCols;
 
-            initialValues.push_back(DataOutput(-1, 0, numCols, eAttr_None, true));
+            initialValues.push_back(DataOutput(-1, 0, numCols, ShaderBuiltin::Undefined, true));
 
             string name = prevdxbc->m_OutputSig[os].semanticIdxName.elems;
 
@@ -1446,7 +1453,7 @@ ShaderDebugTrace D3D11DebugManager::DebugPixel(uint32_t eventID, uint32_t x, uin
         dummy_reg += ToStr::Get((uint32_t)nextreg + dummy);
         extractHlsl += "float4 var_" + dummy_reg + " : semantic_" + dummy_reg + ";\n";
 
-        initialValues.push_back(DataOutput(-1, 0, 4, eAttr_None, true));
+        initialValues.push_back(DataOutput(-1, 0, 4, ShaderBuiltin::Undefined, true));
 
         structureStride += 4 * sizeof(float);
       }
@@ -1454,11 +1461,11 @@ ShaderDebugTrace D3D11DebugManager::DebugPixel(uint32_t eventID, uint32_t x, uin
 
     nextreg = dxbc->m_InputSig[i].regIndex + 1;
 
-    if(dxbc->m_InputSig[i].compType == eCompType_Float)
+    if(dxbc->m_InputSig[i].compType == CompType::Float)
       extractHlsl += "float";
-    else if(dxbc->m_InputSig[i].compType == eCompType_SInt)
+    else if(dxbc->m_InputSig[i].compType == CompType::SInt)
       extractHlsl += "int";
-    else if(dxbc->m_InputSig[i].compType == eCompType_UInt)
+    else if(dxbc->m_InputSig[i].compType == CompType::UInt)
       extractHlsl += "uint";
     else
       RDCERR("Unexpected input signature type: %d", dxbc->m_InputSig[i].compType);
@@ -1575,7 +1582,7 @@ ShaderDebugTrace D3D11DebugManager::DebugPixel(uint32_t eventID, uint32_t x, uin
       extractHlsl += "[" + ToStr::Get(arrayLength) + "]";
     extractHlsl += " : " + name;
 
-    if(included && dxbc->m_InputSig[i].compType == eCompType_Float)
+    if(included && dxbc->m_InputSig[i].compType == CompType::Float)
     {
       if(arrayLength == 0)
       {
@@ -1742,9 +1749,13 @@ ShaderDebugTrace D3D11DebugManager::DebugPixel(uint32_t eventID, uint32_t x, uin
   SAFE_RELEASE(rtView);
   SAFE_RELEASE(depthView);
 
-  m_WrappedDevice->ReplayLog(0, eventID, eReplay_OnlyDraw);
+  {
+    D3D11MarkerRegion initState("Replaying event for initial states");
 
-  m_pImmediateContext->CopyResource(stageBuf, initialBuf);
+    m_WrappedDevice->ReplayLog(0, eventID, eReplay_OnlyDraw);
+
+    m_pImmediateContext->CopyResource(stageBuf, initialBuf);
+  }
 
   D3D11_MAPPED_SUBRESOURCE mapped;
   hr = m_pImmediateContext->Map(stageBuf, 0, D3D11_MAP_READ, 0, &mapped);
@@ -1767,6 +1778,8 @@ ShaderDebugTrace D3D11DebugManager::DebugPixel(uint32_t eventID, uint32_t x, uin
   SAFE_RELEASE(extract);
 
   DebugHit *buf = (DebugHit *)initialData;
+
+  D3D11MarkerRegion::Set(StringFormat::Fmt("Got %u hits", buf[0].numHits));
 
   if(buf[0].numHits == 0)
   {
@@ -1896,19 +1909,19 @@ ShaderDebugTrace D3D11DebugManager::DebugPixel(uint32_t eventID, uint32_t x, uin
       {
         ShaderVariable &invar = traces[destIdx].inputs[initialValues[i].reg];
 
-        if(initialValues[i].sysattribute == eAttr_PrimitiveIndex)
+        if(initialValues[i].sysattribute == ShaderBuiltin::PrimitiveIndex)
         {
           invar.value.u.x = hit->primitive;
         }
-        else if(initialValues[i].sysattribute == eAttr_MSAASampleIndex)
+        else if(initialValues[i].sysattribute == ShaderBuiltin::MSAASampleIndex)
         {
           invar.value.u.x = hit->sample;
         }
-        else if(initialValues[i].sysattribute == eAttr_MSAACoverage)
+        else if(initialValues[i].sysattribute == ShaderBuiltin::MSAACoverage)
         {
           invar.value.u.x = hit->coverage;
         }
-        else if(initialValues[i].sysattribute == eAttr_IsFrontFace)
+        else if(initialValues[i].sysattribute == ShaderBuiltin::IsFrontFace)
         {
           invar.value.u.x = hit->isFrontFace ? ~0U : 0;
         }
@@ -2231,8 +2244,8 @@ ShaderDebugTrace D3D11DebugManager::DebugPixel(uint32_t eventID, uint32_t x, uin
   return traces[destIdx];
 }
 
-ShaderDebugTrace D3D11DebugManager::DebugThread(uint32_t eventID, uint32_t groupid[3],
-                                                uint32_t threadid[3])
+ShaderDebugTrace D3D11DebugManager::DebugThread(uint32_t eventID, const uint32_t groupid[3],
+                                                const uint32_t threadid[3])
 {
   using namespace DXBC;
   using namespace ShaderDebug;
@@ -2351,7 +2364,7 @@ uint32_t D3D11DebugManager::PickVertex(uint32_t eventID, const MeshDisplay &cfg,
   resFmt.compCount = cfg.position.compCount;
   resFmt.compType = cfg.position.compType;
   resFmt.special = false;
-  if(cfg.position.specialFormat != eSpecial_Unknown)
+  if(cfg.position.specialFormat != SpecialFormat::Unknown)
   {
     resFmt.special = true;
     resFmt.specialFormat = cfg.position.specialFormat;
@@ -2430,22 +2443,22 @@ uint32_t D3D11DebugManager::PickVertex(uint32_t eventID, const MeshDisplay &cfg,
   bool isTriangleMesh = true;
   switch(cfg.position.topo)
   {
-    case eTopology_TriangleList:
+    case Topology::TriangleList:
     {
       cbuf.MeshMode = MESH_TRIANGLE_LIST;
       break;
     }
-    case eTopology_TriangleStrip:
+    case Topology::TriangleStrip:
     {
       cbuf.MeshMode = MESH_TRIANGLE_STRIP;
       break;
     }
-    case eTopology_TriangleList_Adj:
+    case Topology::TriangleList_Adj:
     {
       cbuf.MeshMode = MESH_TRIANGLE_LIST_ADJ;
       break;
     }
-    case eTopology_TriangleStrip_Adj:
+    case Topology::TriangleStrip_Adj:
     {
       cbuf.MeshMode = MESH_TRIANGLE_STRIP_ADJ;
       break;
@@ -2609,10 +2622,18 @@ uint32_t D3D11DebugManager::PickVertex(uint32_t eventID, const MeshDisplay &cfg,
       else if(cfg.position.baseVertex > 0)
         idx += cfg.position.baseVertex;
 
-      vbData[i] = InterpretVertex(data, idx, cfg, dataEnd, false, valid);
+      vbData[i] = HighlightCache::InterpretVertex(data, idx, cfg, dataEnd, valid);
     }
 
-    m_pImmediateContext->UpdateSubresource(m_DebugRender.PickVBBuf, 0, NULL, vbData, sizeof(Vec4f),
+    D3D11_BOX box;
+    box.top = 0;
+    box.bottom = 1;
+    box.front = 0;
+    box.back = 1;
+    box.left = 0;
+    box.right = cfg.position.numVerts * sizeof(Vec4f);
+
+    m_pImmediateContext->UpdateSubresource(m_DebugRender.PickVBBuf, 0, &box, vbData, sizeof(Vec4f),
                                            sizeof(Vec4f));
 
     delete[] vbData;
@@ -2713,8 +2734,7 @@ uint32_t D3D11DebugManager::PickVertex(uint32_t eventID, const MeshDisplay &cfg,
 }
 
 void D3D11DebugManager::PickPixel(ResourceId texture, uint32_t x, uint32_t y, uint32_t sliceFace,
-                                  uint32_t mip, uint32_t sample, FormatComponentType typeHint,
-                                  float pixel[4])
+                                  uint32_t mip, uint32_t sample, CompType typeHint, float pixel[4])
 {
   D3D11RenderStateTracker tracker(m_WrappedContext);
 
@@ -2916,7 +2936,7 @@ byte *D3D11DebugManager::GetTextureData(ResourceId tex, uint32_t arrayIdx, uint3
         texDisplay.Red = texDisplay.Green = texDisplay.Blue = texDisplay.Alpha = true;
         texDisplay.HDRMul = -1.0f;
         texDisplay.linearDisplayAsGamma = false;
-        texDisplay.overlay = eTexOverlay_None;
+        texDisplay.overlay = DebugOverlay::NoOverlay;
         texDisplay.FlipY = false;
         texDisplay.mip = mip;
         texDisplay.sampleIdx = 0;
@@ -3058,7 +3078,7 @@ byte *D3D11DebugManager::GetTextureData(ResourceId tex, uint32_t arrayIdx, uint3
         texDisplay.Red = texDisplay.Green = texDisplay.Blue = texDisplay.Alpha = true;
         texDisplay.HDRMul = -1.0f;
         texDisplay.linearDisplayAsGamma = false;
-        texDisplay.overlay = eTexOverlay_None;
+        texDisplay.overlay = DebugOverlay::NoOverlay;
         texDisplay.FlipY = false;
         texDisplay.mip = mip;
         texDisplay.sampleIdx = params.resolve ? ~0U : arrayIdx;
@@ -3220,7 +3240,7 @@ byte *D3D11DebugManager::GetTextureData(ResourceId tex, uint32_t arrayIdx, uint3
         texDisplay.Red = texDisplay.Green = texDisplay.Blue = texDisplay.Alpha = true;
         texDisplay.HDRMul = -1.0f;
         texDisplay.linearDisplayAsGamma = false;
-        texDisplay.overlay = eTexOverlay_None;
+        texDisplay.overlay = DebugOverlay::NoOverlay;
         texDisplay.FlipY = false;
         texDisplay.mip = mip;
         texDisplay.sampleIdx = 0;
@@ -3302,7 +3322,7 @@ byte *D3D11DebugManager::GetTextureData(ResourceId tex, uint32_t arrayIdx, uint3
 
 ResourceId D3D11DebugManager::ApplyCustomShader(ResourceId shader, ResourceId texid, uint32_t mip,
                                                 uint32_t arrayIdx, uint32_t sampleIdx,
-                                                FormatComponentType typeHint)
+                                                CompType typeHint)
 {
   TextureShaderDetails details = GetShaderDetails(texid, typeHint, false);
 
@@ -3350,12 +3370,12 @@ ResourceId D3D11DebugManager::ApplyCustomShader(ResourceId shader, ResourceId te
   disp.CustomShader = shader;
   disp.texid = texid;
   disp.typeHint = typeHint;
-  disp.lightBackgroundColour = disp.darkBackgroundColour = FloatVector(0, 0, 0, 0);
+  disp.lightBackgroundColor = disp.darkBackgroundColor = FloatVector(0, 0, 0, 0);
   disp.HDRMul = -1.0f;
   disp.linearDisplayAsGamma = false;
   disp.mip = mip;
   disp.sampleIdx = sampleIdx;
-  disp.overlay = eTexOverlay_None;
+  disp.overlay = DebugOverlay::NoOverlay;
   disp.rangemin = 0.0f;
   disp.rangemax = 1.0f;
   disp.rawoutput = false;
@@ -3409,9 +3429,8 @@ void D3D11DebugManager::CreateCustomShaderTex(uint32_t w, uint32_t h)
   }
 }
 
-ResourceId D3D11DebugManager::RenderOverlay(ResourceId texid, FormatComponentType typeHint,
-                                            TextureDisplayOverlay overlay, uint32_t eventID,
-                                            const vector<uint32_t> &passEvents)
+ResourceId D3D11DebugManager::RenderOverlay(ResourceId texid, CompType typeHint, DebugOverlay overlay,
+                                            uint32_t eventID, const vector<uint32_t> &passEvents)
 {
   TextureShaderDetails details = GetShaderDetails(texid, typeHint, false);
 
@@ -3563,11 +3582,11 @@ ResourceId D3D11DebugManager::RenderOverlay(ResourceId texid, FormatComponentTyp
   dsDesc.StencilEnable = FALSE;
   dsDesc.StencilReadMask = dsDesc.StencilWriteMask = 0xff;
 
-  if(overlay == eTexOverlay_NaN || overlay == eTexOverlay_Clipping)
+  if(overlay == DebugOverlay::NaN || overlay == DebugOverlay::Clipping)
   {
     // just need the basic texture
   }
-  else if(overlay == eTexOverlay_Drawcall)
+  else if(overlay == DebugOverlay::Drawcall)
   {
     m_pImmediateContext->PSSetShader(m_DebugRender.OverlayPS, NULL, 0);
 
@@ -3624,7 +3643,7 @@ ResourceId D3D11DebugManager::RenderOverlay(ResourceId texid, FormatComponentTyp
     SAFE_RELEASE(os);
     SAFE_RELEASE(rs);
   }
-  else if(overlay == eTexOverlay_BackfaceCull)
+  else if(overlay == DebugOverlay::BackfaceCull)
   {
     m_pImmediateContext->PSSetShader(m_DebugRender.OverlayPS, NULL, 0);
 
@@ -3716,7 +3735,7 @@ ResourceId D3D11DebugManager::RenderOverlay(ResourceId texid, FormatComponentTyp
     SAFE_RELEASE(rs);
     SAFE_RELEASE(rsCull);
   }
-  else if(overlay == eTexOverlay_ViewportScissor)
+  else if(overlay == DebugOverlay::ViewportScissor)
   {
     m_pImmediateContext->VSSetShader(m_DebugRender.FullscreenVS, NULL, 0);
     m_pImmediateContext->HSSetShader(NULL, NULL, 0);
@@ -3855,7 +3874,7 @@ ResourceId D3D11DebugManager::RenderOverlay(ResourceId texid, FormatComponentTyp
     SAFE_RELEASE(rs);
     SAFE_RELEASE(bs);
   }
-  else if(overlay == eTexOverlay_Wireframe)
+  else if(overlay == DebugOverlay::Wireframe)
   {
     m_pImmediateContext->PSSetShader(m_DebugRender.OverlayPS, NULL, 0);
 
@@ -3925,18 +3944,18 @@ ResourceId D3D11DebugManager::RenderOverlay(ResourceId texid, FormatComponentTyp
     SAFE_RELEASE(os);
     SAFE_RELEASE(rs);
   }
-  else if(overlay == eTexOverlay_ClearBeforePass || overlay == eTexOverlay_ClearBeforeDraw)
+  else if(overlay == DebugOverlay::ClearBeforePass || overlay == DebugOverlay::ClearBeforeDraw)
   {
     vector<uint32_t> events = passEvents;
 
-    if(overlay == eTexOverlay_ClearBeforeDraw)
+    if(overlay == DebugOverlay::ClearBeforeDraw)
       events.clear();
 
     events.push_back(eventID);
 
     if(!events.empty())
     {
-      if(overlay == eTexOverlay_ClearBeforePass)
+      if(overlay == DebugOverlay::ClearBeforePass)
         m_WrappedDevice->ReplayLog(0, events[0], eReplay_WithoutDraw);
 
       D3D11RenderState *state = m_WrappedContext->GetCurrentPipelineState();
@@ -3949,7 +3968,7 @@ ResourceId D3D11DebugManager::RenderOverlay(ResourceId texid, FormatComponentTyp
       {
         m_WrappedDevice->ReplayLog(events[i], events[i], eReplay_OnlyDraw);
 
-        if(overlay == eTexOverlay_ClearBeforePass)
+        if(overlay == DebugOverlay::ClearBeforePass)
         {
           m_WrappedDevice->ReplayLog(events[i], events[i], eReplay_OnlyDraw);
 
@@ -3959,7 +3978,7 @@ ResourceId D3D11DebugManager::RenderOverlay(ResourceId texid, FormatComponentTyp
       }
     }
   }
-  else if(overlay == eTexOverlay_TriangleSizeDraw || overlay == eTexOverlay_TriangleSizePass)
+  else if(overlay == DebugOverlay::TriangleSizeDraw || overlay == DebugOverlay::TriangleSizePass)
   {
     SCOPED_TIMER("Triangle size");
 
@@ -4003,12 +4022,12 @@ ResourceId D3D11DebugManager::RenderOverlay(ResourceId texid, FormatComponentTyp
 
     vector<uint32_t> events = passEvents;
 
-    if(overlay == eTexOverlay_TriangleSizeDraw)
+    if(overlay == DebugOverlay::TriangleSizeDraw)
       events.clear();
 
     events.push_back(eventID);
 
-    if(overlay == eTexOverlay_TriangleSizePass)
+    if(overlay == DebugOverlay::TriangleSizePass)
       m_WrappedDevice->ReplayLog(0, events[0], eReplay_WithoutDraw);
 
     events.push_back(eventID);
@@ -4043,13 +4062,13 @@ ResourceId D3D11DebugManager::RenderOverlay(ResourceId texid, FormatComponentTyp
 
       SAFE_RELEASE(ds);
 
-      const FetchDrawcall *draw = m_WrappedDevice->GetDrawcall(events[i]);
+      const DrawcallDescription *draw = m_WrappedDevice->GetDrawcall(events[i]);
 
       for(uint32_t inst = 0; draw && inst < RDCMAX(1U, draw->numInstances); inst++)
       {
-        MeshFormat fmt = GetPostVSBuffers(events[i], inst, eMeshDataStage_GSOut);
+        MeshFormat fmt = GetPostVSBuffers(events[i], inst, MeshDataStage::GSOut);
         if(fmt.buf == ResourceId())
-          fmt = GetPostVSBuffers(events[i], inst, eMeshDataStage_VSOut);
+          fmt = GetPostVSBuffers(events[i], inst, MeshDataStage::VSOut);
 
         if(fmt.buf != ResourceId())
         {
@@ -4108,7 +4127,7 @@ ResourceId D3D11DebugManager::RenderOverlay(ResourceId texid, FormatComponentTyp
 
       oldstate.ApplyState(m_WrappedContext);
 
-      if(overlay == eTexOverlay_TriangleSizePass)
+      if(overlay == DebugOverlay::TriangleSizePass)
       {
         m_WrappedDevice->ReplayLog(events[i], events[i], eReplay_OnlyDraw);
 
@@ -4117,23 +4136,23 @@ ResourceId D3D11DebugManager::RenderOverlay(ResourceId texid, FormatComponentTyp
       }
     }
 
-    if(overlay == eTexOverlay_TriangleSizePass)
+    if(overlay == DebugOverlay::TriangleSizePass)
       m_WrappedDevice->ReplayLog(0, eventID, eReplay_WithoutDraw);
   }
-  else if(overlay == eTexOverlay_QuadOverdrawPass || overlay == eTexOverlay_QuadOverdrawDraw)
+  else if(overlay == DebugOverlay::QuadOverdrawPass || overlay == DebugOverlay::QuadOverdrawDraw)
   {
     SCOPED_TIMER("Quad Overdraw");
 
     vector<uint32_t> events = passEvents;
 
-    if(overlay == eTexOverlay_QuadOverdrawDraw)
+    if(overlay == DebugOverlay::QuadOverdrawDraw)
       events.clear();
 
     events.push_back(eventID);
 
     if(!events.empty())
     {
-      if(overlay == eTexOverlay_QuadOverdrawPass)
+      if(overlay == DebugOverlay::QuadOverdrawPass)
         m_WrappedDevice->ReplayLog(0, events[0], eReplay_WithoutDraw);
 
       D3D11RenderState *state = m_WrappedContext->GetCurrentPipelineState();
@@ -4284,7 +4303,7 @@ ResourceId D3D11DebugManager::RenderOverlay(ResourceId texid, FormatComponentTyp
 
         oldstate.ApplyState(m_WrappedContext);
 
-        if(overlay == eTexOverlay_QuadOverdrawPass)
+        if(overlay == DebugOverlay::QuadOverdrawPass)
         {
           m_WrappedDevice->ReplayLog(events[i], events[i], eReplay_OnlyDraw);
 
@@ -4328,7 +4347,7 @@ ResourceId D3D11DebugManager::RenderOverlay(ResourceId texid, FormatComponentTyp
       SAFE_RELEASE(overdrawSRV);
       SAFE_RELEASE(overdrawUAV);
 
-      if(overlay == eTexOverlay_QuadOverdrawPass)
+      if(overlay == DebugOverlay::QuadOverdrawPass)
         m_WrappedDevice->ReplayLog(0, eventID, eReplay_WithoutDraw);
     }
   }
@@ -4373,13 +4392,13 @@ ResourceId D3D11DebugManager::RenderOverlay(ResourceId texid, FormatComponentTyp
     if(!cur.StencilEnable)
       cur.StencilEnable = D3D11_COMPARISON_ALWAYS;
 
-    if(overlay == eTexOverlay_Depth || overlay == eTexOverlay_Stencil)
+    if(overlay == DebugOverlay::Depth || overlay == DebugOverlay::Stencil)
     {
       ID3D11DepthStencilState *os = NULL;
 
       D3D11_DEPTH_STENCIL_DESC d = dsDesc;
 
-      if(overlay == eTexOverlay_Depth)
+      if(overlay == DebugOverlay::Depth)
       {
         dsDesc.DepthEnable = d.DepthEnable = TRUE;
         dsDesc.StencilEnable = d.StencilEnable = FALSE;
@@ -4399,7 +4418,7 @@ ResourceId D3D11DebugManager::RenderOverlay(ResourceId texid, FormatComponentTyp
           case D3D11_COMPARISON_LESS_EQUAL: d.DepthFunc = D3D11_COMPARISON_GREATER; break;
         }
       }
-      else if(overlay == eTexOverlay_Stencil)
+      else if(overlay == DebugOverlay::Stencil)
       {
         dsDesc.DepthEnable = d.DepthEnable = FALSE;
         dsDesc.StencilEnable = d.StencilEnable = TRUE;
@@ -4484,11 +4503,11 @@ ResourceId D3D11DebugManager::RenderOverlay(ResourceId texid, FormatComponentTyp
 
       d = dsDesc;
 
-      if(overlay == eTexOverlay_Depth)
+      if(overlay == DebugOverlay::Depth)
       {
         d.DepthFunc = cur.DepthFunc;
       }
-      else if(overlay == eTexOverlay_Stencil)
+      else if(overlay == DebugOverlay::Stencil)
       {
         d.FrontFace = cur.FrontFace;
         d.BackFace = cur.BackFace;
@@ -4519,7 +4538,7 @@ ResourceId D3D11DebugManager::RenderOverlay(ResourceId texid, FormatComponentTyp
   else
   {
     // no depth? trivial pass for depth or stencil tests
-    if(overlay == eTexOverlay_Depth || overlay == eTexOverlay_Stencil)
+    if(overlay == DebugOverlay::Depth || overlay == DebugOverlay::Stencil)
     {
       m_pImmediateContext->PSSetShader(m_DebugRender.OverlayPS, NULL, 0);
 
@@ -4740,8 +4759,7 @@ void D3D11DebugManager::PixelHistoryCopyPixel(CopyPixelParams &p, uint32_t x, ui
 vector<PixelModification> D3D11DebugManager::PixelHistory(vector<EventUsage> events,
                                                           ResourceId target, uint32_t x, uint32_t y,
                                                           uint32_t slice, uint32_t mip,
-                                                          uint32_t sampleIdx,
-                                                          FormatComponentType typeHint)
+                                                          uint32_t sampleIdx, CompType typeHint)
 {
   vector<PixelModification> history;
 
@@ -5286,10 +5304,11 @@ vector<PixelModification> D3D11DebugManager::PixelHistory(vector<EventUsage> eve
     curNumScissors = curNumViews = 16;
 
     bool uavOutput =
-        ((events[ev].usage >= eUsage_VS_RWResource && events[ev].usage <= eUsage_CS_RWResource) ||
-         events[ev].usage == eUsage_CopyDst || events[ev].usage == eUsage_Copy ||
-         events[ev].usage == eUsage_Resolve || events[ev].usage == eUsage_ResolveDst ||
-         events[ev].usage == eUsage_GenMips);
+        ((events[ev].usage >= ResourceUsage::VS_RWResource &&
+          events[ev].usage <= ResourceUsage::CS_RWResource) ||
+         events[ev].usage == ResourceUsage::CopyDst || events[ev].usage == ResourceUsage::Copy ||
+         events[ev].usage == ResourceUsage::Resolve ||
+         events[ev].usage == ResourceUsage::ResolveDst || events[ev].usage == ResourceUsage::GenMips);
 
     m_pImmediateContext->RSGetState(&curRS);
     m_pImmediateContext->OMGetBlendState(&curBS, blendFactor, &curSample);
@@ -5797,15 +5816,16 @@ vector<PixelModification> D3D11DebugManager::PixelHistory(vector<EventUsage> eve
 
     D3D11RenderState::ResourceRange resourceRange(targetres, mip, slice);
 
-    const FetchDrawcall *draw = m_WrappedDevice->GetDrawcall(events[i].eventID);
+    const DrawcallDescription *draw = m_WrappedDevice->GetDrawcall(events[i].eventID);
 
-    bool clear = (draw->flags & eDraw_Clear);
+    bool clear = bool(draw->flags & DrawFlags::Clear);
 
     bool uavWrite =
-        ((events[i].usage >= eUsage_VS_RWResource && events[i].usage <= eUsage_CS_RWResource) ||
-         events[i].usage == eUsage_CopyDst || events[i].usage == eUsage_Copy ||
-         events[i].usage == eUsage_Resolve || events[i].usage == eUsage_ResolveDst ||
-         events[i].usage == eUsage_GenMips);
+        ((events[i].usage >= ResourceUsage::VS_RWResource &&
+          events[i].usage <= ResourceUsage::CS_RWResource) ||
+         events[i].usage == ResourceUsage::CopyDst || events[i].usage == ResourceUsage::Copy ||
+         events[i].usage == ResourceUsage::Resolve ||
+         events[i].usage == ResourceUsage::ResolveDst || events[i].usage == ResourceUsage::GenMips);
 
     if(events[i].view != ResourceId())
     {
@@ -5872,12 +5892,12 @@ vector<PixelModification> D3D11DebugManager::PixelHistory(vector<EventUsage> eve
 
       mod.eventID = events[i].eventID;
 
-      mod.uavWrite = uavWrite;
+      mod.directShaderWrite = uavWrite;
       mod.unboundPS = false;
 
       mod.preMod.col.value_u[0] = (uint32_t)i;
 
-      if((draw->flags & eDraw_Clear) == 0 && !uavWrite)
+      if(!(draw->flags & DrawFlags::Clear) && !uavWrite)
       {
         if(flags[i] & TestMustFail_DepthTesting)
           mod.depthTestFailed = true;
@@ -6355,7 +6375,7 @@ vector<PixelModification> D3D11DebugManager::PixelHistory(vector<EventUsage> eve
 
         ModificationValue *val = (p == 0 ? &mod.preMod : &mod.postMod);
 
-        if(fmt.compType == eCompType_SInt)
+        if(fmt.compType == CompType::SInt)
         {
           // need to get correct sign, but otherwise just copy
 
@@ -6387,8 +6407,8 @@ vector<PixelModification> D3D11DebugManager::PixelHistory(vector<EventUsage> eve
     }
     else
     {
-      if(fmt.special &&
-         (fmt.specialFormat == eSpecial_R10G10B10A2 || fmt.specialFormat == eSpecial_R11G11B10))
+      if(fmt.special && (fmt.specialFormat == SpecialFormat::R10G10B10A2 ||
+                         fmt.specialFormat == SpecialFormat::R11G11B10))
       {
         byte *rowdata = pixstoreData + mapped.RowPitch * storey;
 
@@ -6401,9 +6421,9 @@ vector<PixelModification> D3D11DebugManager::PixelHistory(vector<EventUsage> eve
           ModificationValue *val = (p == 0 ? &mod.preMod : &mod.postMod);
 
           Vec4f v;
-          if(fmt.specialFormat == eSpecial_R10G10B10A2)
+          if(fmt.specialFormat == SpecialFormat::R10G10B10A2)
             v = ConvertFromR10G10B10A2(*u);
-          if(fmt.specialFormat == eSpecial_R11G11B10)
+          if(fmt.specialFormat == SpecialFormat::R11G11B10)
           {
             Vec3f v3 = ConvertFromR11G11B10(*u);
             v = Vec4f(v3.x, v3.y, v3.z);
@@ -6495,9 +6515,9 @@ vector<PixelModification> D3D11DebugManager::PixelHistory(vector<EventUsage> eve
 
   for(size_t h = 0; h < history.size(); h++)
   {
-    const FetchDrawcall *draw = m_WrappedDevice->GetDrawcall(history[h].eventID);
+    const DrawcallDescription *draw = m_WrappedDevice->GetDrawcall(history[h].eventID);
 
-    if(draw->flags & eDraw_Clear)
+    if(draw->flags & DrawFlags::Clear)
       continue;
 
     D3D11MarkerRegion historyData(
@@ -6659,7 +6679,7 @@ vector<PixelModification> D3D11DebugManager::PixelHistory(vector<EventUsage> eve
     {
       m_pImmediateContext->OMGetBlendState(&curBS, blendFactor, &curSample);
 
-      m_pImmediateContext->OMSetBlendState(NULL, blendFactor, sampleMask);
+      m_pImmediateContext->OMSetBlendState(NULL, blendFactor, curSample);
 
       // fetch shader output value
       {
@@ -6748,9 +6768,9 @@ vector<PixelModification> D3D11DebugManager::PixelHistory(vector<EventUsage> eve
 
   for(size_t h = 0; h < history.size(); h++)
   {
-    const FetchDrawcall *draw = m_WrappedDevice->GetDrawcall(history[h].eventID);
+    const DrawcallDescription *draw = m_WrappedDevice->GetDrawcall(history[h].eventID);
 
-    if(draw->flags & eDraw_Clear)
+    if(draw->flags & DrawFlags::Clear)
       continue;
 
     // if we're not the last modification in our event, need to fetch post fragment value
@@ -6763,7 +6783,7 @@ vector<PixelModification> D3D11DebugManager::PixelHistory(vector<EventUsage> eve
           byte *rowdata = pixstoreData + mapped.RowPitch * (postColSlot / 2048);
           byte *data = rowdata + fmt.compCount * fmt.compByteWidth * (postColSlot % 2048);
 
-          if(fmt.compType == eCompType_SInt)
+          if(fmt.compType == CompType::SInt)
           {
             // need to get correct sign, but otherwise just copy
 
@@ -6795,8 +6815,8 @@ vector<PixelModification> D3D11DebugManager::PixelHistory(vector<EventUsage> eve
         }
         else
         {
-          if(fmt.special &&
-             (fmt.specialFormat == eSpecial_R10G10B10A2 || fmt.specialFormat == eSpecial_R11G11B10))
+          if(fmt.special && (fmt.specialFormat == SpecialFormat::R10G10B10A2 ||
+                             fmt.specialFormat == SpecialFormat::R11G11B10))
           {
             byte *rowdata = pixstoreData + mapped.RowPitch * (postColSlot / 2048);
             byte *data = rowdata + sizeof(uint32_t) * (postColSlot % 2048);
@@ -6804,9 +6824,9 @@ vector<PixelModification> D3D11DebugManager::PixelHistory(vector<EventUsage> eve
             uint32_t *u = (uint32_t *)data;
 
             Vec4f v;
-            if(fmt.specialFormat == eSpecial_R10G10B10A2)
+            if(fmt.specialFormat == SpecialFormat::R10G10B10A2)
               v = ConvertFromR10G10B10A2(*u);
-            if(fmt.specialFormat == eSpecial_R11G11B10)
+            if(fmt.specialFormat == SpecialFormat::R11G11B10)
             {
               Vec3f v3 = ConvertFromR11G11B10(*u);
               v = Vec4f(v3.x, v3.y, v3.z);
@@ -6972,7 +6992,7 @@ vector<PixelModification> D3D11DebugManager::PixelHistory(vector<EventUsage> eve
         m_pImmediateContext->Begin(testQueries[0]);
 
         // do draw
-        if(draw->flags & eDraw_UseIBuffer)
+        if(draw->flags & DrawFlags::UseIBuffer)
         {
           // TODO once pixel history distinguishes between instances, draw only the instance for
           // this fragment
@@ -7014,12 +7034,12 @@ vector<PixelModification> D3D11DebugManager::PixelHistory(vector<EventUsage> eve
   m_pImmediateContext->Unmap(pixstoreDepthReadback, 0);
 
   // interpret float/unorm values
-  if(!fmt.special && fmt.compType != eCompType_UInt && fmt.compType != eCompType_SInt)
+  if(!fmt.special && fmt.compType != CompType::UInt && fmt.compType != CompType::SInt)
   {
     for(size_t h = 0; h < history.size(); h++)
     {
       PixelModification &mod = history[h];
-      if(fmt.compType == eCompType_Float && fmt.compByteWidth == 2)
+      if(fmt.compType == CompType::Float && fmt.compByteWidth == 2)
       {
         for(uint32_t c = 0; c < fmt.compCount; c++)
         {
@@ -7027,7 +7047,7 @@ vector<PixelModification> D3D11DebugManager::PixelHistory(vector<EventUsage> eve
           mod.postMod.col.value_f[c] = ConvertFromHalf(uint16_t(mod.postMod.col.value_u[c]));
         }
       }
-      else if(fmt.compType == eCompType_UNorm && fmt.compByteWidth == 1 && fmt.srgbCorrected)
+      else if(fmt.compType == CompType::UNorm && fmt.compByteWidth == 1 && fmt.srgbCorrected)
       {
         RDCASSERT(fmt.compByteWidth == 1);
 
@@ -7044,7 +7064,7 @@ vector<PixelModification> D3D11DebugManager::PixelHistory(vector<EventUsage> eve
           mod.postMod.col.value_f[3] = float(mod.postMod.col.value_u[3] & 0xff) / 255.0f;
         }
       }
-      else if(fmt.compType == eCompType_UNorm)
+      else if(fmt.compType == CompType::UNorm)
       {
         // only 32bit unorm format is depth, handled separately
         float maxVal = fmt.compByteWidth == 2 ? 65535.0f : 255.0f;
@@ -7057,7 +7077,7 @@ vector<PixelModification> D3D11DebugManager::PixelHistory(vector<EventUsage> eve
           mod.postMod.col.value_f[c] = float(mod.postMod.col.value_u[c]) / maxVal;
         }
       }
-      else if(fmt.compType == eCompType_SNorm && fmt.compByteWidth == 2)
+      else if(fmt.compType == CompType::SNorm && fmt.compByteWidth == 2)
       {
         for(uint32_t c = 0; c < fmt.compCount; c++)
         {
@@ -7065,7 +7085,7 @@ vector<PixelModification> D3D11DebugManager::PixelHistory(vector<EventUsage> eve
           mod.postMod.col.value_f[c] = float(mod.postMod.col.value_u[c]);
         }
       }
-      else if(fmt.compType == eCompType_SNorm && fmt.compByteWidth == 1)
+      else if(fmt.compType == CompType::SNorm && fmt.compByteWidth == 1)
       {
         for(uint32_t c = 0; c < fmt.compCount; c++)
         {
@@ -7084,7 +7104,7 @@ vector<PixelModification> D3D11DebugManager::PixelHistory(vector<EventUsage> eve
             mod.postMod.col.value_f[c] = float(*d) / 127.0f;
         }
       }
-      else if(fmt.compType == eCompType_SNorm && fmt.compByteWidth == 2)
+      else if(fmt.compType == CompType::SNorm && fmt.compByteWidth == 2)
       {
         for(uint32_t c = 0; c < fmt.compCount; c++)
         {

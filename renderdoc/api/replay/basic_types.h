@@ -29,6 +29,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <string>
+#include <tuple>
 #include <vector>
 
 // we provide a basic templated type that is a fixed array that just contains a pointer to the
@@ -46,7 +47,18 @@ struct pair
 {
   A first;
   B second;
+
+  operator std::tuple<A &, B &>() { return std::tie(first, second); }
 };
+
+template <typename A, typename B>
+pair<A, B> make_pair(const A &a, const B &b)
+{
+  pair<A, B> ret;
+  ret.first = a;
+  ret.second = b;
+  return ret;
+}
 
 template <typename T>
 struct array
@@ -94,6 +106,33 @@ struct array
       elems = (T *)allocate(sizeof(T) * count);
       for(int32_t i = 0; i < count; i++)
         new(elems + i) T(in[i]);
+    }
+    return *this;
+  }
+
+  array(const std::initializer_list<T> &in)
+  {
+    elems = 0;
+    count = 0;
+    *this = in;
+  }
+  array &operator=(const std::initializer_list<T> &in)
+  {
+    Delete();
+    count = (int32_t)in.size();
+    if(count == 0)
+    {
+      elems = 0;
+    }
+    else
+    {
+      elems = (T *)allocate(sizeof(T) * count);
+      int i = 0;
+      for(const T &t : in)
+      {
+        new(elems + i) T(t);
+        i++;
+      }
     }
     return *this;
   }

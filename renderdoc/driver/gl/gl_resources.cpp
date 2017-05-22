@@ -30,7 +30,7 @@ byte GLResourceRecord::markerValue[32] = {
     0xaa, 0xbb, 0xcc, 0xdd, 0x88, 0x77, 0x66, 0x55, 0x01, 0x23, 0x45, 0x67, 0x98, 0x76, 0x54, 0x32,
 };
 
-size_t GetCompressedByteSize(GLsizei w, GLsizei h, GLsizei d, GLenum internalformat, int mip)
+size_t GetCompressedByteSize(GLsizei w, GLsizei h, GLsizei d, GLenum internalformat)
 {
   if(!IsCompressedFormat(internalformat))
   {
@@ -226,6 +226,7 @@ size_t GetByteSize(GLsizei w, GLsizei h, GLsizei d, GLenum format, GLenum type)
     case eGL_BYTE: elemSize = 1; break;
     case eGL_UNSIGNED_SHORT:
     case eGL_SHORT:
+    case eGL_HALF_FLOAT_OES:
     case eGL_HALF_FLOAT: elemSize = 2; break;
     case eGL_UNSIGNED_INT:
     case eGL_INT:
@@ -362,6 +363,8 @@ GLenum GetBaseFormat(GLenum internalFormat)
     case eGL_RGBA16UI:
     case eGL_RGBA32UI:
     case eGL_RGBA32I: return eGL_RGBA_INTEGER;
+    case eGL_BGRA:
+    case eGL_BGRA8_EXT: return eGL_BGRA;
     case eGL_DEPTH_COMPONENT16:
     case eGL_DEPTH_COMPONENT24:
     case eGL_DEPTH_COMPONENT32:
@@ -392,6 +395,8 @@ GLenum GetDataType(GLenum internalFormat)
     case eGL_R8:
     case eGL_RGB8:
     case eGL_RGB8UI:
+    case eGL_BGRA:
+    case eGL_BGRA8_EXT:
     case eGL_SRGB8_ALPHA8:
     case eGL_SRGB8: return eGL_UNSIGNED_BYTE;
     case eGL_RGBA8I:
@@ -502,7 +507,7 @@ int GetNumMips(const GLHookSet &gl, GLenum target, GLuint tex, GLuint w, GLuint 
   return RDCMAX(1, mips);
 }
 
-GLenum GetSizedFormat(const GLHookSet &gl, GLenum target, GLenum internalFormat)
+GLenum GetSizedFormat(const GLHookSet &gl, GLenum target, GLenum internalFormat, GLenum type)
 {
   switch(internalFormat)
   {
@@ -556,7 +561,12 @@ GLenum GetSizedFormat(const GLHookSet &gl, GLenum target, GLenum internalFormat)
   {
     // without the query function, just default to sensible defaults
     red = 8;
-    depth = 32;
+    if(type == eGL_FLOAT)
+      depth = 32;
+    else if(type == eGL_UNSIGNED_SHORT)
+      depth = 16;
+    else
+      depth = 24;
     stencil = 8;
   }
 
@@ -633,6 +643,25 @@ void GetFramebufferMipAndLayer(const GLHookSet &gl, GLenum framebuffer, GLenum a
   {
     *layer = CubeTargetIndex(face);
   }
+}
+
+// GL_TEXTURE_SWIZZLE_RGBA is not supported on GLES, so for consistency we use r/g/b/a component
+// swizzles for both GL and GLES.
+// The same applies to SetTextureSwizzle function.
+void GetTextureSwizzle(const GLHookSet &gl, GLuint tex, GLenum target, GLenum *swizzleRGBA)
+{
+  gl.glGetTextureParameterivEXT(tex, target, eGL_TEXTURE_SWIZZLE_R, (GLint *)&swizzleRGBA[0]);
+  gl.glGetTextureParameterivEXT(tex, target, eGL_TEXTURE_SWIZZLE_G, (GLint *)&swizzleRGBA[1]);
+  gl.glGetTextureParameterivEXT(tex, target, eGL_TEXTURE_SWIZZLE_B, (GLint *)&swizzleRGBA[2]);
+  gl.glGetTextureParameterivEXT(tex, target, eGL_TEXTURE_SWIZZLE_A, (GLint *)&swizzleRGBA[3]);
+}
+
+void SetTextureSwizzle(const GLHookSet &gl, GLuint tex, GLenum target, GLenum *swizzleRGBA)
+{
+  gl.glTextureParameterivEXT(tex, target, eGL_TEXTURE_SWIZZLE_R, (GLint *)&swizzleRGBA[0]);
+  gl.glTextureParameterivEXT(tex, target, eGL_TEXTURE_SWIZZLE_G, (GLint *)&swizzleRGBA[1]);
+  gl.glTextureParameterivEXT(tex, target, eGL_TEXTURE_SWIZZLE_B, (GLint *)&swizzleRGBA[2]);
+  gl.glTextureParameterivEXT(tex, target, eGL_TEXTURE_SWIZZLE_A, (GLint *)&swizzleRGBA[3]);
 }
 
 bool EmulateLuminanceFormat(const GLHookSet &gl, GLuint tex, GLenum target, GLenum &internalFormat,
@@ -740,7 +769,7 @@ bool EmulateLuminanceFormat(const GLHookSet &gl, GLuint tex, GLenum target, GLen
   {
     if(HasExt[ARB_texture_swizzle] || HasExt[EXT_texture_swizzle])
     {
-      gl.glTextureParameterivEXT(tex, target, eGL_TEXTURE_SWIZZLE_RGBA, (GLint *)swizzle);
+      SetTextureSwizzle(gl, tex, target, swizzle);
     }
     else
     {

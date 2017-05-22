@@ -32,23 +32,25 @@ namespace Ui
 class VulkanPipelineStateViewer;
 }
 
+class QXmlStreamWriter;
+
 class RDTreeWidget;
-class QTreeWidgetItem;
+class RDTreeWidgetItem;
 class PipelineStateViewer;
 
 struct SamplerData
 {
   SamplerData() : node(NULL) {}
-  QList<QTreeWidgetItem *> images;
-  QTreeWidgetItem *node;
+  QList<RDTreeWidgetItem *> images;
+  RDTreeWidgetItem *node;
 };
 
-class VulkanPipelineStateViewer : public QFrame, public ILogViewerForm
+class VulkanPipelineStateViewer : public QFrame, public ILogViewer
 {
   Q_OBJECT
 
 public:
-  explicit VulkanPipelineStateViewer(CaptureContext &ctx, PipelineStateViewer &common,
+  explicit VulkanPipelineStateViewer(ICaptureContext &ctx, PipelineStateViewer &common,
                                      QWidget *parent = 0);
   ~VulkanPipelineStateViewer();
 
@@ -63,65 +65,71 @@ private slots:
   void on_showEmpty_toggled(bool checked);
   void on_exportHTML_clicked();
   void on_meshView_clicked();
-  void on_viAttrs_itemActivated(QTreeWidgetItem *item, int column);
-  void on_viBuffers_itemActivated(QTreeWidgetItem *item, int column);
+  void on_viAttrs_itemActivated(RDTreeWidgetItem *item, int column);
+  void on_viBuffers_itemActivated(RDTreeWidgetItem *item, int column);
   void on_viAttrs_mouseMove(QMouseEvent *event);
   void on_viBuffers_mouseMove(QMouseEvent *event);
   void on_pipeFlow_stageSelected(int index);
 
   // manual slots
   void shaderView_clicked();
+  void shaderLabel_clicked(QMouseEvent *event);
   void shaderEdit_clicked();
 
   void shaderSave_clicked();
-  void resource_itemActivated(QTreeWidgetItem *item, int column);
-  void ubo_itemActivated(QTreeWidgetItem *item, int column);
+  void resource_itemActivated(RDTreeWidgetItem *item, int column);
+  void ubo_itemActivated(RDTreeWidgetItem *item, int column);
   void vertex_leave(QEvent *e);
 
 private:
   Ui::VulkanPipelineStateViewer *ui;
-  CaptureContext &m_Ctx;
+  ICaptureContext &m_Ctx;
   PipelineStateViewer &m_Common;
 
-  QVariantList makeSampler(
-      const QString &bindset, const QString &slotname,
-      const VulkanPipelineState::Pipeline::DescriptorSet::DescriptorBinding::BindingElement &descriptor);
-  void addResourceRow(ShaderReflection *shaderDetails, const VulkanPipelineState::ShaderStage &stage,
-                      int bindset, int bind, const VulkanPipelineState::Pipeline &pipe,
-                      RDTreeWidget *resources, QMap<ResourceId, SamplerData> &samplers);
-  void addConstantBlockRow(ShaderReflection *shaderDetails,
-                           const VulkanPipelineState::ShaderStage &stage, int bindset, int bind,
-                           const VulkanPipelineState::Pipeline &pipe, RDTreeWidget *ubos);
+  QVariantList makeSampler(const QString &bindset, const QString &slotname,
+                           const VKPipe::BindingElement &descriptor);
+  void addResourceRow(ShaderReflection *shaderDetails, const VKPipe::Shader &stage, int bindset,
+                      int bind, const VKPipe::Pipeline &pipe, RDTreeWidget *resources,
+                      QMap<ResourceId, SamplerData> &samplers);
+  void addConstantBlockRow(ShaderReflection *shaderDetails, const VKPipe::Shader &stage,
+                           int bindset, int bind, const VKPipe::Pipeline &pipe, RDTreeWidget *ubos);
 
-  void setShaderState(const VulkanPipelineState::ShaderStage &stage,
-                      const VulkanPipelineState::Pipeline &pipe, QLabel *shader, RDTreeWidget *res,
-                      RDTreeWidget *ubo);
+  void setShaderState(const VKPipe::Shader &stage, const VKPipe::Pipeline &pipe, QLabel *shader,
+                      RDTreeWidget *res, RDTreeWidget *ubo);
   void clearShaderState(QLabel *shader, RDTreeWidget *res, RDTreeWidget *ubo);
   void setState();
   void clearState();
 
-  void setInactiveRow(QTreeWidgetItem *node);
-  void setEmptyRow(QTreeWidgetItem *node);
+  void setInactiveRow(RDTreeWidgetItem *node);
+  void setEmptyRow(RDTreeWidgetItem *node);
   void highlightIABind(int slot);
 
   QString formatMembers(int indent, const QString &nameprefix,
                         const rdctype::array<ShaderConstant> &vars);
-  const VulkanPipelineState::ShaderStage *stageForSender(QWidget *widget);
+  const VKPipe::Shader *stageForSender(QWidget *widget);
 
   QString disassembleSPIRV(const ShaderReflection *shaderDetails);
 
   template <typename viewType>
-  void setViewDetails(QTreeWidgetItem *node, const viewType &view, FetchTexture *tex);
+  void setViewDetails(RDTreeWidgetItem *node, const viewType &view, TextureDescription *tex);
 
   template <typename viewType>
-  void setViewDetails(QTreeWidgetItem *node, const viewType &view, FetchBuffer *buf);
+  void setViewDetails(RDTreeWidgetItem *node, const viewType &view, BufferDescription *buf);
 
   bool showNode(bool usedSlot, bool filledSlot);
 
+  void exportHTML(QXmlStreamWriter &xml, VKPipe::VertexInput &vi);
+  void exportHTML(QXmlStreamWriter &xml, VKPipe::InputAssembly &ia);
+  void exportHTML(QXmlStreamWriter &xml, VKPipe::Shader &sh);
+  void exportHTML(QXmlStreamWriter &xml, VKPipe::Raster &rs);
+  void exportHTML(QXmlStreamWriter &xml, VKPipe::ColorBlend &cb);
+  void exportHTML(QXmlStreamWriter &xml, VKPipe::DepthStencil &ds);
+  void exportHTML(QXmlStreamWriter &xml, VKPipe::CurrentPass &pass);
+
   // keep track of the VB nodes (we want to be able to highlight them easily on hover)
-  QList<QTreeWidgetItem *> m_VBNodes;
-  QList<QTreeWidgetItem *> m_BindNodes;
+  QList<RDTreeWidgetItem *> m_VBNodes;
+  QList<RDTreeWidgetItem *> m_BindNodes;
 
   // from an combined image to its sampler (since we de-duplicate)
-  QMap<QTreeWidgetItem *, QTreeWidgetItem *> m_CombinedImageSamplers;
+  QMap<RDTreeWidgetItem *, RDTreeWidgetItem *> m_CombinedImageSamplers;
 };

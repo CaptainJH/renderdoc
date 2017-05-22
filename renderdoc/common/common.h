@@ -28,6 +28,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include "api/replay/renderdoc_replay.h"
 #include "globalconfig.h"
 
 /////////////////////////////////////////////////
@@ -162,6 +163,51 @@ uint32_t Log2Floor(uint32_t value);
 uint64_t Log2Floor(uint64_t value);
 #endif
 
+// super ugly - on apple size_t is a separate type, so we need a new overload
+#if ENABLED(RDOC_APPLE)
+inline size_t Log2Floor(size_t value)
+{
+#if ENABLED(RDOC_X64)
+  return (size_t)Log2Floor((uint64_t)value);
+#else
+  return (size_t)Log2Floor((uint32_t)value);
+#endif
+}
+#endif
+
+template <typename T, BucketRecordType bucketType = T::BucketType>
+struct BucketForRecord
+{
+  static size_t Get(size_t value);
+};
+
+template <typename T>
+struct BucketForRecord<T, BucketRecordType::Linear>
+{
+  static size_t Get(size_t value)
+  {
+    const size_t size = T::BucketSize;
+    const size_t count = T::BucketCount;
+    const size_t maximum = size * count;
+    const size_t index = (value < maximum) ? (value / size) : (count - 1);
+    return index;
+  }
+};
+
+template <typename T>
+struct BucketForRecord<T, BucketRecordType::Pow2>
+{
+  static size_t Get(size_t value)
+  {
+    const size_t count = T::BucketCount;
+    static_assert(count <= (sizeof(size_t) * 8),
+                  "Unexpected correspondence between bucket size and sizeof(size_t)");
+    const size_t maximum = (size_t)1 << count;
+    const size_t index = (value < maximum) ? (size_t)(Log2Floor(value)) : (count - 1);
+    return index;
+  }
+};
+
 /////////////////////////////////////////////////
 // Debugging features
 
@@ -185,27 +231,16 @@ uint64_t Log2Floor(uint64_t value);
   } while((void)0, 0)
 #endif
 
-#define RDCUNIMPLEMENTED(...)                              \
-  do                                                       \
-  {                                                        \
-    rdclog(RDCLog_Warning, "Unimplemented: " __VA_ARGS__); \
-    RDCBREAK();                                            \
+#define RDCUNIMPLEMENTED(...)                                \
+  do                                                         \
+  {                                                          \
+    rdclog(LogType::Warning, "Unimplemented: " __VA_ARGS__); \
+    RDCBREAK();                                              \
   } while((void)0, 0)
 
 //
 // Logging
 //
-
-enum LogType
-{
-  RDCLog_First = -1,
-  RDCLog_Debug,
-  RDCLog_Comment,
-  RDCLog_Warning,
-  RDCLog_Error,
-  RDCLog_Fatal,
-  RDCLog_NumTypes,
-};
 
 #if ENABLED(STRIP_LOG)
 #define RDCLOGFILE(fn) \
@@ -266,16 +301,16 @@ void rdclog_int(LogType type, const char *project, const char *file, unsigned in
 const char *rdclog_getfilename();
 void rdclog_filename(const char *filename);
 void rdclog_enableoutput();
-void rdclog_closelog();
+void rdclog_closelog(const char *filename);
 
 #define RDCLOGFILE(fn) rdclog_filename(fn)
 #define RDCGETLOGFILE() rdclog_getfilename()
 
 #define RDCLOGOUTPUT() rdclog_enableoutput()
-#define RDCSTOPLOGGING() rdclog_closelog()
+#define RDCSTOPLOGGING(filename) rdclog_closelog(filename)
 
 #if(ENABLED(RDOC_DEVEL) || ENABLED(FORCE_DEBUG_LOGS)) && DISABLED(STRIP_DEBUG_LOGS)
-#define RDCDEBUG(...) rdclog(RDCLog_Debug, __VA_ARGS__)
+#define RDCDEBUG(...) rdclog(LogType::Debug, __VA_ARGS__)
 #else
 #define RDCDEBUG(...) \
   do                  \
@@ -283,36 +318,36 @@ void rdclog_closelog();
   } while((void)0, 0)
 #endif
 
-#define RDCLOG(...) rdclog(RDCLog_Comment, __VA_ARGS__)
-#define RDCWARN(...) rdclog(RDCLog_Warning, __VA_ARGS__)
+#define RDCLOG(...) rdclog(LogType::Comment, __VA_ARGS__)
+#define RDCWARN(...) rdclog(LogType::Warning, __VA_ARGS__)
 
 #if ENABLED(DEBUGBREAK_ON_ERROR_LOG)
-#define RDCERR(...)                    \
-  do                                   \
-  {                                    \
-    rdclog(RDCLog_Error, __VA_ARGS__); \
-    rdclog_flush();                    \
-    RDCBREAK();                        \
+#define RDCERR(...)                      \
+  do                                     \
+  {                                      \
+    rdclog(LogType::Error, __VA_ARGS__); \
+    rdclog_flush();                      \
+    RDCBREAK();                          \
   } while((void)0, 0)
 #else
-#define RDCERR(...) rdclog(RDCLog_Error, __VA_ARGS__)
+#define RDCERR(...) rdclog(LogType::Error, __VA_ARGS__)
 #endif
 
-#define RDCFATAL(...)                  \
-  do                                   \
-  {                                    \
-    rdclog(RDCLog_Fatal, __VA_ARGS__); \
-    rdclog_flush();                    \
-    RDCDUMP();                         \
-    exit(0);                           \
+#define RDCFATAL(...)                    \
+  do                                     \
+  {                                      \
+    rdclog(LogType::Fatal, __VA_ARGS__); \
+    rdclog_flush();                      \
+    RDCDUMP();                           \
+    exit(0);                             \
   } while((void)0, 0)
-#define RDCDUMPMSG(message)                          \
-  do                                                 \
-  {                                                  \
-    rdclogprint_int(RDCLog_Fatal, message, message); \
-    rdclog_flush();                                  \
-    RDCDUMP();                                       \
-    exit(0);                                         \
+#define RDCDUMPMSG(message)                            \
+  do                                                   \
+  {                                                    \
+    rdclogprint_int(LogType::Fatal, message, message); \
+    rdclog_flush();                                    \
+    RDCDUMP();                                         \
+    exit(0);                                           \
   } while((void)0, 0)
 #endif
 

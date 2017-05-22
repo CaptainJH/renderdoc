@@ -39,37 +39,41 @@ struct DrawcallTreeNode;
 
 struct GLPostVSData
 {
+  struct InstData
+  {
+    uint32_t numVerts = 0;
+    uint32_t bufOffset = 0;
+  };
+
   struct StageData
   {
-    GLuint buf;
-    PrimitiveTopology topo;
+    GLuint buf = 0;
+    Topology topo = Topology::Unknown;
 
-    uint32_t numVerts;
-    uint32_t vertStride;
-    uint32_t instStride;
+    uint32_t vertStride = 0;
 
-    bool useIndices;
-    GLuint idxBuf;
-    uint32_t idxByteWidth;
+    // simple case - uniform
+    uint32_t numVerts = 0;
+    uint32_t instStride = 0;
 
-    bool hasPosOut;
+    // complex case - expansion per instance
+    std::vector<InstData> instData;
 
-    float nearPlane;
-    float farPlane;
+    bool useIndices = false;
+    GLuint idxBuf = 0;
+    uint32_t idxByteWidth = 0;
+
+    bool hasPosOut = false;
+
+    float nearPlane = 0.0f;
+    float farPlane = 0.0f;
   } vsin, vsout, gsout;
-
-  GLPostVSData()
-  {
-    RDCEraseEl(vsin);
-    RDCEraseEl(vsout);
-    RDCEraseEl(gsout);
-  }
 
   const StageData &GetStage(MeshDataStage type)
   {
-    if(type == eMeshDataStage_VSOut)
+    if(type == MeshDataStage::VSOut)
       return vsout;
-    else if(type == eMeshDataStage_GSOut)
+    else if(type == MeshDataStage::GSOut)
       return gsout;
     else
       RDCERR("Unexpected mesh data stage!");
@@ -91,23 +95,23 @@ public:
   APIProperties GetAPIProperties();
 
   vector<ResourceId> GetBuffers();
-  FetchBuffer GetBuffer(ResourceId id);
+  BufferDescription GetBuffer(ResourceId id);
 
   vector<ResourceId> GetTextures();
-  FetchTexture GetTexture(ResourceId id);
+  TextureDescription GetTexture(ResourceId id);
   ShaderReflection *GetShader(ResourceId shader, string entryPoint);
 
   vector<DebugMessage> GetDebugMessages();
 
   vector<EventUsage> GetUsage(ResourceId id);
 
-  FetchFrameRecord GetFrameRecord();
+  FrameRecord GetFrameRecord();
 
   void SavePipelineState();
-  D3D11PipelineState GetD3D11PipelineState() { return D3D11PipelineState(); }
-  D3D12PipelineState GetD3D12PipelineState() { return D3D12PipelineState(); }
-  GLPipelineState GetGLPipelineState() { return m_CurPipelineState; }
-  VulkanPipelineState GetVulkanPipelineState() { return VulkanPipelineState(); }
+  D3D11Pipe::State GetD3D11PipelineState() { return D3D11Pipe::State(); }
+  D3D12Pipe::State GetD3D12PipelineState() { return D3D12Pipe::State(); }
+  GLPipe::State GetGLPipelineState() { return m_CurPipelineState; }
+  VKPipe::State GetVulkanPipelineState() { return VKPipe::State(); }
   void FreeTargetResource(ResourceId id);
 
   void ReadLogInitialisation();
@@ -123,7 +127,7 @@ public:
     // free to use XCB internally but it would have to create a hybrid and
     // initialise XCB out of Xlib, to be able to provide the display and
     // drawable to us.
-    ret.push_back(eWindowingSystem_Xlib);
+    ret.push_back(WindowingSystem::Xlib);
     return ret;
   }
 
@@ -131,7 +135,7 @@ public:
   void DestroyOutputWindow(uint64_t id);
   bool CheckResizeOutputWindow(uint64_t id);
   void GetOutputWindowDimensions(uint64_t id, int32_t &w, int32_t &h);
-  void ClearOutputWindowColour(uint64_t id, float col[4]);
+  void ClearOutputWindowColor(uint64_t id, float col[4]);
   void ClearOutputWindowDepth(uint64_t id, float depth, uint8_t stencil);
   void BindOutputWindow(uint64_t id, bool depth);
   bool IsOutputWindowVisible(uint64_t id);
@@ -143,9 +147,9 @@ public:
   ResourceId GetLiveID(ResourceId id);
 
   bool GetMinMax(ResourceId texid, uint32_t sliceFace, uint32_t mip, uint32_t sample,
-                 FormatComponentType typeHint, float *minval, float *maxval);
+                 CompType typeHint, float *minval, float *maxval);
   bool GetHistogram(ResourceId texid, uint32_t sliceFace, uint32_t mip, uint32_t sample,
-                    FormatComponentType typeHint, float minval, float maxval, bool channels[4],
+                    CompType typeHint, float minval, float maxval, bool channels[4],
                     vector<uint32_t> &histogram);
 
   MeshFormat GetPostVSBuffers(uint32_t eventID, uint32_t instID, MeshDataStage stage);
@@ -157,16 +161,16 @@ public:
   void ReplaceResource(ResourceId from, ResourceId to);
   void RemoveReplacement(ResourceId id);
 
-  vector<uint32_t> EnumerateCounters();
-  void DescribeCounter(uint32_t counterID, CounterDescription &desc);
-  vector<CounterResult> FetchCounters(const vector<uint32_t> &counters);
+  vector<GPUCounter> EnumerateCounters();
+  void DescribeCounter(GPUCounter counterID, CounterDescription &desc);
+  vector<CounterResult> FetchCounters(const vector<GPUCounter> &counters);
 
   void RenderMesh(uint32_t eventID, const vector<MeshFormat> &secondaryDraws, const MeshDisplay &cfg);
 
-  void BuildTargetShader(string source, string entry, const uint32_t compileFlags,
-                         ShaderStageType type, ResourceId *id, string *errors);
-  void BuildCustomShader(string source, string entry, const uint32_t compileFlags,
-                         ShaderStageType type, ResourceId *id, string *errors);
+  void BuildTargetShader(string source, string entry, const uint32_t compileFlags, ShaderStage type,
+                         ResourceId *id, string *errors);
+  void BuildCustomShader(string source, string entry, const uint32_t compileFlags, ShaderStage type,
+                         ResourceId *id, string *errors);
   void FreeCustomShader(ResourceId id);
 
   enum TexDisplayFlags
@@ -187,27 +191,28 @@ public:
 
   vector<PixelModification> PixelHistory(vector<EventUsage> events, ResourceId target, uint32_t x,
                                          uint32_t y, uint32_t slice, uint32_t mip,
-                                         uint32_t sampleIdx, FormatComponentType typeHint);
+                                         uint32_t sampleIdx, CompType typeHint);
   ShaderDebugTrace DebugVertex(uint32_t eventID, uint32_t vertid, uint32_t instid, uint32_t idx,
                                uint32_t instOffset, uint32_t vertOffset);
   ShaderDebugTrace DebugPixel(uint32_t eventID, uint32_t x, uint32_t y, uint32_t sample,
                               uint32_t primitive);
-  ShaderDebugTrace DebugThread(uint32_t eventID, uint32_t groupid[3], uint32_t threadid[3]);
+  ShaderDebugTrace DebugThread(uint32_t eventID, const uint32_t groupid[3],
+                               const uint32_t threadid[3]);
   void PickPixel(ResourceId texture, uint32_t x, uint32_t y, uint32_t sliceFace, uint32_t mip,
-                 uint32_t sample, FormatComponentType typeHint, float pixel[4]);
+                 uint32_t sample, CompType typeHint, float pixel[4]);
   uint32_t PickVertex(uint32_t eventID, const MeshDisplay &cfg, uint32_t x, uint32_t y);
 
-  ResourceId RenderOverlay(ResourceId id, FormatComponentType typeHint, TextureDisplayOverlay overlay,
-                           uint32_t eventID, const vector<uint32_t> &passEvents);
+  ResourceId RenderOverlay(ResourceId id, CompType typeHint, DebugOverlay overlay, uint32_t eventID,
+                           const vector<uint32_t> &passEvents);
   ResourceId ApplyCustomShader(ResourceId shader, ResourceId texid, uint32_t mip, uint32_t arrayIdx,
-                               uint32_t sampleIdx, FormatComponentType typeHint);
+                               uint32_t sampleIdx, CompType typeHint);
 
-  ResourceId CreateProxyTexture(const FetchTexture &templateTex);
+  ResourceId CreateProxyTexture(const TextureDescription &templateTex);
   void SetProxyTextureData(ResourceId texid, uint32_t arrayIdx, uint32_t mip, byte *data,
                            size_t dataSize);
   bool IsTextureSupported(const ResourceFormat &format);
 
-  ResourceId CreateProxyBuffer(const FetchBuffer &templateBuf);
+  ResourceId CreateProxyBuffer(const BufferDescription &templateBuf);
   void SetProxyBufferData(ResourceId bufid, byte *data, size_t dataSize);
 
   bool IsRenderOutput(ResourceId id);
@@ -334,8 +339,9 @@ private:
     GLuint triHighlightBuffer;
 
     GLuint feedbackObj;
-    GLuint feedbackQuery;
+    std::vector<GLuint> feedbackQueries;
     GLuint feedbackBuffer;
+    uint32_t feedbackBufferSize = 32 * 1024 * 1024;
 
     GLuint pickPixelTex;
     GLuint pickPixelFBO;
@@ -355,27 +361,14 @@ private:
 
   bool m_Degraded;
 
-  FloatVector InterpretVertex(byte *data, uint32_t vert, const MeshDisplay &cfg, byte *end,
-                              bool useidx, bool &valid);
-
-  // simple cache for when we need buffer data for highlighting
-  // vertices, typical use will be lots of vertices in the same
-  // mesh, not jumping back and forth much between meshes.
-  struct HighlightCache
-  {
-    HighlightCache() : EID(0), buf(), offs(0), stage(eMeshDataStage_Unknown), useidx(false) {}
-    uint32_t EID;
-    ResourceId buf;
-    uint64_t offs;
-    MeshDataStage stage;
-    bool useidx;
-
-    vector<byte> data;
-    vector<uint32_t> indices;
-  } m_HighlightCache;
+  HighlightCache m_HighlightCache;
 
   // eventID -> data
   map<uint32_t, GLPostVSData> m_PostVSData;
+
+  // cache the previous data returned
+  ResourceId m_GetTexturePrevID;
+  byte *m_GetTexturePrevData[16];
 
   void InitDebugData();
   void DeleteDebugData();
@@ -388,7 +381,7 @@ private:
   void PreContextShutdownCounters();
 
   void FillTimers(GLCounterContext &ctx, const DrawcallTreeNode &drawnode,
-                  const vector<uint32_t> &counters);
+                  const vector<GPUCounter> &counters);
 
   GLuint CreateShaderProgram(const vector<string> &vs, const vector<string> &fs,
                              const vector<string> &gs);
@@ -413,11 +406,11 @@ private:
 
   void CacheTexture(ResourceId id);
 
-  map<ResourceId, FetchTexture> m_CachedTextures;
+  map<ResourceId, TextureDescription> m_CachedTextures;
 
   WrappedOpenGL *m_pDriver;
 
-  GLPipelineState m_CurPipelineState;
+  GLPipe::State m_CurPipelineState;
 };
 
 const GLHookSet &GetRealGLFunctions();

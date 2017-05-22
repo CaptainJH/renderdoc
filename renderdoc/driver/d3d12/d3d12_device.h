@@ -41,7 +41,7 @@
 struct D3D12InitParams : public RDCInitParams
 {
   D3D12InitParams();
-  ReplayCreateStatus Serialise();
+  ReplayStatus Serialise();
 
   D3D_FEATURE_LEVEL MinimumFeatureLevel;
 
@@ -282,9 +282,9 @@ private:
   vector<DebugMessage> m_DebugMessages;
 
   uint32_t m_FrameCounter;
-  vector<FetchFrameInfo> m_CapturedFrames;
-  FetchFrameRecord m_FrameRecord;
-  vector<FetchDrawcall *> m_Drawcalls;
+  vector<FrameDescription> m_CapturedFrames;
+  FrameRecord m_FrameRecord;
+  vector<DrawcallDescription *> m_Drawcalls;
 
   Serialiser *m_pSerialiser;
   bool m_AppControlledCapture;
@@ -363,11 +363,10 @@ public:
   Threading::CriticalSection &GetCapTransitionLock() { return m_CapTransitionLock; }
   void ReleaseSwapchainResources(IDXGISwapChain *swap, IUnknown **backbuffers, int numBackbuffers);
   void FirstFrame(WrappedIDXGISwapChain4 *swap);
-  FetchFrameRecord &GetFrameRecord() { return m_FrameRecord; }
-  const FetchDrawcall *GetDrawcall(uint32_t eventID);
+  FrameRecord &GetFrameRecord() { return m_FrameRecord; }
+  const DrawcallDescription *GetDrawcall(uint32_t eventID);
 
-  void AddDebugMessage(DebugMessageCategory c, DebugMessageSeverity sv, DebugMessageSource src,
-                       std::string d);
+  void AddDebugMessage(MessageCategory c, MessageSeverity sv, MessageSource src, std::string d);
   void AddDebugMessage(const DebugMessage &msg) { m_DebugMessages.push_back(msg); }
   vector<DebugMessage> GetDebugMessages();
 

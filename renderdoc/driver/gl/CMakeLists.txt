@@ -53,8 +53,17 @@ else()
     if(ENABLE_GLES)
         list(APPEND sources
             gl_hooks_egl.cpp
+            gl_hooks_egl_pass.cpp
             gl_replay_egl.cpp)
     endif()
+endif()
+
+if(ANDROID)
+	list(APPEND sources
+		official/VrApi_Config.h
+		official/VrApi_Ext.h
+		official/VrApi_Types.h
+		gl_hooks_vrapi.cpp)
 endif()
 
 add_library(rdoc_gl OBJECT ${sources})

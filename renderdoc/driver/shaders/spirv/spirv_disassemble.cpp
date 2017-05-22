@@ -36,13 +36,17 @@ using std::make_pair;
 #undef min
 #undef max
 
-#if ENABLED(RDOC_MSVS)
-#pragma warning(disable : 4481)    // nonstandard extension used: override specifier 'override'
-#endif
-
 #include "3rdparty/glslang/SPIRV/GLSL.std.450.h"
 #include "3rdparty/glslang/SPIRV/spirv.hpp"
 #include "3rdparty/glslang/glslang/Public/ShaderLang.h"
+
+// need to manually put these headers in the spv namespace
+namespace spv
+{
+#include "3rdparty/glslang/SPIRV/GLSL.ext.AMD.h"
+#include "3rdparty/glslang/SPIRV/GLSL.ext.KHR.h"
+#include "3rdparty/glslang/SPIRV/GLSL.ext.NV.h"
+};
 
 // I'm not sure yet if this makes things clearer or worse. On the one hand
 // it is explicit about stores/loads through pointers, but on the other it
@@ -1416,10 +1420,21 @@ struct SPVInstruction
 
 #if USE_CANONICAL_EXT_INST_NAMES
         ret += op->arguments[0]->ext->setname + "::";
-        ret += op->arguments[0]->ext->canonicalNames[op->literals[0]];
+        const char **names = op->arguments[0]->ext->canonicalNames;
 #else
-        ret += op->arguments[0]->ext->friendlyNames[op->literals[0]];
+        const char **names = op->arguments[0]->ext->friendlyNames;
 #endif
+        if(names)
+        {
+          ret += names[op->literals[0]];
+        }
+        else
+        {
+#if !USE_CANONICAL_EXT_INST_NAMES
+          ret += op->arguments[0]->ext->setname + "::";
+#endif
+          ret += StringFormat::Fmt("op%u", op->literals[0]);
+        }
 
         ret += "(";
 
@@ -3441,8 +3456,6 @@ void MakeConstantBlockVariable(ShaderConstant &outConst, SPVTypeData *type, cons
     }
   }
 
-  string suffix = "";
-
   outConst.type.descriptor.elements = 1;
   outConst.type.descriptor.arrayStride = 0;
 
@@ -3450,12 +3463,10 @@ void MakeConstantBlockVariable(ShaderConstant &outConst, SPVTypeData *type, cons
   {
     if(type->arraySize == ~0U)
     {
-      suffix += "[]";
       outConst.type.descriptor.elements = 1;    // TODO need to handle 'array of undefined size'
     }
     else
     {
-      suffix += StringFormat::Fmt("[%u]", type->arraySize);
       outConst.type.descriptor.elements = type->arraySize;
     }
 
@@ -3486,11 +3497,11 @@ void MakeConstantBlockVariable(ShaderConstant &outConst, SPVTypeData *type, cons
   if(type->type == SPVTypeData::eVector || type->type == SPVTypeData::eMatrix)
   {
     if(type->baseType->type == SPVTypeData::eFloat)
-      outConst.type.descriptor.type = eVar_Float;
+      outConst.type.descriptor.type = VarType::Float;
     else if(type->baseType->type == SPVTypeData::eUInt || type->baseType->type == SPVTypeData::eBool)
-      outConst.type.descriptor.type = eVar_UInt;
+      outConst.type.descriptor.type = VarType::UInt;
     else if(type->baseType->type == SPVTypeData::eSInt)
-      outConst.type.descriptor.type = eVar_Int;
+      outConst.type.descriptor.type = VarType::Int;
     else
       RDCERR("Unexpected base type of constant variable %u", type->baseType->type);
 
@@ -3516,16 +3527,16 @@ void MakeConstantBlockVariable(ShaderConstant &outConst, SPVTypeData *type, cons
       outConst.type.descriptor.cols = type->vectorSize;
     }
 
-    outConst.type.descriptor.name = type->GetName() + suffix;
+    outConst.type.descriptor.name = type->GetName();
   }
   else if(type->IsScalar())
   {
     if(type->type == SPVTypeData::eFloat)
-      outConst.type.descriptor.type = eVar_Float;
+      outConst.type.descriptor.type = VarType::Float;
     else if(type->type == SPVTypeData::eUInt || type->type == SPVTypeData::eBool)
-      outConst.type.descriptor.type = eVar_UInt;
+      outConst.type.descriptor.type = VarType::UInt;
     else if(type->type == SPVTypeData::eSInt)
-      outConst.type.descriptor.type = eVar_Int;
+      outConst.type.descriptor.type = VarType::Int;
     else
       RDCERR("Unexpected base type of constant variable %u", type->type);
 
@@ -3533,16 +3544,16 @@ void MakeConstantBlockVariable(ShaderConstant &outConst, SPVTypeData *type, cons
     outConst.type.descriptor.rows = 1;
     outConst.type.descriptor.cols = 1;
 
-    outConst.type.descriptor.name = type->GetName() + suffix;
+    outConst.type.descriptor.name = type->GetName();
   }
   else
   {
-    outConst.type.descriptor.type = eVar_Float;
+    outConst.type.descriptor.type = VarType::Float;
     outConst.type.descriptor.rowMajorStorage = false;
     outConst.type.descriptor.rows = 0;
     outConst.type.descriptor.cols = 0;
 
-    outConst.type.descriptor.name = type->GetName() + suffix;
+    outConst.type.descriptor.name = type->GetName();
 
     MakeConstantBlockVariables(type, outConst.type.members);
   }
@@ -3550,7 +3561,8 @@ void MakeConstantBlockVariable(ShaderConstant &outConst, SPVTypeData *type, cons
 
 void MakeConstantBlockVariables(SPVTypeData *structType, rdctype::array<ShaderConstant> &cblock)
 {
-  RDCASSERT(!structType->children.empty());
+  if(structType->children.empty())
+    return;
 
   create_array_uninit(cblock, structType->children.size());
   for(size_t i = 0; i < structType->children.size(); i++)
@@ -3583,7 +3595,7 @@ uint32_t CalculateMinimumByteSize(const rdctype::array<ShaderConstant> &variable
     RDCASSERT(last.type.descriptor.elements <= 1);
 
     uint32_t basicTypeSize = 4;
-    if(last.type.descriptor.type == eVar_Double)
+    if(last.type.descriptor.type == VarType::Double)
       basicTypeSize = 8;
 
     uint32_t rows = last.type.descriptor.rows;
@@ -3617,37 +3629,43 @@ uint32_t CalculateMinimumByteSize(const rdctype::array<ShaderConstant> &variable
   }
 }
 
-SystemAttribute BuiltInToSystemAttribute(const spv::BuiltIn el)
+ShaderBuiltin BuiltInToSystemAttribute(ShaderStage stage, const spv::BuiltIn el)
 {
   // not complete, might need to expand system attribute list
 
   switch(el)
   {
-    case spv::BuiltInPosition: return eAttr_Position;
-    case spv::BuiltInPointSize: return eAttr_PointSize;
-    case spv::BuiltInClipDistance: return eAttr_ClipDistance;
-    case spv::BuiltInCullDistance: return eAttr_CullDistance;
-    case spv::BuiltInVertexId: return eAttr_VertexIndex;
-    case spv::BuiltInInstanceId: return eAttr_InstanceIndex;
-    case spv::BuiltInPrimitiveId: return eAttr_PrimitiveIndex;
-    case spv::BuiltInInvocationId: return eAttr_InvocationIndex;
-    case spv::BuiltInLayer: return eAttr_RTIndex;
-    case spv::BuiltInViewportIndex: return eAttr_ViewportIndex;
-    case spv::BuiltInTessLevelOuter: return eAttr_OuterTessFactor;
-    case spv::BuiltInTessLevelInner: return eAttr_InsideTessFactor;
-    case spv::BuiltInPatchVertices: return eAttr_PatchNumVertices;
-    case spv::BuiltInFrontFacing: return eAttr_IsFrontFace;
-    case spv::BuiltInSampleId: return eAttr_MSAASampleIndex;
-    case spv::BuiltInSamplePosition: return eAttr_MSAASamplePosition;
-    case spv::BuiltInSampleMask: return eAttr_MSAACoverage;
+    case spv::BuiltInPosition: return ShaderBuiltin::Position;
+    case spv::BuiltInPointSize: return ShaderBuiltin::PointSize;
+    case spv::BuiltInClipDistance: return ShaderBuiltin::ClipDistance;
+    case spv::BuiltInCullDistance: return ShaderBuiltin::CullDistance;
+    case spv::BuiltInVertexId: return ShaderBuiltin::VertexIndex;
+    case spv::BuiltInInstanceId: return ShaderBuiltin::InstanceIndex;
+    case spv::BuiltInPrimitiveId: return ShaderBuiltin::PrimitiveIndex;
+    case spv::BuiltInInvocationId:
+    {
+      if(stage == ShaderStage::Geometry)
+        return ShaderBuiltin::GSInstanceIndex;
+      else
+        return ShaderBuiltin::OutputControlPointIndex;
+    }
+    case spv::BuiltInLayer: return ShaderBuiltin::RTIndex;
+    case spv::BuiltInViewportIndex: return ShaderBuiltin::ViewportIndex;
+    case spv::BuiltInTessLevelOuter: return ShaderBuiltin::OuterTessFactor;
+    case spv::BuiltInTessLevelInner: return ShaderBuiltin::InsideTessFactor;
+    case spv::BuiltInPatchVertices: return ShaderBuiltin::PatchNumVertices;
+    case spv::BuiltInFrontFacing: return ShaderBuiltin::IsFrontFace;
+    case spv::BuiltInSampleId: return ShaderBuiltin::MSAASampleIndex;
+    case spv::BuiltInSamplePosition: return ShaderBuiltin::MSAASamplePosition;
+    case spv::BuiltInSampleMask: return ShaderBuiltin::MSAACoverage;
     case spv::BuiltInFragDepth:
-      return eAttr_DepthOutput;
-    // case spv::BuiltInVertexIndex:                      return eAttr_Vertex0Index;
-    // case spv::BuiltInInstanceIndex:                    return eAttr_Instance0Index;
+      return ShaderBuiltin::DepthOutput;
+    // case spv::BuiltInVertexIndex:                      return ShaderBuiltin::Vertex0Index;
+    // case spv::BuiltInInstanceIndex:                    return ShaderBuiltin::Instance0Index;
     default: break;
   }
 
-  return eAttr_None;
+  return ShaderBuiltin::Undefined;
 }
 
 template <typename T>
@@ -3677,8 +3695,9 @@ struct bindpair
 typedef bindpair<ConstantBlock> cblockpair;
 typedef bindpair<ShaderResource> shaderrespair;
 
-void AddSignatureParameter(uint32_t id, uint32_t childIdx, string varName, SPVTypeData *type,
-                           const vector<SPVDecoration> &decorations, vector<SigParameter> &sigarray)
+void AddSignatureParameter(ShaderStage stage, uint32_t id, uint32_t childIdx, string varName,
+                           SPVTypeData *type, const vector<SPVDecoration> &decorations,
+                           vector<SigParameter> &sigarray)
 {
   SigParameter sig;
 
@@ -3698,12 +3717,16 @@ void AddSignatureParameter(uint32_t id, uint32_t childIdx, string varName, SPVTy
     if(decorations[d].decoration == spv::DecorationLocation)
       sig.regIndex = decorations[d].val;
     else if(decorations[d].decoration == spv::DecorationBuiltIn)
-      sig.systemValue = BuiltInToSystemAttribute((spv::BuiltIn)decorations[d].val);
+      sig.systemValue = BuiltInToSystemAttribute(stage, (spv::BuiltIn)decorations[d].val);
     else if(decorations[d].decoration == spv::DecorationRowMajor)
       rowmajor = true;
     else if(decorations[d].decoration == spv::DecorationColMajor)
       rowmajor = false;
   }
+
+  // fragment shader outputs are implicitly colour outputs
+  if(stage == ShaderStage::Fragment && type->storage == spv::StorageClassOutput)
+    sig.systemValue = ShaderBuiltin::ColorOutput;
 
   if(type->type == SPVTypeData::ePointer)
     type = type->baseType;
@@ -3766,7 +3789,7 @@ void AddSignatureParameter(uint32_t id, uint32_t childIdx, string varName, SPVTy
 
         string baseName = isArray ? StringFormat::Fmt("%s[%u]", varName.c_str(), a) : varName;
 
-        AddSignatureParameter(id, (uint32_t)c, baseName + "." + type->children[c].second,
+        AddSignatureParameter(stage, id, (uint32_t)c, baseName + "." + type->children[c].second,
                               type->children[c].first, type->childDecorations[c], sigarray);
       }
     }
@@ -3777,9 +3800,9 @@ void AddSignatureParameter(uint32_t id, uint32_t childIdx, string varName, SPVTy
   switch(type->baseType ? type->baseType->type : type->type)
   {
     case SPVTypeData::eBool:
-    case SPVTypeData::eUInt: sig.compType = eCompType_UInt; break;
-    case SPVTypeData::eSInt: sig.compType = eCompType_SInt; break;
-    case SPVTypeData::eFloat: sig.compType = eCompType_Float; break;
+    case SPVTypeData::eUInt: sig.compType = CompType::UInt; break;
+    case SPVTypeData::eSInt: sig.compType = CompType::SInt; break;
+    case SPVTypeData::eFloat: sig.compType = CompType::Float; break;
     default:
       RDCERR("Unexpected base type of input/output signature %u",
              type->baseType ? type->baseType->type : type->type);
@@ -3825,8 +3848,8 @@ void AddSignatureParameter(uint32_t id, uint32_t childIdx, string varName, SPVTy
   }
 }
 
-void SPVModule::MakeReflection(const string &entryPoint, ShaderReflection *reflection,
-                               ShaderBindpointMapping *mapping)
+void SPVModule::MakeReflection(ShaderStage stage, const string &entryPoint,
+                               ShaderReflection *reflection, ShaderBindpointMapping *mapping)
 {
   vector<SigParameter> inputs;
   vector<SigParameter> outputs;
@@ -3864,7 +3887,7 @@ void SPVModule::MakeReflection(const string &entryPoint, ShaderReflection *refle
       else
         nm = StringFormat::Fmt("sig%u", inst->id);
 
-      AddSignatureParameter(inst->id, ~0U, nm, inst->var->type, inst->decorations, *sigarray);
+      AddSignatureParameter(stage, inst->id, ~0U, nm, inst->var->type, inst->decorations, *sigarray);
 
       // eliminate any members of gl_PerVertex that are actually unused and just came along
       // for the ride (usually with gl_Position, but maybe declared globally and still unused)
@@ -3974,7 +3997,7 @@ void SPVModule::MakeReflection(const string &entryPoint, ShaderReflection *refle
 
               if(eliminate)
               {
-                SystemAttribute attr = BuiltInToSystemAttribute(checkBuiltin);
+                ShaderBuiltin attr = BuiltInToSystemAttribute(stage, checkBuiltin);
                 // find this builtin in the array, and remove
                 for(auto it = sigarray->begin(); it != sigarray->end(); ++it)
                 {
@@ -4051,16 +4074,16 @@ void SPVModule::MakeReflection(const string &entryPoint, ShaderReflection *refle
         if(ssbo)
         {
           res.IsSampler = false;
-          res.IsSRV = false;
+          res.IsReadOnly = false;
           res.IsTexture = false;
           res.name = cblock.name;
-          res.resType = eResType_Buffer;
+          res.resType = TextureDim::Buffer;
 
           res.variableType.descriptor.cols = 0;
           res.variableType.descriptor.rows = 0;
           res.variableType.descriptor.rowMajorStorage = false;
           res.variableType.descriptor.rows = 0;
-          res.variableType.descriptor.type = eVar_Float;
+          res.variableType.descriptor.type = VarType::Float;
           res.variableType.descriptor.name = type->GetName();
 
           MakeConstantBlockVariables(type, res.variableType.members);
@@ -4069,7 +4092,10 @@ void SPVModule::MakeReflection(const string &entryPoint, ShaderReflection *refle
         {
           MakeConstantBlockVariables(type, cblock.variables);
 
-          cblock.byteSize = CalculateMinimumByteSize(cblock.variables);
+          if(!type->children.empty())
+            cblock.byteSize = CalculateMinimumByteSize(cblock.variables);
+          else
+            cblock.byteSize = 0;
         }
 
         bindmap.used = false;
@@ -4107,53 +4133,47 @@ void SPVModule::MakeReflection(const string &entryPoint, ShaderReflection *refle
         res.name = inst->str.empty() ? StringFormat::Fmt("res%u", inst->id) : inst->str;
 
         if(type->multisampled)
-          res.resType = type->arrayed ? eResType_Texture2DMSArray : eResType_Texture2DMS;
+          res.resType = type->arrayed ? TextureDim::Texture2DMSArray : TextureDim::Texture2DMS;
         else if(type->texdim == spv::Dim1D)
-          res.resType = type->arrayed ? eResType_Texture1DArray : eResType_Texture1D;
+          res.resType = type->arrayed ? TextureDim::Texture1DArray : TextureDim::Texture1D;
         else if(type->texdim == spv::Dim2D)
-          res.resType = type->arrayed ? eResType_Texture2DArray : eResType_Texture2D;
+          res.resType = type->arrayed ? TextureDim::Texture2DArray : TextureDim::Texture2D;
         else if(type->texdim == spv::DimCube)
-          res.resType = type->arrayed ? eResType_TextureCubeArray : eResType_TextureCube;
+          res.resType = type->arrayed ? TextureDim::TextureCubeArray : TextureDim::TextureCube;
         else if(type->texdim == spv::Dim3D)
-          res.resType = eResType_Texture3D;
+          res.resType = TextureDim::Texture3D;
         else if(type->texdim == spv::DimRect)
-          res.resType = eResType_TextureRect;
+          res.resType = TextureDim::TextureRect;
         else if(type->texdim == spv::DimBuffer)
-          res.resType = eResType_Buffer;
+          res.resType = TextureDim::Buffer;
 
         res.IsSampler =
             type->type == SPVTypeData::eSampledImage || type->type == SPVTypeData::eSampler;
-        res.IsTexture = res.resType != eResType_Buffer && type->type != SPVTypeData::eSampler;
-
-        if(type->type == SPVTypeData::eSampler)
-        {
-          res.resType = eResType_None;
-          res.IsSRV = false;
-        }
-
-        bool isrw = false;
+        res.IsTexture = res.resType != TextureDim::Buffer && type->type != SPVTypeData::eSampler;
+        res.IsReadOnly = true;
 
         SPVTypeData *sampledType = type->baseType;
         if(type->type == SPVTypeData::eSampler)
         {
-          res.resType = eResType_None;
+          res.resType = TextureDim::Unknown;
         }
         else if(type->texdim == spv::DimSubpassData)
         {
-          res.resType = eResType_Texture2D;
-          res.IsSRV = true;
+          res.resType = TextureDim::Texture2D;
 
           if(sampledType->type == SPVTypeData::eFloat)
-            res.variableType.descriptor.type = eVar_Float;
+            res.variableType.descriptor.type = VarType::Float;
           else if(sampledType->type == SPVTypeData::eUInt)
-            res.variableType.descriptor.type = eVar_UInt;
+            res.variableType.descriptor.type = VarType::UInt;
           else if(sampledType->type == SPVTypeData::eSInt)
-            res.variableType.descriptor.type = eVar_Int;
+            res.variableType.descriptor.type = VarType::Int;
           else
             RDCERR("Unexpected base type of resource %u", sampledType->type);
         }
         else
         {
+          bool isrw = false;
+
           if(sampledType->type == SPVTypeData::eImage)
           {
             isrw = (sampledType->sampled == 2);
@@ -4164,14 +4184,14 @@ void SPVModule::MakeReflection(const string &entryPoint, ShaderReflection *refle
             isrw = (type->sampled == 2);
           }
 
-          res.IsSRV = !isrw;
+          res.IsReadOnly = !isrw;
 
           if(sampledType->type == SPVTypeData::eFloat)
-            res.variableType.descriptor.type = eVar_Float;
+            res.variableType.descriptor.type = VarType::Float;
           else if(sampledType->type == SPVTypeData::eUInt)
-            res.variableType.descriptor.type = eVar_UInt;
+            res.variableType.descriptor.type = VarType::UInt;
           else if(sampledType->type == SPVTypeData::eSInt)
-            res.variableType.descriptor.type = eVar_Int;
+            res.variableType.descriptor.type = VarType::Int;
           else
             RDCERR("Unexpected base type of resource %u", sampledType->type);
         }
@@ -4219,13 +4239,15 @@ void SPVModule::MakeReflection(const string &entryPoint, ShaderReflection *refle
         // are used
         RDCASSERT(!bindmap.used || bindmap.bind >= 0);
 
-        if(isrw)
-          rwresources.push_back(shaderrespair(bindmap, res));
-        else
+        if(res.IsReadOnly)
           roresources.push_back(shaderrespair(bindmap, res));
+        else
+          rwresources.push_back(shaderrespair(bindmap, res));
       }
     }
-    else if(inst->var->storage == spv::StorageClassPrivate)
+    else if(inst->var->storage == spv::StorageClassPrivate ||
+            inst->var->storage == spv::StorageClassCrossWorkgroup ||
+            inst->var->storage == spv::StorageClassWorkgroup)
     {
       // silently allow
     }
@@ -4302,9 +4324,9 @@ void SPVModule::MakeReflection(const string &entryPoint, ShaderReflection *refle
 
         return strcmp(a.varName.elems, b.varName.elems) < 0;
       }
-      if(a.systemValue == eAttr_None)
+      if(a.systemValue == ShaderBuiltin::Undefined)
         return false;
-      if(b.systemValue == eAttr_None)
+      if(b.systemValue == ShaderBuiltin::Undefined)
         return true;
 
       return a.systemValue < b.systemValue;
@@ -4317,7 +4339,7 @@ void SPVModule::MakeReflection(const string &entryPoint, ShaderReflection *refle
   size_t numInputs = 16;
 
   for(size_t i = 0; i < inputs.size(); i++)
-    if(inputs[i].systemValue == eAttr_None)
+    if(inputs[i].systemValue == ShaderBuiltin::Undefined)
       numInputs = RDCMAX(numInputs, (size_t)inputs[i].regIndex + 1);
 
   create_array_uninit(mapping->InputAttributes, numInputs);
@@ -4325,7 +4347,7 @@ void SPVModule::MakeReflection(const string &entryPoint, ShaderReflection *refle
     mapping->InputAttributes[i] = -1;
 
   for(size_t i = 0; i < inputs.size(); i++)
-    if(inputs[i].systemValue == eAttr_None)
+    if(inputs[i].systemValue == ShaderBuiltin::Undefined)
       mapping->InputAttributes[inputs[i].regIndex] = (int32_t)i;
 
   reflection->InputSig = inputs;
@@ -6250,6 +6272,26 @@ string ToStrHelper<false, spv::Op>::Get(const spv::Op &el)
     case spv::OpAtomicFlagTestAndSet: return "AtomicFlagTestAndSet";
     case spv::OpAtomicFlagClear: return "AtomicFlagClear";
     case spv::OpImageSparseRead: return "ImageSparseRead";
+    case spv::OpSubgroupBallotKHR: return "ImageSparseRead";
+    case spv::OpSubgroupFirstInvocationKHR: return "SubgroupFirstInvocationKHR";
+    case spv::OpSubgroupAllKHR: return "SubgroupAllKHR";
+    case spv::OpSubgroupAnyKHR: return "SubgroupAnyKHR";
+    case spv::OpSubgroupAllEqualKHR: return "SubgroupAllEqualKHR";
+    case spv::OpSubgroupReadInvocationKHR: return "SubgroupReadInvocationKHR";
+    case spv::OpMax: break;
+  }
+
+  // VS doesn't like case statements for values not declared in the original enum
+  switch((int)el)
+  {
+    case spv::OpGroupIAddNonUniformAMD: return "GroupIAddNonUniformAMD";
+    case spv::OpGroupFAddNonUniformAMD: return "GroupFAddNonUniformAMD";
+    case spv::OpGroupFMinNonUniformAMD: return "GroupFMinNonUniformAMD";
+    case spv::OpGroupUMinNonUniformAMD: return "GroupUMinNonUniformAMD";
+    case spv::OpGroupSMinNonUniformAMD: return "GroupSMinNonUniformAMD";
+    case spv::OpGroupFMaxNonUniformAMD: return "GroupFMaxNonUniformAMD";
+    case spv::OpGroupUMaxNonUniformAMD: return "GroupUMaxNonUniformAMD";
+    case spv::OpGroupSMaxNonUniformAMD: return "GroupSMaxNonUniformAMD";
     default: break;
   }
 
@@ -6267,7 +6309,7 @@ string ToStrHelper<false, spv::SourceLanguage>::Get(const spv::SourceLanguage &e
     case spv::SourceLanguageOpenCL_C: return "OpenCL C";
     case spv::SourceLanguageOpenCL_CPP: return "OpenCL C++";
     case spv::SourceLanguageHLSL: return "HLSL";
-    default: break;
+    case spv::SourceLanguageMax: break;
   }
 
   return StringFormat::Fmt("UnrecognisedLanguage{%u}", (uint32_t)el);
@@ -6336,7 +6378,22 @@ string ToStrHelper<false, spv::Capability>::Get(const spv::Capability &el)
     case spv::CapabilityStorageImageReadWithoutFormat: return "StorageImageReadWithoutFormat";
     case spv::CapabilityStorageImageWriteWithoutFormat: return "StorageImageWriteWithoutFormat";
     case spv::CapabilityMultiViewport: return "MultiViewport";
-    default: break;
+    case spv::CapabilitySubgroupBallotKHR: return "SubgroupBallotKHR";
+    case spv::CapabilityDrawParameters: return "DrawParameters";
+    case spv::CapabilitySubgroupVoteKHR: return "SubgroupVoteKHR";
+    case spv::CapabilityStorageUniformBufferBlock16: return "StorageUniformBufferBlock16";
+    case spv::CapabilityStorageUniform16: return "StorageUniform16";
+    case spv::CapabilityStoragePushConstant16: return "StoragePushConstant16";
+    case spv::CapabilityStorageInputOutput16: return "StorageInputOutput16";
+    case spv::CapabilityDeviceGroup: return "DeviceGroup";
+    case spv::CapabilityMultiView: return "MultiView";
+    case spv::CapabilitySampleMaskOverrideCoverageNV: return "SampleMaskOverrideCoverageNV";
+    case spv::CapabilityGeometryShaderPassthroughNV: return "GeometryShaderPassthroughNV";
+    case spv::CapabilityShaderViewportIndexLayerNV: return "ShaderViewportIndexLayerNV";
+    case spv::CapabilityShaderViewportMaskNV: return "ShaderViewportMaskNV";
+    case spv::CapabilityShaderStereoViewNV: return "ShaderStereoViewNV";
+    case spv::CapabilityPerViewAttributesNV: return "PerViewAttributesNV";
+    case spv::CapabilityMax: break;
   }
 
   return StringFormat::Fmt("UnrecognisedCap{%u}", (uint32_t)el);
@@ -6378,7 +6435,7 @@ string ToStrHelper<false, spv::ExecutionMode>::Get(const spv::ExecutionMode &el)
     case spv::ExecutionModeOutputTriangleStrip: return "OutputTriangleStrip";
     case spv::ExecutionModeVecTypeHint: return "VecTypeHint";
     case spv::ExecutionModeContractionOff: return "ContractionOff";
-    default: break;
+    case spv::ExecutionModeMax: break;
   }
 
   return StringFormat::Fmt("UnrecognisedMode{%u}", (uint32_t)el);
@@ -6392,7 +6449,7 @@ string ToStrHelper<false, spv::AddressingModel>::Get(const spv::AddressingModel 
     case spv::AddressingModelLogical: return "Logical";
     case spv::AddressingModelPhysical32: return "Physical (32-bit)";
     case spv::AddressingModelPhysical64: return "Physical (64-bit)";
-    default: break;
+    case spv::AddressingModelMax: break;
   }
 
   return StringFormat::Fmt("UnrecognisedModel{%u}", (uint32_t)el);
@@ -6406,7 +6463,7 @@ string ToStrHelper<false, spv::MemoryModel>::Get(const spv::MemoryModel &el)
     case spv::MemoryModelSimple: return "Simple";
     case spv::MemoryModelGLSL450: return "GLSL450";
     case spv::MemoryModelOpenCL: return "OpenCL";
-    default: break;
+    case spv::MemoryModelMax: break;
   }
 
   return StringFormat::Fmt("UnrecognisedModel{%u}", (uint32_t)el);
@@ -6424,7 +6481,7 @@ string ToStrHelper<false, spv::ExecutionModel>::Get(const spv::ExecutionModel &e
     case spv::ExecutionModelFragment: return "Fragment Shader";
     case spv::ExecutionModelGLCompute: return "Compute Shader";
     case spv::ExecutionModelKernel: return "Kernel";
-    default: break;
+    case spv::ExecutionModelMax: break;
   }
 
   return StringFormat::Fmt("UnrecognisedModel{%u}", (uint32_t)el);
@@ -6478,6 +6535,17 @@ string ToStrHelper<false, spv::Decoration>::Get(const spv::Decoration &el)
     case spv::DecorationNoContraction: return "NoContraction";
     case spv::DecorationInputAttachmentIndex: return "InputAttachmentIndex";
     case spv::DecorationAlignment: return "Alignment";
+    case spv::DecorationOverrideCoverageNV: return "OverrideCoverageNV";
+    case spv::DecorationPassthroughNV: return "PassthroughNV";
+    case spv::DecorationViewportRelativeNV: return "ViewportRelativeNV";
+    case spv::DecorationSecondaryViewportRelativeNV: return "SecondaryViewportRelativeNV";
+    case spv::DecorationMax: break;
+  }
+
+  // VS doesn't like case statements for values not declared in the original enum
+  switch((int)el)
+  {
+    case spv::DecorationExplicitInterpAMD: return "ExplicitInterpAMD";
     default: break;
   }
 
@@ -6496,7 +6564,7 @@ string ToStrHelper<false, spv::Dim>::Get(const spv::Dim &el)
     case spv::DimRect: return "Rect";
     case spv::DimBuffer: return "Buffer";
     case spv::DimSubpassData: return "Subpass Data";
-    default: break;
+    case spv::DimMax: break;
   }
 
   return StringFormat::Fmt("{%u}D", (uint32_t)el);
@@ -6519,7 +6587,7 @@ string ToStrHelper<false, spv::StorageClass>::Get(const spv::StorageClass &el)
     case spv::StorageClassPushConstant: return "PushConstant";
     case spv::StorageClassAtomicCounter: return "AtomicCounter";
     case spv::StorageClassImage: return "Image";
-    default: break;
+    case spv::StorageClassMax: break;
   }
 
   return StringFormat::Fmt("UnrecognisedClass{%u}", (uint32_t)el);
@@ -6570,7 +6638,7 @@ string ToStrHelper<false, spv::ImageFormat>::Get(const spv::ImageFormat &el)
     case spv::ImageFormatRg8ui: return "RG8UI";
     case spv::ImageFormatR16ui: return "R16UI";
     case spv::ImageFormatR8ui: return "R8UI";
-    default: break;
+    case spv::ImageFormatMax: break;
   }
 
   return StringFormat::Fmt("UnrecognisedFormat{%u}", (uint32_t)el);
@@ -6622,6 +6690,34 @@ string ToStrHelper<false, spv::BuiltIn>::Get(const spv::BuiltIn &el)
     case spv::BuiltInSubgroupLocalInvocationId: return "SubgroupLocalInvocationId";
     case spv::BuiltInVertexIndex: return "VertexIndex";
     case spv::BuiltInInstanceIndex: return "InstanceIndex";
+    case spv::BuiltInSubgroupEqMaskKHR: return "SubgroupEqMaskKHR";
+    case spv::BuiltInSubgroupGeMaskKHR: return "SubgroupGeMaskKHR";
+    case spv::BuiltInSubgroupGtMaskKHR: return "SubgroupGtMaskKHR";
+    case spv::BuiltInSubgroupLeMaskKHR: return "SubgroupLeMaskKHR";
+    case spv::BuiltInSubgroupLtMaskKHR: return "SubgroupLtMaskKHR";
+    case spv::BuiltInBaseVertex: return "BaseVertex";
+    case spv::BuiltInBaseInstance: return "BaseInstance";
+    case spv::BuiltInDrawIndex: return "DrawIndex";
+    case spv::BuiltInDeviceIndex: return "DeviceIndex";
+    case spv::BuiltInViewIndex: return "ViewIndex";
+    case spv::BuiltInViewportMaskNV: return "ViewportMaskNV";
+    case spv::BuiltInSecondaryPositionNV: return "SecondaryPositionNV";
+    case spv::BuiltInSecondaryViewportMaskNV: return "SecondaryViewportMaskNV";
+    case spv::BuiltInPositionPerViewNV: return "PositionPerViewNV";
+    case spv::BuiltInViewportMaskPerViewNV: return "ViewportMaskPerViewNV";
+    case spv::BuiltInMax: break;
+  }
+
+  // VS doesn't like case statements for values not declared in the original enum
+  switch((int)el)
+  {
+    case spv::BuiltInBaryCoordNoPerspAMD: return "BaryCoordNoPerspAMD";
+    case spv::BuiltInBaryCoordNoPerspCentroidAMD: return "BaryCoordNoPerspCentroidAMD";
+    case spv::BuiltInBaryCoordNoPerspSampleAMD: return "BaryCoordNoPerspSampleAMD";
+    case spv::BuiltInBaryCoordSmoothAMD: return "BaryCoordSmoothAMD";
+    case spv::BuiltInBaryCoordSmoothCentroidAMD: return "BaryCoordSmoothCentroidAMD";
+    case spv::BuiltInBaryCoordSmoothSampleAMD: return "BaryCoordSmoothSampleAMD";
+    case spv::BuiltInBaryCoordPullModelAMD: return "BaryCoordPullModelAMD";
     default: break;
   }
 
@@ -6638,7 +6734,7 @@ string ToStrHelper<false, spv::Scope>::Get(const spv::Scope &el)
     case spv::ScopeWorkgroup: return "Workgroup";
     case spv::ScopeSubgroup: return "Subgroup";
     case spv::ScopeInvocation: return "Invocation";
-    default: break;
+    case spv::ScopeMax: break;
   }
 
   return StringFormat::Fmt("UnrecognisedScope{%u}", (uint32_t)el);

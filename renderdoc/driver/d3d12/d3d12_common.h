@@ -33,6 +33,28 @@
 #include "driver/shaders/dxbc/dxbc_compile.h"
 #include "serialise/serialiser.h"
 
+// replay only class for handling marker regions
+struct D3D12MarkerRegion
+{
+  D3D12MarkerRegion(ID3D12GraphicsCommandList *list, const std::string &marker);
+  ~D3D12MarkerRegion();
+  static void Set(ID3D12GraphicsCommandList *list, const std::string &marker);
+
+  ID3D12GraphicsCommandList *list;
+};
+
+TextureDim MakeTextureDim(D3D12_SRV_DIMENSION dim);
+TextureDim MakeTextureDim(D3D12_RTV_DIMENSION dim);
+TextureDim MakeTextureDim(D3D12_DSV_DIMENSION dim);
+TextureDim MakeTextureDim(D3D12_UAV_DIMENSION dim);
+AddressMode MakeAddressMode(D3D12_TEXTURE_ADDRESS_MODE addr);
+CompareFunc MakeCompareFunc(D3D12_COMPARISON_FUNC func);
+TextureFilter MakeFilter(D3D12_FILTER filter);
+LogicOp MakeLogicOp(D3D12_LOGIC_OP op);
+BlendMultiplier MakeBlendMultiplier(D3D12_BLEND blend, bool alpha);
+BlendOp MakeBlendOp(D3D12_BLEND_OP op);
+StencilOp MakeStencilOp(D3D12_STENCIL_OP op);
+
 void MakeShaderReflection(DXBC::DXBCFile *dxbc, ShaderReflection *refl,
                           ShaderBindpointMapping *mapping);
 
@@ -57,7 +79,7 @@ void MakeShaderReflection(DXBC::DXBCFile *dxbc, ShaderReflection *refl,
 // buffer replay is happening
 #define VERBOSE_PARTIAL_REPLAY OPTION_ON
 
-ShaderStageBits ConvertVisibility(D3D12_SHADER_VISIBILITY ShaderVisibility);
+ShaderStageMask ConvertVisibility(D3D12_SHADER_VISIBILITY ShaderVisibility);
 UINT GetNumSubresources(ID3D12Device *dev, const D3D12_RESOURCE_DESC *desc);
 
 class WrappedID3D12Device;
@@ -317,6 +339,10 @@ void Serialiser::Serialise(const char *name, D3D12_CLEAR_VALUE &el);
 template <>
 void Serialiser::Serialise(const char *name, D3D12_TEXTURE_COPY_LOCATION &el);
 template <>
+void Serialiser::Serialise(const char *name, D3D12_TILED_RESOURCE_COORDINATE &el);
+template <>
+void Serialiser::Serialise(const char *name, D3D12_TILE_REGION_SIZE &el);
+template <>
 void Serialiser::Serialise(const char *name, D3D12_DISCARD_REGION &el);
 template <>
 void Serialiser::Deserialise(const D3D12_DISCARD_REGION *const el) const;
@@ -436,6 +462,11 @@ void Serialiser::Serialise(const char *name, D3D12Descriptor &el);
   D3D12_CHUNK_MACRO(EXECUTE_CMD_LISTS, "ID3D12GraphicsCommandQueue::ExecuteCommandLists")          \
   D3D12_CHUNK_MACRO(SIGNAL, "ID3D12GraphicsCommandQueue::Signal")                                  \
   D3D12_CHUNK_MACRO(WAIT, "ID3D12GraphicsCommandQueue::Wait")                                      \
+                                                                                                   \
+  D3D12_CHUNK_MACRO(CREATE_RESERVED_RESOURCE, "ID3D12Device::CreateReservedResource")              \
+  D3D12_CHUNK_MACRO(COPY_TILES, "ID3D12GraphicsCommandList::CopyTiles")                            \
+  D3D12_CHUNK_MACRO(UPDATE_TILE_MAPPINGS, "ID3D12GraphicsCommandQueue::UpdateTileMappings")        \
+  D3D12_CHUNK_MACRO(COPY_TILE_MAPPINGS, "ID3D12GraphicsCommandQueue::CopyTileMappings")            \
                                                                                                    \
   D3D12_CHUNK_MACRO(NUM_D3D12_CHUNKS, "")
 

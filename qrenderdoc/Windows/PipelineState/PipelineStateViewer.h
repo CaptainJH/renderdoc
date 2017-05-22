@@ -32,38 +32,50 @@ namespace Ui
 class PipelineStateViewer;
 }
 
+class QXmlStreamWriter;
+
 class D3D11PipelineStateViewer;
 class D3D12PipelineStateViewer;
 class GLPipelineStateViewer;
 class VulkanPipelineStateViewer;
 
-class PipelineStateViewer : public QFrame, public ILogViewerForm
+class PipelineStateViewer : public QFrame, public IPipelineStateViewer, public ILogViewer
 {
   Q_OBJECT
 
   Q_PROPERTY(QVariant persistData READ persistData WRITE setPersistData DESIGNABLE false SCRIPTABLE false)
 
 public:
-  explicit PipelineStateViewer(CaptureContext &ctx, QWidget *parent = 0);
+  explicit PipelineStateViewer(ICaptureContext &ctx, QWidget *parent = 0);
   ~PipelineStateViewer();
 
-  void OnLogfileLoaded();
-  void OnLogfileClosed();
-  void OnSelectedEventChanged(uint32_t eventID) {}
-  void OnEventChanged(uint32_t eventID);
+  // IPipelineStateViewer
+  QWidget *Widget() override { return this; }
+  bool SaveShaderFile(const ShaderReflection *shader) override;
+
+  // ILogViewerForm
+  void OnLogfileLoaded() override;
+  void OnLogfileClosed() override;
+  void OnSelectedEventChanged(uint32_t eventID) override {}
+  void OnEventChanged(uint32_t eventID) override;
 
   QVariant persistData();
+
   void setPersistData(const QVariant &persistData);
 
-  bool SaveShaderFile(const ShaderReflection *shader);
   bool PrepareShaderEditing(const ShaderReflection *shaderDetails, QString &entryFunc,
                             QStringMap &files, QString &mainfile);
-  void EditShader(ShaderStageType shaderType, ResourceId id, const ShaderReflection *shaderDetails,
+  void EditShader(ShaderStage shaderType, ResourceId id, const ShaderReflection *shaderDetails,
                   const QString &entryFunc, const QStringMap &files, const QString &mainfile);
+  QXmlStreamWriter *beginHTMLExport();
+  void exportHTMLTable(QXmlStreamWriter &xml, const QStringList &cols,
+                       const QList<QVariantList> &rows);
+  void exportHTMLTable(QXmlStreamWriter &xml, const QStringList &cols, const QVariantList &row);
+  void endHTMLExport(QXmlStreamWriter *xml);
 
 private:
   Ui::PipelineStateViewer *ui;
-  CaptureContext &m_Ctx;
+  ICaptureContext &m_Ctx;
 
   void setToD3D11();
   void setToD3D12();
@@ -71,9 +83,11 @@ private:
   void setToVulkan();
   void reset();
 
+  QString GetCurrentAPI();
+
   D3D11PipelineStateViewer *m_D3D11;
   D3D12PipelineStateViewer *m_D3D12;
   GLPipelineStateViewer *m_GL;
   VulkanPipelineStateViewer *m_Vulkan;
-  ILogViewerForm *m_Current;
+  ILogViewer *m_Current;
 };

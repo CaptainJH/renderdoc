@@ -48,25 +48,22 @@ void Daemonise()
 {
 }
 
-void DisplayRendererPreview(ReplayRenderer *renderer, TextureDisplay &displayCfg, uint32_t width,
+void DisplayRendererPreview(IReplayController *renderer, TextureDisplay &displayCfg, uint32_t width,
                             uint32_t height)
 {
   ANativeWindow *connectionScreenWindow = android_state->window;
 
-  ReplayOutput *out = ReplayRenderer_CreateOutput(renderer, eWindowingSystem_Android,
-                                                  connectionScreenWindow, eOutputType_TexDisplay);
+  IReplayOutput *out = renderer->CreateOutput(WindowingSystem::Android, connectionScreenWindow,
+                                              ReplayOutputType::Texture);
 
-  OutputConfig c = {eOutputType_TexDisplay};
-
-  ReplayOutput_SetOutputConfig(out, c);
-  ReplayOutput_SetTextureDisplay(out, displayCfg);
+  out->SetTextureDisplay(displayCfg);
 
   for(int i = 0; i < 100; i++)
   {
-    ReplayRenderer_SetFrameEvent(renderer, 10000000, true);
+    renderer->SetFrameEvent(10000000, true);
 
     __android_log_print(ANDROID_LOG_INFO, LOGCAT_TAG, "Frame %i", i);
-    ReplayOutput_Display(out);
+    out->Display();
 
     usleep(100000);
   }

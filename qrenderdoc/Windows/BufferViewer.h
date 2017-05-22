@@ -52,31 +52,35 @@ struct BufferExport
   BufferExport(ExportFormat f) : format(f) {}
 };
 
-class BufferViewer : public QFrame, public ILogViewerForm
+class BufferViewer : public QFrame, public IBufferViewer, public ILogViewer
 {
   Q_OBJECT
 
 public:
-  explicit BufferViewer(CaptureContext &ctx, bool meshview, QWidget *parent = 0);
+  explicit BufferViewer(ICaptureContext &ctx, bool meshview, QWidget *parent = 0);
   ~BufferViewer();
 
-  void ViewBuffer(uint64_t byteOffset, uint64_t byteSize, ResourceId id, const QString &format = "");
-  void ViewTexture(uint32_t arrayIdx, uint32_t mip, ResourceId id, const QString &format = "");
-
-  void OnLogfileLoaded();
-  void OnLogfileClosed();
-  void OnSelectedEventChanged(uint32_t eventID) {}
-  void OnEventChanged(uint32_t eventID);
-
-  void ScrollToRow(int row, MeshDataStage stage = eMeshDataStage_VSIn)
+  // IBufferViewer
+  QWidget *Widget() override { return this; }
+  void ScrollToRow(int row, MeshDataStage stage = MeshDataStage::VSIn) override
   {
-    if(stage == eMeshDataStage_VSOut)
+    if(stage == MeshDataStage::VSOut)
       ScrollToRow(m_ModelVSOut, row);
-    else if(stage == eMeshDataStage_GSOut)
+    else if(stage == MeshDataStage::GSOut)
       ScrollToRow(m_ModelGSOut, row);
     else
       ScrollToRow(m_ModelVSIn, row);
   }
+  void ViewBuffer(uint64_t byteOffset, uint64_t byteSize, ResourceId id,
+                  const QString &format = QString()) override;
+  void ViewTexture(uint32_t arrayIdx, uint32_t mip, ResourceId id,
+                   const QString &format = QString()) override;
+
+  // ILogViewerForm
+  void OnLogfileLoaded() override;
+  void OnLogfileClosed() override;
+  void OnSelectedEventChanged(uint32_t eventID) override {}
+  void OnEventChanged(uint32_t eventID) override;
 
 private slots:
   // automatic slots
@@ -91,8 +95,10 @@ private slots:
   void on_drawRange_currentIndexChanged(int index);
   void on_controlType_currentIndexChanged(int index);
   void on_camSpeed_valueChanged(double value);
-  void on_instance_valueChanged(int arg1);
-  void on_rowOffset_valueChanged(int arg1);
+  void on_instance_valueChanged(int value);
+  void on_rowOffset_valueChanged(int value);
+  void on_byteRangeStart_valueChanged(int value);
+  void on_byteRangeLength_valueChanged(int value);
 
   // manual slots
   void render_mouseMove(QMouseEvent *e);
@@ -114,12 +120,12 @@ private slots:
 
 private:
   Ui::BufferViewer *ui;
-  CaptureContext &m_Ctx;
+  ICaptureContext &m_Ctx;
 
   IReplayOutput *m_Output;
 
-  void RT_UpdateAndDisplay(IReplayRenderer *);
-  void RT_FetchMeshData(IReplayRenderer *r);
+  void RT_UpdateAndDisplay(IReplayController *);
+  void RT_FetchMeshData(IReplayController *r);
 
   MeshDisplay m_Config;
 
@@ -170,9 +176,11 @@ private:
 
   // data from raw buffer view
   bool m_IsBuffer = true;
+  QString m_Format;
   uint32_t m_TexArrayIdx = 0;
   uint32_t m_TexMip = 0;
   uint64_t m_ByteOffset = 0;
+  uint64_t m_ObjectByteSize = UINT64_MAX;
   uint64_t m_ByteSize = UINT64_MAX;
   ResourceId m_BufferID;
 
@@ -191,6 +199,7 @@ private:
 
   int m_IdxColWidth;
   int m_DataColWidth;
+  int m_DataRowHeight;
 
   QMenu *m_HeaderMenu = NULL;
 
@@ -230,8 +239,8 @@ private:
   void UpdateMeshConfig();
   void EnableCameraGuessControls();
 
-  void CalcColumnWidth();
-  void ApplyColumnWidths(int numColumns, RDTableView *view);
+  void CalcColumnWidth(int maxNumRows = 1);
+  void ApplyRowAndColumnDims(int numColumns, RDTableView *view);
 
   void SyncViews(RDTableView *primary, bool selection, bool scroll);
   void UpdateHighlightVerts();

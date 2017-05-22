@@ -23,6 +23,7 @@
  ******************************************************************************/
 
 #include "api/replay/renderdoc_replay.h"
+#include "api/replay/version.h"
 #include "serialise/string_utils.h"
 
 #include <errno.h>
@@ -37,7 +38,7 @@ void VulkanReplay::OutputWindow::SetWindowHandle(WindowingSystem system, void *d
   m_WindowSystem = system;
 
 #if ENABLED(RDOC_XLIB)
-  if(system == eWindowingSystem_Xlib)
+  if(system == WindowingSystem::Xlib)
   {
     XlibWindowData *xdata = (XlibWindowData *)data;
     xlib.display = xdata->display;
@@ -47,7 +48,7 @@ void VulkanReplay::OutputWindow::SetWindowHandle(WindowingSystem system, void *d
 #endif
 
 #if ENABLED(RDOC_XCB)
-  if(system == eWindowingSystem_XCB)
+  if(system == WindowingSystem::XCB)
   {
     XCBWindowData *xdata = (XCBWindowData *)data;
     xcb.connection = xdata->connection;
@@ -62,7 +63,7 @@ void VulkanReplay::OutputWindow::SetWindowHandle(WindowingSystem system, void *d
 void VulkanReplay::OutputWindow::CreateSurface(VkInstance inst)
 {
 #if ENABLED(RDOC_XLIB)
-  if(m_WindowSystem == eWindowingSystem_Xlib)
+  if(m_WindowSystem == WindowingSystem::Xlib)
   {
     VkXlibSurfaceCreateInfoKHR createInfo;
 
@@ -80,7 +81,7 @@ void VulkanReplay::OutputWindow::CreateSurface(VkInstance inst)
 #endif
 
 #if ENABLED(RDOC_XCB)
-  if(m_WindowSystem == eWindowingSystem_XCB)
+  if(m_WindowSystem == WindowingSystem::XCB)
   {
     VkXcbSurfaceCreateInfoKHR createInfo;
 
@@ -108,7 +109,7 @@ void VulkanReplay::GetOutputWindowDimensions(uint64_t id, int32_t &w, int32_t &h
   OutputWindow &outw = m_OutputWindows[id];
 
 #if ENABLED(RDOC_XLIB)
-  if(outw.m_WindowSystem == eWindowingSystem_Xlib)
+  if(outw.m_WindowSystem == WindowingSystem::Xlib)
   {
     XWindowAttributes attr = {};
     XGetWindowAttributes(outw.xlib.display, outw.xlib.window, &attr);
@@ -121,7 +122,7 @@ void VulkanReplay::GetOutputWindowDimensions(uint64_t id, int32_t &w, int32_t &h
 #endif
 
 #if ENABLED(RDOC_XCB)
-  if(outw.m_WindowSystem == eWindowingSystem_XCB)
+  if(outw.m_WindowSystem == WindowingSystem::XCB)
   {
     xcb_get_geometry_cookie_t geomCookie =
         xcb_get_geometry(outw.xcb.connection, outw.xcb.window);    // window is a xcb_drawable_t
@@ -157,7 +158,31 @@ static std::string GenerateJSON(const std::string &sopath)
 
   size_t idx = json.find(dllPathString);
 
-  return json.substr(0, idx) + sopath + json.substr(idx + sizeof(dllPathString) - 1);
+  json = json.substr(0, idx) + sopath + json.substr(idx + sizeof(dllPathString) - 1);
+
+  const char majorString[] = "[MAJOR]";
+
+  idx = json.find(majorString);
+  while(idx != string::npos)
+  {
+    json = json.substr(0, idx) + STRINGIZE(RENDERDOC_VERSION_MAJOR) +
+           json.substr(idx + sizeof(majorString) - 1);
+
+    idx = json.find(majorString);
+  }
+
+  const char minorString[] = "[MINOR]";
+
+  idx = json.find(minorString);
+  while(idx != string::npos)
+  {
+    json = json.substr(0, idx) + STRINGIZE(RENDERDOC_VERSION_MINOR) +
+           json.substr(idx + sizeof(minorString) - 1);
+
+    idx = json.find(minorString);
+  }
+
+  return json;
 }
 
 static bool FileExists(const std::string &path)
@@ -274,7 +299,7 @@ string GetThisLibPath()
         c++;
 
       // dev
-      while(isdigit(c[0]) || c[0] == ':')
+      while(isalnum(c[0]) || c[0] == ':')
         c++;
 
       // whitespace
@@ -317,14 +342,14 @@ void MakeParentDirs(std::string file)
   mkdir(dir.c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
 }
 
-bool VulkanReplay::CheckVulkanLayer(uint32_t &flags, std::vector<std::string> &myJSONs,
+bool VulkanReplay::CheckVulkanLayer(VulkanLayerFlags &flags, std::vector<std::string> &myJSONs,
                                     std::vector<std::string> &otherJSONs)
 {
   // see if the user has suppressed all this checking as a "I know what I'm doing" measure
 
   if(FileExists(string(getenv("HOME")) + "/.renderdoc/ignore_vulkan_layer_issues"))
   {
-    flags = eVulkan_ThisInstallRegistered;
+    flags = VulkanLayerFlags::ThisInstallRegistered;
     return false;
   }
 
@@ -367,10 +392,10 @@ bool VulkanReplay::CheckVulkanLayer(uint32_t &flags, std::vector<std::string> &m
       numMatch++;
   }
 
-  flags = eVulkan_CouldElevate | eVulkan_UpdateAllowed;
+  flags = VulkanLayerFlags::CouldElevate | VulkanLayerFlags::UpdateAllowed;
 
   if(numMatch >= 1)
-    flags |= eVulkan_ThisInstallRegistered;
+    flags |= VulkanLayerFlags::ThisInstallRegistered;
 
   // if we only have one registration, check that it points to us. If so, we're good
   if(numExist == 1 && numMatch == 1)
@@ -386,7 +411,7 @@ bool VulkanReplay::CheckVulkanLayer(uint32_t &flags, std::vector<std::string> &m
     otherJSONs.push_back(layerRegistrationPath[HOME]);
 
   if(!otherJSONs.empty())
-    flags |= eVulkan_OtherInstallsRegistered;
+    flags |= VulkanLayerFlags::OtherInstallsRegistered;
 
   if(exist[USR] && match[USR])
   {
@@ -400,7 +425,7 @@ bool VulkanReplay::CheckVulkanLayer(uint32_t &flags, std::vector<std::string> &m
 
   if(exist[USR] && !match[USR])
   {
-    flags = eVulkan_Unfixable | eVulkan_OtherInstallsRegistered;
+    flags = VulkanLayerFlags::Unfixable | VulkanLayerFlags::OtherInstallsRegistered;
     otherJSONs.clear();
     otherJSONs.push_back(layerRegistrationPath[USR]);
   }

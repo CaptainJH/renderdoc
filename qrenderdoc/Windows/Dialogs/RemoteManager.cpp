@@ -25,7 +25,7 @@
 #include "RemoteManager.h"
 #include <QKeyEvent>
 #include "3rdparty/flowlayout/FlowLayout.h"
-#include "Code/RemoteHost.h"
+#include "Code/Interface/QRDInterface.h"
 #include "Code/Resources.h"
 #include "Windows/Dialogs/LiveCapture.h"
 #include "Windows/MainWindow.h"
@@ -41,52 +41,50 @@ struct RemoteConnect
 
 Q_DECLARE_METATYPE(RemoteConnect);
 
-static void setRemoteConnect(QTreeWidgetItem *item, const RemoteConnect &connect)
+static void setRemoteConnect(RDTreeWidgetItem *item, const RemoteConnect &connect)
 {
   if(!item)
     return;
 
-  item->setData(0, Qt::UserRole, QVariant::fromValue(connect));
+  item->setTag(QVariant::fromValue(connect));
 }
 
-static RemoteConnect getRemoteConnect(QTreeWidgetItem *item)
+static RemoteConnect getRemoteConnect(RDTreeWidgetItem *item)
 {
   if(!item)
     return RemoteConnect();
 
-  return item->data(0, Qt::UserRole).value<RemoteConnect>();
+  return item->tag().value<RemoteConnect>();
 }
 
-static void setRemoteHost(QTreeWidgetItem *item, RemoteHost *host)
+static void setRemoteHost(RDTreeWidgetItem *item, RemoteHost *host)
 {
   if(!item)
     return;
 
-  item->setData(0, Qt::UserRole + 1, QVariant::fromValue((uintptr_t)host));
+  item->setTag(QVariant::fromValue((uintptr_t)host));
 }
 
-static RemoteHost *getRemoteHost(QTreeWidgetItem *item)
+static RemoteHost *getRemoteHost(RDTreeWidgetItem *item)
 {
   if(!item)
     return NULL;
 
-  return (RemoteHost *)item->data(0, Qt::UserRole + 1).value<uintptr_t>();
+  return (RemoteHost *)item->tag().value<uintptr_t>();
 }
 
-static void setItalic(QTreeWidgetItem *node, bool italic)
-{
-  QFont f = node->font(0);
-  f.setItalic(italic);
-  node->setFont(0, f);
-  node->setFont(1, f);
-}
-
-RemoteManager::RemoteManager(CaptureContext &ctx, MainWindow *main)
+RemoteManager::RemoteManager(ICaptureContext &ctx, MainWindow *main)
     : QDialog(NULL), ui(new Ui::RemoteManager), m_Ctx(ctx), m_Main(main)
 {
   ui->setupUi(this);
 
-  ui->hosts->setClearSelectionOnFocusLoss(false);
+  m_ExternalRef.release(1);
+
+  ui->hosts->setFont(Formatter::PreferredFont());
+  ui->hostname->setFont(Formatter::PreferredFont());
+  ui->runCommand->setFont(Formatter::PreferredFont());
+
+  ui->hosts->setColumns({tr("Hostname"), tr("Running")});
 
   ui->hosts->header()->setSectionResizeMode(0, QHeaderView::Stretch);
   ui->hosts->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
@@ -109,9 +107,9 @@ RemoteManager::RemoteManager(CaptureContext &ctx, MainWindow *main)
   vertical->addWidget(lookupsProgressFlow);
   vertical->addWidget(ui->bottomLayout->parentWidget());
 
-  m_Ctx.Config.AddAndroidHosts();
+  m_Ctx.Config().AddAndroidHosts();
 
-  for(RemoteHost *h : m_Ctx.Config.RemoteHosts)
+  for(RemoteHost *h : m_Ctx.Config().RemoteHosts)
     addHost(h);
 
   on_hosts_itemClicked(ui->hosts->topLevelItem(0), 0);
@@ -122,7 +120,13 @@ RemoteManager::~RemoteManager()
   delete ui;
 }
 
-void RemoteManager::setRemoteServerLive(QTreeWidgetItem *node, bool live, bool busy)
+void RemoteManager::closeWhenFinished()
+{
+  m_ExternalRef.acquire(1);
+  updateStatus();
+}
+
+void RemoteManager::setRemoteServerLive(RDTreeWidgetItem *node, bool live, bool busy)
 {
   RemoteHost *host = getRemoteHost(node);
 
@@ -132,10 +136,10 @@ void RemoteManager::setRemoteServerLive(QTreeWidgetItem *node, bool live, bool b
   host->ServerRunning = live;
   host->Busy = busy;
 
-  if(host->Hostname == "localhost")
+  if(host->Hostname == lit("localhost"))
   {
     node->setIcon(0, QIcon());
-    node->setText(1, "");
+    node->setText(1, QString());
   }
   else
   {
@@ -150,12 +154,11 @@ void RemoteManager::setRemoteServerLive(QTreeWidgetItem *node, bool live, bool b
 
     node->setText(1, text);
 
-    node->setIcon(0,
-                  QIcon(QPixmap(QString::fromUtf8(live ? ":/connect.png" : ":/disconnect.png"))));
+    node->setIcon(0, live ? Icons::connect() : Icons::disconnect());
   }
 }
 
-bool RemoteManager::isRemoteServerLive(QTreeWidgetItem *node)
+bool RemoteManager::isRemoteServerLive(RDTreeWidgetItem *node)
 {
   RemoteHost *host = getRemoteHost(node);
   return host && host->ServerRunning;
@@ -163,15 +166,14 @@ bool RemoteManager::isRemoteServerLive(QTreeWidgetItem *node)
 
 void RemoteManager::addHost(RemoteHost *host)
 {
-  QTreeWidgetItem *node = makeTreeNode({host->Hostname, "..."});
+  RDTreeWidgetItem *node = new RDTreeWidgetItem({host->Hostname, lit("...")});
 
-  setItalic(node, true);
+  node->setItalic(true);
   node->setIcon(0, Icons::hourglass());
   setRemoteHost(node, host);
 
   ui->hosts->addTopLevelItem(node);
-  ui->hosts->clearSelection();
-  node->setSelected(true);
+  ui->hosts->setSelectedItem(node);
 
   ui->refreshOne->setEnabled(false);
   ui->refreshAll->setEnabled(false);
@@ -189,7 +191,7 @@ void RemoteManager::updateLookupsStatus()
   ui->progressCount->setText(tr("%1 lookups remaining").arg(m_Lookups.available()));
 }
 
-void RemoteManager::runRemoteServer(QTreeWidgetItem *node)
+void RemoteManager::runRemoteServer(RDTreeWidgetItem *node)
 {
   RemoteHost *host = getRemoteHost(node);
 
@@ -202,7 +204,7 @@ void RemoteManager::runRemoteServer(QTreeWidgetItem *node)
   refreshHost(node);
 }
 
-void RemoteManager::refreshHost(QTreeWidgetItem *node)
+void RemoteManager::refreshHost(RDTreeWidgetItem *node)
 {
   RemoteHost *host = getRemoteHost(node);
 
@@ -232,10 +234,10 @@ void RemoteManager::refreshHost(QTreeWidgetItem *node)
 
       nextIdent = RENDERDOC_EnumerateRemoteTargets(hostnameBytes.data(), nextIdent);
 
-      if(nextIdent == ~0U || prevIdent >= nextIdent)
+      if(nextIdent == 0 || prevIdent >= nextIdent)
         break;
 
-      TargetControl *conn =
+      ITargetControl *conn =
           RENDERDOC_CreateTargetControl(hostnameBytes.data(), nextIdent, username.data(), false);
 
       if(conn)
@@ -246,7 +248,7 @@ void RemoteManager::refreshHost(QTreeWidgetItem *node)
 
         QString running;
 
-        if(busy != "")
+        if(!busy.isEmpty())
           running = tr("Running %1, %2 is connected").arg(api).arg(busy);
         else
           running = tr("Running %1").arg(api);
@@ -254,7 +256,7 @@ void RemoteManager::refreshHost(QTreeWidgetItem *node)
         RemoteConnect tag(hostname, nextIdent);
 
         GUIInvoke::call([this, node, target, running, tag]() {
-          QTreeWidgetItem *child = makeTreeNode({target, running});
+          RDTreeWidgetItem *child = new RDTreeWidgetItem({target, running});
           setRemoteConnect(child, tag);
           node->addChild(child);
           ui->hosts->expandItem(node);
@@ -264,11 +266,11 @@ void RemoteManager::refreshHost(QTreeWidgetItem *node)
       }
     }
 
-    GUIInvoke::call([node]() { setItalic(node, false); });
+    GUIInvoke::call([node]() { node->setItalic(false); });
 
     m_Lookups.acquire();
 
-    GUIInvoke::call([this]() { lookupComplete(); });
+    GUIInvoke::call([this]() { updateStatus(); });
   });
   th->selfDelete(true);
   th->start();
@@ -276,16 +278,17 @@ void RemoteManager::refreshHost(QTreeWidgetItem *node)
 
 // don't allow the user to refresh until all pending connections have been checked
 // (to stop flooding)
-void RemoteManager::lookupComplete()
+void RemoteManager::updateStatus()
 {
   if(m_Lookups.available() == 0)
   {
     ui->refreshOne->setEnabled(true);
     ui->refreshAll->setEnabled(true);
 
-    if(!isVisible())
+    // if the external ref is gone now, we can delete ourselves
+    if(m_ExternalRef.available() == 0)
     {
-      delete this;
+      deleteLater();
       return;
     }
   }
@@ -294,7 +297,7 @@ void RemoteManager::lookupComplete()
   updateLookupsStatus();
 }
 
-void RemoteManager::connectToApp(QTreeWidgetItem *node)
+void RemoteManager::connectToApp(RDTreeWidgetItem *node)
 {
   if(node)
   {
@@ -305,17 +308,16 @@ void RemoteManager::connectToApp(QTreeWidgetItem *node)
       LiveCapture *live = new LiveCapture(m_Ctx, connect.host, connect.ident, m_Main, m_Main);
       m_Main->ShowLiveCapture(live);
       accept();
-      lookupComplete();
     }
   }
 }
 
 void RemoteManager::updateConnectButton()
 {
-  if(!ui->hosts->selectedItems().isEmpty())
-  {
-    QTreeWidgetItem *item = ui->hosts->selectedItems()[0];
+  RDTreeWidgetItem *item = ui->hosts->selectedItem();
 
+  if(item)
+  {
     ui->connect->setEnabled(true);
     ui->connect->setText(tr("Connect to App"));
 
@@ -323,7 +325,7 @@ void RemoteManager::updateConnectButton()
 
     if(host)
     {
-      if(host->Hostname == "localhost")
+      if(host->Hostname == lit("localhost"))
       {
         ui->connect->setEnabled(false);
       }
@@ -338,7 +340,7 @@ void RemoteManager::updateConnectButton()
       {
         ui->connect->setText(tr("Run Server"));
 
-        if(host->RunCommand == "")
+        if(host->RunCommand.isEmpty())
           ui->connect->setEnabled(false);
       }
     }
@@ -356,9 +358,9 @@ void RemoteManager::addNewHost()
   {
     bool found = false;
 
-    for(int i = 0; i < m_Ctx.Config.RemoteHosts.count(); i++)
+    for(int i = 0; i < m_Ctx.Config().RemoteHosts.count(); i++)
     {
-      if(m_Ctx.Config.RemoteHosts[i]->Hostname.compare(host, Qt::CaseInsensitive) == 0)
+      if(m_Ctx.Config().RemoteHosts[i]->Hostname.compare(host, Qt::CaseInsensitive) == 0)
       {
         found = true;
         break;
@@ -371,8 +373,8 @@ void RemoteManager::addNewHost()
       h->Hostname = host;
       h->RunCommand = ui->runCommand->text().trimmed();
 
-      m_Ctx.Config.RemoteHosts.push_back(h);
-      m_Ctx.Config.Save();
+      m_Ctx.Config().RemoteHosts.push_back(h);
+      m_Ctx.Config().Save();
 
       addHost(h);
     }
@@ -383,26 +385,28 @@ void RemoteManager::addNewHost()
 
 void RemoteManager::setRunCommand()
 {
-  if(ui->hosts->selectedItems().isEmpty())
+  RDTreeWidgetItem *item = ui->hosts->selectedItem();
+
+  if(!item)
     return;
 
-  RemoteHost *h = getRemoteHost(ui->hosts->selectedItems()[0]);
+  RemoteHost *h = getRemoteHost(item);
 
   if(h)
   {
     h->RunCommand = ui->runCommand->text().trimmed();
-    m_Ctx.Config.Save();
+    m_Ctx.Config().Save();
   }
 }
 
-void RemoteManager::on_hosts_itemActivated(QTreeWidgetItem *item, int column)
+void RemoteManager::on_hosts_itemActivated(RDTreeWidgetItem *item, int column)
 {
   RemoteConnect connect = getRemoteConnect(item);
   if(connect.ident > 0)
     connectToApp(item);
 }
 
-void RemoteManager::on_hosts_itemClicked(QTreeWidgetItem *item, int column)
+void RemoteManager::on_hosts_itemClicked(RDTreeWidgetItem *item, int column)
 {
   ui->addUpdateHost->setText(tr("Add"));
   ui->addUpdateHost->setEnabled(true);
@@ -412,8 +416,8 @@ void RemoteManager::on_hosts_itemClicked(QTreeWidgetItem *item, int column)
   ui->addUpdateHost->setEnabled(true);
   ui->runCommand->setEnabled(true);
 
-  ui->runCommand->setText("");
-  ui->hostname->setText("");
+  ui->runCommand->setText(QString());
+  ui->hostname->setText(QString());
 
   RemoteHost *host = getRemoteHost(item);
 
@@ -422,10 +426,10 @@ void RemoteManager::on_hosts_itemClicked(QTreeWidgetItem *item, int column)
     if(ui->refreshAll->isEnabled())
       ui->refreshOne->setEnabled(true);
 
-    if(host->Hostname == "localhost")
+    if(host->Hostname == lit("localhost"))
     {
-      ui->runCommand->setText("");
-      ui->hostname->setText("");
+      ui->runCommand->setText(QString());
+      ui->hostname->setText(QString());
     }
     else
     {
@@ -450,11 +454,11 @@ void RemoteManager::on_hostname_textEdited(const QString &text)
   ui->addUpdateHost->setEnabled(true);
   ui->runCommand->setEnabled(true);
 
-  QTreeWidgetItem *node = NULL;
+  RDTreeWidgetItem *node = NULL;
 
   for(int i = 0; i < ui->hosts->topLevelItemCount(); i++)
   {
-    QTreeWidgetItem *n = ui->hosts->topLevelItem(i);
+    RDTreeWidgetItem *n = ui->hosts->topLevelItem(i);
 
     RemoteHost *host = getRemoteHost(n);
 
@@ -465,7 +469,7 @@ void RemoteManager::on_hostname_textEdited(const QString &text)
 
       ui->addUpdateHost->setText(tr("Update"));
 
-      if(text == "localhost")
+      if(text == lit("localhost"))
       {
         ui->hostname->setEnabled(false);
         ui->addUpdateHost->setEnabled(false);
@@ -484,7 +488,7 @@ void RemoteManager::on_hostname_textEdited(const QString &text)
 
   ui->hosts->clearSelection();
   if(node)
-    node->setSelected(true);
+    ui->hosts->setSelectedItem(node);
 
   updateConnectButton();
 }
@@ -521,7 +525,8 @@ void RemoteManager::on_runCommand_keyPress(QKeyEvent *event)
 
 void RemoteManager::on_addUpdateHost_clicked()
 {
-  if(!ui->hosts->selectedItems().isEmpty() && getRemoteHost(ui->hosts->selectedItems()[0]))
+  RDTreeWidgetItem *item = ui->hosts->selectedItem();
+  if(item && getRemoteHost(item))
     setRunCommand();
   else
     addNewHost();
@@ -537,10 +542,10 @@ void RemoteManager::on_refreshAll_clicked()
 
   for(int i = 0; i < ui->hosts->topLevelItemCount(); i++)
   {
-    QTreeWidgetItem *n = ui->hosts->topLevelItem(i);
+    RDTreeWidgetItem *n = ui->hosts->topLevelItem(i);
 
-    deleteChildren(n);
-    setItalic(n, true);
+    n->clear();
+    n->setItalic(true);
     n->setIcon(0, Icons::hourglass());
 
     refreshHost(n);
@@ -551,16 +556,17 @@ void RemoteManager::on_refreshAll_clicked()
 
 void RemoteManager::on_refreshOne_clicked()
 {
-  if(m_Lookups.available() || ui->hosts->selectedItems().isEmpty())
+  RDTreeWidgetItem *n = ui->hosts->selectedItem();
+
+  if(m_Lookups.available() || !n)
     return;
 
   ui->refreshOne->setEnabled(false);
   ui->refreshAll->setEnabled(false);
 
-  QTreeWidgetItem *n = ui->hosts->selectedItems()[0];
   {
-    deleteChildren(n);
-    setItalic(n, true);
+    n->clear();
+    n->setItalic(true);
     n->setIcon(0, Icons::hourglass());
 
     refreshHost(n);
@@ -571,10 +577,10 @@ void RemoteManager::on_refreshOne_clicked()
 
 void RemoteManager::on_connect_clicked()
 {
-  if(ui->hosts->selectedItems().isEmpty())
-    return;
+  RDTreeWidgetItem *node = ui->hosts->selectedItem();
 
-  QTreeWidgetItem *node = ui->hosts->selectedItems()[0];
+  if(!node)
+    return;
 
   RemoteConnect connect = getRemoteConnect(node);
   RemoteHost *host = getRemoteHost(node);
@@ -598,19 +604,19 @@ void RemoteManager::on_connect_clicked()
       // shut down
       if(host->Connected)
       {
-        m_Ctx.Renderer().ShutdownServer();
+        m_Ctx.Replay().ShutdownServer();
         setRemoteServerLive(node, false, false);
       }
       else
       {
-        RemoteServer *server = NULL;
-        ReplayCreateStatus status =
+        IRemoteServer *server = NULL;
+        ReplayStatus status =
             RENDERDOC_CreateRemoteServerConnection(host->Hostname.toUtf8().data(), 0, &server);
         if(server)
           server->ShutdownServerAndConnection();
         setRemoteServerLive(node, false, false);
 
-        if(status != eReplayCreate_Success)
+        if(status != ReplayStatus::Succeeded)
           RDDialog::critical(this, tr("Shutdown error"),
                              tr("Error shutting down remote server: %1").arg(ToQStr(status)));
       }
@@ -636,10 +642,10 @@ void RemoteManager::on_connect_clicked()
 
 void RemoteManager::on_deleteHost_clicked()
 {
-  if(ui->hosts->selectedItems().isEmpty())
-    return;
+  RDTreeWidgetItem *item = ui->hosts->selectedItem();
 
-  QTreeWidgetItem *item = ui->hosts->selectedItems()[0];
+  if(!item)
+    return;
 
   RemoteHost *host = getRemoteHost(item);
 
@@ -649,7 +655,7 @@ void RemoteManager::on_deleteHost_clicked()
 
   QString hostname = item->text(0);
 
-  if(hostname == "localhost")
+  if(hostname == lit("localhost"))
     return;
 
   QMessageBox::StandardButton res = RDDialog::question(
@@ -661,11 +667,11 @@ void RemoteManager::on_deleteHost_clicked()
 
   if(res == QMessageBox::Yes)
   {
-    int idx = m_Ctx.Config.RemoteHosts.indexOf(host);
-    delete m_Ctx.Config.RemoteHosts.takeAt(idx);
-    m_Ctx.Config.Save();
+    int idx = m_Ctx.Config().RemoteHosts.indexOf(host);
+    delete m_Ctx.Config().RemoteHosts.takeAt(idx);
+    m_Ctx.Config().Save();
 
-    deleteChildren(item);
+    item->clear();
 
     delete ui->hosts->takeTopLevelItem(ui->hosts->indexOfTopLevelItem(item));
 

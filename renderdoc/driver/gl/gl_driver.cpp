@@ -29,6 +29,7 @@
 #include "data/glsl_shaders.h"
 #include "driver/shaders/spirv/spirv_common.h"
 #include "jpeg-compressor/jpge.h"
+#include "maths/matrix.h"
 #include "maths/vec.h"
 #include "replay/type_helpers.h"
 #include "serialise/string_utils.h"
@@ -343,9 +344,11 @@ const uint32_t GLInitParams::GL_OLD_VERSIONS[GLInitParams::GL_NUM_SUPPORTED_OLD_
                  // anything special to support older logs, just make sure we don't open new logs
                  // in an older version.
     0x000012,    // Added support for GL-DX interop
+    0x000013,    // Serialised vertex attribute and fragdata bindings for programs as initial
+                 // contents data
 };
 
-ReplayCreateStatus GLInitParams::Serialise()
+ReplayStatus GLInitParams::Serialise()
 {
   SERIALISE_ELEMENT(uint32_t, ver, GL_SERIALISE_VERSION);
   SerialiseVersion = ver;
@@ -368,7 +371,7 @@ ReplayCreateStatus GLInitParams::Serialise()
     if(!oldsupported)
     {
       RDCERR("Incompatible OpenGL serialise version, expected %d got %d", GL_SERIALISE_VERSION, ver);
-      return eReplayCreate_APIIncompatibleVersion;
+      return ReplayStatus::APIIncompatibleVersion;
     }
   }
 
@@ -380,228 +383,224 @@ ReplayCreateStatus GLInitParams::Serialise()
   m_pSerialiser->Serialise("Width", width);
   m_pSerialiser->Serialise("Height", height);
 
-  return eReplayCreate_Success;
+  return ReplayStatus::Succeeded;
 }
 
-WrappedOpenGL::WrappedOpenGL(const char *logfile, const GLHookSet &funcs, GLPlatform &platform)
-    : m_Real(funcs), m_Platform(platform)
+void WrappedOpenGL::BuildGLExtensions()
 {
-  if(RenderDoc::Inst().GetCrashHandler())
-    RenderDoc::Inst().GetCrashHandler()->RegisterMemoryRegion(this, sizeof(WrappedOpenGL));
-
-  globalExts.push_back("GL_ARB_arrays_of_arrays");
-  globalExts.push_back("GL_ARB_base_instance");
-  globalExts.push_back("GL_ARB_blend_func_extended");
-  globalExts.push_back("GL_ARB_buffer_storage");
-  globalExts.push_back("GL_ARB_clear_buffer_object");
-  globalExts.push_back("GL_ARB_clear_texture");
-  globalExts.push_back("GL_ARB_clip_control");
-  globalExts.push_back("GL_ARB_color_buffer_float");
-  globalExts.push_back("GL_ARB_compressed_texture_pixel_storage");
-  globalExts.push_back("GL_ARB_compute_shader");
-  globalExts.push_back("GL_ARB_compute_variable_group_size");
-  globalExts.push_back("GL_ARB_conditional_render_inverted");
-  globalExts.push_back("GL_ARB_conservative_depth");
-  globalExts.push_back("GL_ARB_copy_buffer");
-  globalExts.push_back("GL_ARB_copy_image");
-  globalExts.push_back("GL_ARB_cull_distance");
-  globalExts.push_back("GL_ARB_debug_output");
-  globalExts.push_back("GL_ARB_depth_buffer_float");
-  globalExts.push_back("GL_ARB_depth_clamp");
-  globalExts.push_back("GL_ARB_depth_texture");
-  globalExts.push_back("GL_ARB_derivative_control");
-  globalExts.push_back("GL_ARB_direct_state_access");
-  globalExts.push_back("GL_ARB_draw_buffers");
-  globalExts.push_back("GL_ARB_draw_buffers_blend");
-  globalExts.push_back("GL_ARB_draw_elements_base_vertex");
-  globalExts.push_back("GL_ARB_draw_indirect");
-  globalExts.push_back("GL_ARB_draw_instanced");
-  globalExts.push_back("GL_ARB_enhanced_layouts");
-  globalExts.push_back("GL_ARB_ES2_compatibility");
-  globalExts.push_back("GL_ARB_ES3_1_compatibility");
-  globalExts.push_back("GL_ARB_ES3_compatibility");
-  globalExts.push_back("GL_ARB_explicit_attrib_location");
-  globalExts.push_back("GL_ARB_explicit_uniform_location");
-  globalExts.push_back("GL_ARB_fragment_coord_conventions");
-  globalExts.push_back("GL_ARB_fragment_layer_viewport");
-  globalExts.push_back("GL_ARB_fragment_shader_interlock");
-  globalExts.push_back("GL_ARB_framebuffer_no_attachments");
-  globalExts.push_back("GL_ARB_framebuffer_object");
-  globalExts.push_back("GL_ARB_framebuffer_sRGB");
-  globalExts.push_back("GL_ARB_geometry_shader4");
-  globalExts.push_back("GL_ARB_get_program_binary");
-  globalExts.push_back("GL_ARB_get_texture_sub_image");
-  globalExts.push_back("GL_ARB_gpu_shader_fp64");
-  globalExts.push_back("GL_ARB_gpu_shader5");
-  globalExts.push_back("GL_ARB_half_float_pixel");
-  globalExts.push_back("GL_ARB_half_float_vertex");
-  globalExts.push_back("GL_ARB_indirect_parameters");
-  globalExts.push_back("GL_ARB_instanced_arrays");
-  globalExts.push_back("GL_ARB_internalformat_query");
-  globalExts.push_back("GL_ARB_internalformat_query2");
-  globalExts.push_back("GL_ARB_invalidate_subdata");
-  globalExts.push_back("GL_ARB_map_buffer_alignment");
-  globalExts.push_back("GL_ARB_map_buffer_range");
-  globalExts.push_back("GL_ARB_multi_bind");
-  globalExts.push_back("GL_ARB_multi_draw_indirect");
-  globalExts.push_back("GL_ARB_multisample");
-  globalExts.push_back("GL_ARB_multitexture");
-  globalExts.push_back("GL_ARB_occlusion_query");
-  globalExts.push_back("GL_ARB_occlusion_query2");
-  globalExts.push_back("GL_ARB_pixel_buffer_object");
-  globalExts.push_back("GL_ARB_pipeline_statistics_query");
-  globalExts.push_back("GL_ARB_point_parameters");
-  globalExts.push_back("GL_ARB_point_sprite");
-  globalExts.push_back("GL_ARB_post_depth_coverage");
-  globalExts.push_back("GL_ARB_program_interface_query");
-  globalExts.push_back("GL_ARB_provoking_vertex");
-  globalExts.push_back("GL_ARB_query_buffer_object");
-  globalExts.push_back("GL_ARB_robust_buffer_access_behavior");
-  globalExts.push_back("GL_ARB_robustness");
-  globalExts.push_back("GL_ARB_robustness_application_isolation");
-  globalExts.push_back("GL_ARB_robustness_share_group_isolation");
-  globalExts.push_back("GL_ARB_sample_shading");
-  globalExts.push_back("GL_ARB_sampler_objects");
-  globalExts.push_back("GL_ARB_seamless_cube_map");
-  globalExts.push_back("GL_ARB_seamless_cubemap_per_texture");
-  globalExts.push_back("GL_ARB_separate_shader_objects");
-  globalExts.push_back("GL_ARB_shader_atomic_counters");
-  globalExts.push_back("GL_ARB_shader_atomic_counter_ops");
-  globalExts.push_back("GL_ARB_shader_ballot");
-  globalExts.push_back("GL_ARB_shader_bit_encoding");
-  globalExts.push_back("GL_ARB_shader_clock");
-  globalExts.push_back("GL_ARB_shader_draw_parameters");
-  globalExts.push_back("GL_ARB_shader_group_vote");
-  globalExts.push_back("GL_ARB_shader_image_load_store");
-  globalExts.push_back("GL_ARB_shader_image_size");
-  globalExts.push_back("GL_ARB_shader_precision");
-  globalExts.push_back("GL_ARB_shader_stencil_export");
-  globalExts.push_back("GL_ARB_shader_storage_buffer_object");
-  globalExts.push_back("GL_ARB_shader_subroutine");
-  globalExts.push_back("GL_ARB_shader_texture_image_samples");
-  globalExts.push_back("GL_ARB_shader_texture_lod");
-  globalExts.push_back("GL_ARB_shader_viewport_layer_array");
-  globalExts.push_back("GL_ARB_shading_language_100");
-  globalExts.push_back("GL_ARB_shading_language_420pack");
-  globalExts.push_back("GL_ARB_shading_language_include");
-  globalExts.push_back("GL_ARB_shading_language_packing");
-  globalExts.push_back("GL_ARB_shadow");
-  globalExts.push_back("GL_ARB_shadow_ambient");
-  globalExts.push_back("GL_ARB_stencil_texturing");
-  globalExts.push_back("GL_ARB_sync");
-  globalExts.push_back("GL_ARB_tessellation_shader");
-  globalExts.push_back("GL_ARB_texture_barrier");
-  globalExts.push_back("GL_ARB_texture_border_clamp");
-  globalExts.push_back("GL_ARB_texture_buffer_object");
-  globalExts.push_back("GL_ARB_texture_buffer_object_rgb32");
-  globalExts.push_back("GL_ARB_texture_buffer_range");
-  globalExts.push_back("GL_ARB_texture_compression");
-  globalExts.push_back("GL_ARB_texture_compression_bptc");
-  globalExts.push_back("GL_ARB_texture_compression_rgtc");
-  globalExts.push_back("GL_ARB_texture_cube_map");
-  globalExts.push_back("GL_ARB_texture_cube_map_array");
-  globalExts.push_back("GL_ARB_texture_float");
-  globalExts.push_back("GL_ARB_texture_gather");
-  globalExts.push_back("GL_ARB_texture_mirror_clamp_to_edge");
-  globalExts.push_back("GL_ARB_texture_mirrored_repeat");
-  globalExts.push_back("GL_ARB_texture_multisample");
-  globalExts.push_back("GL_ARB_texture_non_power_of_two");
-  globalExts.push_back("GL_ARB_texture_query_levels");
-  globalExts.push_back("GL_ARB_texture_query_lod");
-  globalExts.push_back("GL_ARB_texture_rectangle");
-  globalExts.push_back("GL_ARB_texture_rg");
-  globalExts.push_back("GL_ARB_texture_rgb10_a2ui");
-  globalExts.push_back("GL_ARB_texture_stencil8");
-  globalExts.push_back("GL_ARB_texture_storage");
-  globalExts.push_back("GL_ARB_texture_storage_multisample");
-  globalExts.push_back("GL_ARB_texture_swizzle");
-  globalExts.push_back("GL_ARB_texture_view");
-  globalExts.push_back("GL_ARB_timer_query");
-  globalExts.push_back("GL_ARB_transform_feedback_instanced");
-  globalExts.push_back("GL_ARB_transform_feedback_overflow_query");
-  globalExts.push_back("GL_ARB_transform_feedback2");
-  globalExts.push_back("GL_ARB_transform_feedback3");
-  globalExts.push_back("GL_ARB_uniform_buffer_object");
-  globalExts.push_back("GL_ARB_vertex_array_bgra");
-  globalExts.push_back("GL_ARB_vertex_array_object");
-  globalExts.push_back("GL_ARB_vertex_attrib_64bit");
-  globalExts.push_back("GL_ARB_vertex_attrib_binding");
-  globalExts.push_back("GL_ARB_vertex_buffer_object");
-  globalExts.push_back("GL_ARB_vertex_program");
-  globalExts.push_back("GL_ARB_vertex_type_10f_11f_11f_rev");
-  globalExts.push_back("GL_ARB_vertex_type_2_10_10_10_rev");
-  globalExts.push_back("GL_ARB_viewport_array");
-  globalExts.push_back("GL_EXT_bgra");
-  globalExts.push_back("GL_EXT_blend_color");
-  globalExts.push_back("GL_EXT_blend_equation_separate");
-  globalExts.push_back("GL_EXT_blend_func_separate");
-  globalExts.push_back("GL_EXT_blend_minmax");
-  globalExts.push_back("GL_EXT_blend_subtract");
-  globalExts.push_back("GL_EXT_debug_label");
-  globalExts.push_back("GL_EXT_debug_marker");
-  globalExts.push_back("GL_EXT_depth_bounds_test");
-  globalExts.push_back("GL_EXT_direct_state_access");
-  globalExts.push_back("GL_EXT_draw_buffers2");
-  globalExts.push_back("GL_EXT_draw_instanced");
-  globalExts.push_back("GL_EXT_draw_range_elements");
-  globalExts.push_back("GL_EXT_framebuffer_blit");
-  globalExts.push_back("GL_EXT_framebuffer_multisample");
-  globalExts.push_back("GL_EXT_framebuffer_multisample_blit_scaled");
-  globalExts.push_back("GL_EXT_framebuffer_object");
-  globalExts.push_back("GL_EXT_framebuffer_sRGB");
-  globalExts.push_back("GL_EXT_gpu_shader4");
-  globalExts.push_back("GL_EXT_multisample");
-  globalExts.push_back("GL_EXT_multi_draw_arrays");
-  globalExts.push_back("GL_EXT_packed_depth_stencil");
-  globalExts.push_back("GL_EXT_packed_float");
-  globalExts.push_back("GL_EXT_pixel_buffer_object");
-  globalExts.push_back("GL_EXT_pixel_buffer_object");
-  globalExts.push_back("GL_EXT_point_parameters");
-  globalExts.push_back("GL_EXT_polygon_offset_clamp");
-  globalExts.push_back("GL_EXT_post_depth_coverage");
-  globalExts.push_back("GL_EXT_provoking_vertex");
-  globalExts.push_back("GL_EXT_raster_multisample");
-  globalExts.push_back("GL_EXT_shader_image_load_store");
-  globalExts.push_back("GL_EXT_shader_image_load_formatted");
-  globalExts.push_back("GL_EXT_shader_integer_mix");
-  globalExts.push_back("GL_EXT_shadow_funcs");
-  globalExts.push_back("GL_EXT_stencil_wrap");
-  globalExts.push_back("GL_EXT_texture_array");
-  globalExts.push_back("GL_EXT_texture_buffer_object");
-  globalExts.push_back("GL_EXT_texture_compression_dxt1");
-  globalExts.push_back("GL_EXT_texture_compression_rgtc");
-  globalExts.push_back("GL_EXT_texture_compression_s3tc");
-  globalExts.push_back("GL_EXT_texture_cube_map");
-  globalExts.push_back("GL_EXT_texture_edge_clamp");
-  globalExts.push_back("GL_EXT_texture_filter_anisotropic");
-  globalExts.push_back("GL_EXT_texture_filter_minmax");
-  globalExts.push_back("GL_EXT_texture_integer");
-  globalExts.push_back("GL_EXT_texture_lod_bias");
-  globalExts.push_back("GL_EXT_texture_mirror_clamp");
-  globalExts.push_back("GL_EXT_texture_shared_exponent");
-  globalExts.push_back("GL_EXT_texture_snorm");
-  globalExts.push_back("GL_EXT_texture_sRGB");
-  globalExts.push_back("GL_EXT_texture_sRGB_decode");
-  globalExts.push_back("GL_EXT_texture_swizzle");
-  globalExts.push_back("GL_EXT_texture3D");
-  globalExts.push_back("GL_EXT_timer_query");
-  globalExts.push_back("GL_EXT_transform_feedback");
-  globalExts.push_back("GL_EXT_vertex_attrib_64bit");
-  globalExts.push_back("GL_GREMEDY_frame_terminator");
-  globalExts.push_back("GL_GREMEDY_string_marker");
-  globalExts.push_back("GL_KHR_blend_equation_advanced");
-  globalExts.push_back("GL_KHR_blend_equation_advanced_coherent");
-  globalExts.push_back("GL_KHR_context_flush_control");
-  globalExts.push_back("GL_KHR_debug");
-  globalExts.push_back("GL_KHR_no_error");
-  globalExts.push_back("GL_KHR_robustness");
-  globalExts.push_back("GL_KHR_robust_buffer_access_behavior");
+  m_GLExtensions.push_back("GL_ARB_arrays_of_arrays");
+  m_GLExtensions.push_back("GL_ARB_base_instance");
+  m_GLExtensions.push_back("GL_ARB_blend_func_extended");
+  m_GLExtensions.push_back("GL_ARB_buffer_storage");
+  m_GLExtensions.push_back("GL_ARB_clear_buffer_object");
+  m_GLExtensions.push_back("GL_ARB_clear_texture");
+  m_GLExtensions.push_back("GL_ARB_clip_control");
+  m_GLExtensions.push_back("GL_ARB_color_buffer_float");
+  m_GLExtensions.push_back("GL_ARB_compressed_texture_pixel_storage");
+  m_GLExtensions.push_back("GL_ARB_compute_shader");
+  m_GLExtensions.push_back("GL_ARB_compute_variable_group_size");
+  m_GLExtensions.push_back("GL_ARB_conditional_render_inverted");
+  m_GLExtensions.push_back("GL_ARB_conservative_depth");
+  m_GLExtensions.push_back("GL_ARB_copy_buffer");
+  m_GLExtensions.push_back("GL_ARB_copy_image");
+  m_GLExtensions.push_back("GL_ARB_cull_distance");
+  m_GLExtensions.push_back("GL_ARB_debug_output");
+  m_GLExtensions.push_back("GL_ARB_depth_buffer_float");
+  m_GLExtensions.push_back("GL_ARB_depth_clamp");
+  m_GLExtensions.push_back("GL_ARB_depth_texture");
+  m_GLExtensions.push_back("GL_ARB_derivative_control");
+  m_GLExtensions.push_back("GL_ARB_direct_state_access");
+  m_GLExtensions.push_back("GL_ARB_draw_buffers");
+  m_GLExtensions.push_back("GL_ARB_draw_buffers_blend");
+  m_GLExtensions.push_back("GL_ARB_draw_elements_base_vertex");
+  m_GLExtensions.push_back("GL_ARB_draw_indirect");
+  m_GLExtensions.push_back("GL_ARB_draw_instanced");
+  m_GLExtensions.push_back("GL_ARB_enhanced_layouts");
+  m_GLExtensions.push_back("GL_ARB_ES2_compatibility");
+  m_GLExtensions.push_back("GL_ARB_ES3_1_compatibility");
+  m_GLExtensions.push_back("GL_ARB_ES3_compatibility");
+  m_GLExtensions.push_back("GL_ARB_explicit_attrib_location");
+  m_GLExtensions.push_back("GL_ARB_explicit_uniform_location");
+  m_GLExtensions.push_back("GL_ARB_fragment_coord_conventions");
+  m_GLExtensions.push_back("GL_ARB_fragment_layer_viewport");
+  m_GLExtensions.push_back("GL_ARB_fragment_shader_interlock");
+  m_GLExtensions.push_back("GL_ARB_framebuffer_no_attachments");
+  m_GLExtensions.push_back("GL_ARB_framebuffer_object");
+  m_GLExtensions.push_back("GL_ARB_framebuffer_sRGB");
+  m_GLExtensions.push_back("GL_ARB_geometry_shader4");
+  m_GLExtensions.push_back("GL_ARB_get_program_binary");
+  m_GLExtensions.push_back("GL_ARB_get_texture_sub_image");
+  m_GLExtensions.push_back("GL_ARB_gpu_shader_fp64");
+  m_GLExtensions.push_back("GL_ARB_gpu_shader5");
+  m_GLExtensions.push_back("GL_ARB_half_float_pixel");
+  m_GLExtensions.push_back("GL_ARB_half_float_vertex");
+  m_GLExtensions.push_back("GL_ARB_indirect_parameters");
+  m_GLExtensions.push_back("GL_ARB_instanced_arrays");
+  m_GLExtensions.push_back("GL_ARB_internalformat_query");
+  m_GLExtensions.push_back("GL_ARB_internalformat_query2");
+  m_GLExtensions.push_back("GL_ARB_invalidate_subdata");
+  m_GLExtensions.push_back("GL_ARB_map_buffer_alignment");
+  m_GLExtensions.push_back("GL_ARB_map_buffer_range");
+  m_GLExtensions.push_back("GL_ARB_multi_bind");
+  m_GLExtensions.push_back("GL_ARB_multi_draw_indirect");
+  m_GLExtensions.push_back("GL_ARB_multisample");
+  m_GLExtensions.push_back("GL_ARB_multitexture");
+  m_GLExtensions.push_back("GL_ARB_occlusion_query");
+  m_GLExtensions.push_back("GL_ARB_occlusion_query2");
+  m_GLExtensions.push_back("GL_ARB_pixel_buffer_object");
+  m_GLExtensions.push_back("GL_ARB_pipeline_statistics_query");
+  m_GLExtensions.push_back("GL_ARB_point_parameters");
+  m_GLExtensions.push_back("GL_ARB_point_sprite");
+  m_GLExtensions.push_back("GL_ARB_post_depth_coverage");
+  m_GLExtensions.push_back("GL_ARB_program_interface_query");
+  m_GLExtensions.push_back("GL_ARB_provoking_vertex");
+  m_GLExtensions.push_back("GL_ARB_query_buffer_object");
+  m_GLExtensions.push_back("GL_ARB_robust_buffer_access_behavior");
+  m_GLExtensions.push_back("GL_ARB_robustness");
+  m_GLExtensions.push_back("GL_ARB_robustness_application_isolation");
+  m_GLExtensions.push_back("GL_ARB_robustness_share_group_isolation");
+  m_GLExtensions.push_back("GL_ARB_sample_shading");
+  m_GLExtensions.push_back("GL_ARB_sampler_objects");
+  m_GLExtensions.push_back("GL_ARB_seamless_cube_map");
+  m_GLExtensions.push_back("GL_ARB_seamless_cubemap_per_texture");
+  m_GLExtensions.push_back("GL_ARB_separate_shader_objects");
+  m_GLExtensions.push_back("GL_ARB_shader_atomic_counters");
+  m_GLExtensions.push_back("GL_ARB_shader_atomic_counter_ops");
+  m_GLExtensions.push_back("GL_ARB_shader_ballot");
+  m_GLExtensions.push_back("GL_ARB_shader_bit_encoding");
+  m_GLExtensions.push_back("GL_ARB_shader_clock");
+  m_GLExtensions.push_back("GL_ARB_shader_draw_parameters");
+  m_GLExtensions.push_back("GL_ARB_shader_group_vote");
+  m_GLExtensions.push_back("GL_ARB_shader_image_load_store");
+  m_GLExtensions.push_back("GL_ARB_shader_image_size");
+  m_GLExtensions.push_back("GL_ARB_shader_precision");
+  m_GLExtensions.push_back("GL_ARB_shader_stencil_export");
+  m_GLExtensions.push_back("GL_ARB_shader_storage_buffer_object");
+  m_GLExtensions.push_back("GL_ARB_shader_subroutine");
+  m_GLExtensions.push_back("GL_ARB_shader_texture_image_samples");
+  m_GLExtensions.push_back("GL_ARB_shader_texture_lod");
+  m_GLExtensions.push_back("GL_ARB_shader_viewport_layer_array");
+  m_GLExtensions.push_back("GL_ARB_shading_language_100");
+  m_GLExtensions.push_back("GL_ARB_shading_language_420pack");
+  m_GLExtensions.push_back("GL_ARB_shading_language_include");
+  m_GLExtensions.push_back("GL_ARB_shading_language_packing");
+  m_GLExtensions.push_back("GL_ARB_shadow");
+  m_GLExtensions.push_back("GL_ARB_shadow_ambient");
+  m_GLExtensions.push_back("GL_ARB_stencil_texturing");
+  m_GLExtensions.push_back("GL_ARB_sync");
+  m_GLExtensions.push_back("GL_ARB_tessellation_shader");
+  m_GLExtensions.push_back("GL_ARB_texture_barrier");
+  m_GLExtensions.push_back("GL_ARB_texture_border_clamp");
+  m_GLExtensions.push_back("GL_ARB_texture_buffer_object");
+  m_GLExtensions.push_back("GL_ARB_texture_buffer_object_rgb32");
+  m_GLExtensions.push_back("GL_ARB_texture_buffer_range");
+  m_GLExtensions.push_back("GL_ARB_texture_compression");
+  m_GLExtensions.push_back("GL_ARB_texture_compression_bptc");
+  m_GLExtensions.push_back("GL_ARB_texture_compression_rgtc");
+  m_GLExtensions.push_back("GL_ARB_texture_cube_map");
+  m_GLExtensions.push_back("GL_ARB_texture_cube_map_array");
+  m_GLExtensions.push_back("GL_ARB_texture_float");
+  m_GLExtensions.push_back("GL_ARB_texture_gather");
+  m_GLExtensions.push_back("GL_ARB_texture_mirror_clamp_to_edge");
+  m_GLExtensions.push_back("GL_ARB_texture_mirrored_repeat");
+  m_GLExtensions.push_back("GL_ARB_texture_multisample");
+  m_GLExtensions.push_back("GL_ARB_texture_non_power_of_two");
+  m_GLExtensions.push_back("GL_ARB_texture_query_levels");
+  m_GLExtensions.push_back("GL_ARB_texture_query_lod");
+  m_GLExtensions.push_back("GL_ARB_texture_rectangle");
+  m_GLExtensions.push_back("GL_ARB_texture_rg");
+  m_GLExtensions.push_back("GL_ARB_texture_rgb10_a2ui");
+  m_GLExtensions.push_back("GL_ARB_texture_stencil8");
+  m_GLExtensions.push_back("GL_ARB_texture_storage");
+  m_GLExtensions.push_back("GL_ARB_texture_storage_multisample");
+  m_GLExtensions.push_back("GL_ARB_texture_swizzle");
+  m_GLExtensions.push_back("GL_ARB_texture_view");
+  m_GLExtensions.push_back("GL_ARB_timer_query");
+  m_GLExtensions.push_back("GL_ARB_transform_feedback_instanced");
+  m_GLExtensions.push_back("GL_ARB_transform_feedback_overflow_query");
+  m_GLExtensions.push_back("GL_ARB_transform_feedback2");
+  m_GLExtensions.push_back("GL_ARB_transform_feedback3");
+  m_GLExtensions.push_back("GL_ARB_uniform_buffer_object");
+  m_GLExtensions.push_back("GL_ARB_vertex_array_bgra");
+  m_GLExtensions.push_back("GL_ARB_vertex_array_object");
+  m_GLExtensions.push_back("GL_ARB_vertex_attrib_64bit");
+  m_GLExtensions.push_back("GL_ARB_vertex_attrib_binding");
+  m_GLExtensions.push_back("GL_ARB_vertex_buffer_object");
+  m_GLExtensions.push_back("GL_ARB_vertex_program");
+  m_GLExtensions.push_back("GL_ARB_vertex_type_10f_11f_11f_rev");
+  m_GLExtensions.push_back("GL_ARB_vertex_type_2_10_10_10_rev");
+  m_GLExtensions.push_back("GL_ARB_viewport_array");
+  m_GLExtensions.push_back("GL_EXT_bgra");
+  m_GLExtensions.push_back("GL_EXT_blend_color");
+  m_GLExtensions.push_back("GL_EXT_blend_equation_separate");
+  m_GLExtensions.push_back("GL_EXT_blend_func_separate");
+  m_GLExtensions.push_back("GL_EXT_blend_minmax");
+  m_GLExtensions.push_back("GL_EXT_blend_subtract");
+  m_GLExtensions.push_back("GL_EXT_debug_label");
+  m_GLExtensions.push_back("GL_EXT_debug_marker");
+  m_GLExtensions.push_back("GL_EXT_depth_bounds_test");
+  m_GLExtensions.push_back("GL_EXT_direct_state_access");
+  m_GLExtensions.push_back("GL_EXT_draw_buffers2");
+  m_GLExtensions.push_back("GL_EXT_draw_instanced");
+  m_GLExtensions.push_back("GL_EXT_draw_range_elements");
+  m_GLExtensions.push_back("GL_EXT_framebuffer_blit");
+  m_GLExtensions.push_back("GL_EXT_framebuffer_multisample");
+  m_GLExtensions.push_back("GL_EXT_framebuffer_multisample_blit_scaled");
+  m_GLExtensions.push_back("GL_EXT_framebuffer_object");
+  m_GLExtensions.push_back("GL_EXT_framebuffer_sRGB");
+  m_GLExtensions.push_back("GL_EXT_gpu_shader4");
+  m_GLExtensions.push_back("GL_EXT_multisample");
+  m_GLExtensions.push_back("GL_EXT_multi_draw_arrays");
+  m_GLExtensions.push_back("GL_EXT_packed_depth_stencil");
+  m_GLExtensions.push_back("GL_EXT_packed_float");
+  m_GLExtensions.push_back("GL_EXT_pixel_buffer_object");
+  m_GLExtensions.push_back("GL_EXT_pixel_buffer_object");
+  m_GLExtensions.push_back("GL_EXT_point_parameters");
+  m_GLExtensions.push_back("GL_EXT_polygon_offset_clamp");
+  m_GLExtensions.push_back("GL_EXT_post_depth_coverage");
+  m_GLExtensions.push_back("GL_EXT_provoking_vertex");
+  m_GLExtensions.push_back("GL_EXT_raster_multisample");
+  m_GLExtensions.push_back("GL_EXT_shader_image_load_store");
+  m_GLExtensions.push_back("GL_EXT_shader_image_load_formatted");
+  m_GLExtensions.push_back("GL_EXT_shader_integer_mix");
+  m_GLExtensions.push_back("GL_EXT_shadow_funcs");
+  m_GLExtensions.push_back("GL_EXT_stencil_wrap");
+  m_GLExtensions.push_back("GL_EXT_texture_array");
+  m_GLExtensions.push_back("GL_EXT_texture_buffer_object");
+  m_GLExtensions.push_back("GL_EXT_texture_compression_dxt1");
+  m_GLExtensions.push_back("GL_EXT_texture_compression_rgtc");
+  m_GLExtensions.push_back("GL_EXT_texture_compression_s3tc");
+  m_GLExtensions.push_back("GL_EXT_texture_cube_map");
+  m_GLExtensions.push_back("GL_EXT_texture_edge_clamp");
+  m_GLExtensions.push_back("GL_EXT_texture_filter_anisotropic");
+  m_GLExtensions.push_back("GL_EXT_texture_filter_minmax");
+  m_GLExtensions.push_back("GL_EXT_texture_integer");
+  m_GLExtensions.push_back("GL_EXT_texture_lod_bias");
+  m_GLExtensions.push_back("GL_EXT_texture_mirror_clamp");
+  m_GLExtensions.push_back("GL_EXT_texture_shared_exponent");
+  m_GLExtensions.push_back("GL_EXT_texture_snorm");
+  m_GLExtensions.push_back("GL_EXT_texture_sRGB");
+  m_GLExtensions.push_back("GL_EXT_texture_sRGB_decode");
+  m_GLExtensions.push_back("GL_EXT_texture_swizzle");
+  m_GLExtensions.push_back("GL_EXT_texture3D");
+  m_GLExtensions.push_back("GL_EXT_timer_query");
+  m_GLExtensions.push_back("GL_EXT_transform_feedback");
+  m_GLExtensions.push_back("GL_EXT_vertex_attrib_64bit");
+  m_GLExtensions.push_back("GL_GREMEDY_frame_terminator");
+  m_GLExtensions.push_back("GL_GREMEDY_string_marker");
+  m_GLExtensions.push_back("GL_KHR_blend_equation_advanced");
+  m_GLExtensions.push_back("GL_KHR_blend_equation_advanced_coherent");
+  m_GLExtensions.push_back("GL_KHR_context_flush_control");
+  m_GLExtensions.push_back("GL_KHR_debug");
+  m_GLExtensions.push_back("GL_KHR_no_error");
+  m_GLExtensions.push_back("GL_KHR_robustness");
+  m_GLExtensions.push_back("GL_KHR_robust_buffer_access_behavior");
 
   // this WGL extension is advertised in the gl ext string instead of via the wgl ext string,
   // return it just in case anyone is checking for it via this place. On non-windows platforms
   // it won't be reported as we do the intersection of renderdoc supported extensions and
   // implementation supported extensions.
-  globalExts.push_back("WGL_EXT_swap_control");
+  m_GLExtensions.push_back("WGL_EXT_swap_control");
 
   /************************************************************************
 
@@ -716,8 +715,78 @@ WrappedOpenGL::WrappedOpenGL(const char *logfile, const GLHookSet &funcs, GLPlat
 
   // we'll be sorting the implementation extension array, so make sure the
   // sorts are identical so we can do the intersection easily
-  std::sort(globalExts.begin(), globalExts.end());
+  std::sort(m_GLExtensions.begin(), m_GLExtensions.end());
+}
 
+void WrappedOpenGL::BuildGLESExtensions()
+{
+  m_GLESExtensions.push_back("GL_ARM_rgba8");
+
+  m_GLESExtensions.push_back("GL_KHR_debug");
+  m_GLESExtensions.push_back("GL_KHR_no_error");
+  m_GLESExtensions.push_back("GL_KHR_context_flush_control");
+  m_GLESExtensions.push_back("GL_KHR_robust_buffer_access_behavior");
+  m_GLESExtensions.push_back("GL_KHR_texture_compression_astc_sliced_3d");
+  m_GLESExtensions.push_back("GL_KHR_texture_compression_astc_hdr");
+  m_GLESExtensions.push_back("GL_KHR_texture_compression_astc_ldr");
+  m_GLESExtensions.push_back("GL_KHR_blend_equation_advanced_coherent");
+
+  m_GLESExtensions.push_back("GL_OES_gpu_shader5");
+  m_GLESExtensions.push_back("GL_OES_rgb8_rgba8");
+  m_GLESExtensions.push_back("GL_OES_mapbuffer");
+  m_GLESExtensions.push_back("GL_OES_standard_derivatives");
+  m_GLESExtensions.push_back("GL_OES_texture_compression_astc");
+  m_GLESExtensions.push_back("GL_OES_texture_stencil8");
+  m_GLESExtensions.push_back("GL_OES_texture_float");
+  m_GLESExtensions.push_back("GL_OES_texture_float_linear");
+  m_GLESExtensions.push_back("GL_OES_texture_half_float");
+  m_GLESExtensions.push_back("GL_OES_texture_half_float_linear");
+
+  m_GLESExtensions.push_back("GL_EXT_geometry_point_size");
+  m_GLESExtensions.push_back("GL_EXT_geometry_shader");
+  m_GLESExtensions.push_back("GL_EXT_sRGB");
+  m_GLESExtensions.push_back("GL_EXT_sRGB_write_control");
+  m_GLESExtensions.push_back("GL_EXT_pvrtc_sRGB");
+  m_GLESExtensions.push_back("GL_EXT_texture_format_BGRA8888");
+  m_GLESExtensions.push_back("GL_EXT_texture_norm16");
+  m_GLESExtensions.push_back("GL_EXT_texture_rg");
+  m_GLESExtensions.push_back("GL_EXT_texture_sRGB_R8");
+  m_GLESExtensions.push_back("GL_EXT_texture_sRGB_RG8");
+  m_GLESExtensions.push_back("GL_EXT_texture_sRGB_decode");
+  m_GLESExtensions.push_back("GL_EXT_texture_storage");
+  m_GLESExtensions.push_back("GL_EXT_texture_compression_astc_decode_mode");
+  m_GLESExtensions.push_back("GL_EXT_texture_compression_dxt1");
+  m_GLESExtensions.push_back("GL_EXT_texture_compression_s3tc");
+
+  m_GLESExtensions.push_back("GL_EXT_texture_cube_map_array");
+  m_GLESExtensions.push_back("GL_EXT_texture_filter_anisotropic");
+  m_GLESExtensions.push_back("GL_EXT_texture_filter_minmax");
+
+  m_GLESExtensions.push_back("GL_EXT_robustness");
+  m_GLESExtensions.push_back("GL_EXT_gpu_shader5");
+  m_GLESExtensions.push_back("GL_EXT_separate_shader_objects");
+  m_GLESExtensions.push_back("GL_EXT_shader_framebuffer_fetch");
+  m_GLESExtensions.push_back("GL_EXT_shader_group_vote");
+  m_GLESExtensions.push_back("GL_EXT_shader_implicit_conversions");
+  m_GLESExtensions.push_back("GL_EXT_shader_integer_mix");
+  m_GLESExtensions.push_back("GL_EXT_shader_io_blocks");
+  m_GLESExtensions.push_back("GL_EXT_shader_non_constant_global_initializers");
+  m_GLESExtensions.push_back("GL_EXT_shader_texture_lod");
+  m_GLESExtensions.push_back("GL_EXT_shadow_samplers");
+
+  // we'll be sorting the implementation extension array, so make sure the
+  // sorts are identical so we can do the intersection easily
+  std::sort(m_GLESExtensions.begin(), m_GLESExtensions.end());
+}
+
+WrappedOpenGL::WrappedOpenGL(const char *logfile, const GLHookSet &funcs, GLPlatform &platform)
+    : m_Real(funcs), m_Platform(platform)
+{
+  if(RenderDoc::Inst().GetCrashHandler())
+    RenderDoc::Inst().GetCrashHandler()->RegisterMemoryRegion(this, sizeof(WrappedOpenGL));
+
+  BuildGLExtensions();
+  BuildGLESExtensions();
   // by default we assume OpenGL driver
   SetDriverType(RDC_OpenGL);
 
@@ -890,7 +959,7 @@ void WrappedOpenGL::Initialise(GLInitParams &params)
   else
   {
     gl.glTextureImage2DEXT(m_FakeBB_Color, target, 0, colfmt, params.width, params.height, 0,
-                           eGL_RGBA, eGL_UNSIGNED_BYTE, NULL);
+                           GetBaseFormat(colfmt), GetDataType(colfmt), NULL);
     gl.glTexParameteri(target, eGL_TEXTURE_MAX_LEVEL, 0);
     gl.glTexParameteri(target, eGL_TEXTURE_MIN_FILTER, eGL_NEAREST);
     gl.glTexParameteri(target, eGL_TEXTURE_MAG_FILTER, eGL_NEAREST);
@@ -949,7 +1018,7 @@ void WrappedOpenGL::Initialise(GLInitParams &params)
     {
       gl.glTexParameteri(target, eGL_TEXTURE_MAX_LEVEL, 0);
       gl.glTextureImage2DEXT(m_FakeBB_DepthStencil, target, 0, depthfmt, params.width,
-                             params.height, 0, eGL_DEPTH_COMPONENT, eGL_UNSIGNED_BYTE, NULL);
+                             params.height, 0, GetBaseFormat(depthfmt), GetDataType(depthfmt), NULL);
     }
 
     if(stencil)
@@ -965,7 +1034,7 @@ void WrappedOpenGL::Initialise(GLInitParams &params)
 
   if(params.depthBits > 0)
   {
-    gl.glClearDepth(1.0f);
+    gl.glClearDepthf(1.0f);
     gl.glClear(GL_DEPTH_BUFFER_BIT);
   }
 
@@ -1072,6 +1141,9 @@ void WrappedOpenGL::DeleteContext(void *contextHandle)
       m_Real.glDeleteTextures(1, &ctxdata.GlyphTexture);
   }
 
+  if(ctxdata.m_ClientMemoryVBOs[0])
+    glDeleteBuffers(ARRAY_COUNT(ctxdata.m_ClientMemoryVBOs), ctxdata.m_ClientMemoryVBOs);
+
   for(auto it = m_LastContexts.begin(); it != m_LastContexts.end(); ++it)
   {
     if(it->ctx == contextHandle)
@@ -1132,6 +1204,12 @@ void WrappedOpenGL::ContextData::CreateDebugData(const GLHookSet &gl)
     float maxheight = float(ascent) * stbtt_ScaleForPixelHeight(&f, charPixelHeight);
 
     {
+      PixelUnpackState unpack;
+
+      unpack.Fetch(&gl, false);
+
+      ResetPixelUnpackState(gl, false, 1);
+
       GLuint curtex = 0;
       gl.glGetIntegerv(eGL_TEXTURE_BINDING_2D, (GLint *)&curtex);
 
@@ -1148,6 +1226,8 @@ void WrappedOpenGL::ContextData::CreateDebugData(const GLHookSet &gl)
       gl.glTexParameteri(eGL_TEXTURE_2D, eGL_TEXTURE_MIN_FILTER, eGL_LINEAR);
 
       gl.glBindTexture(eGL_TEXTURE_2D, curtex);
+
+      unpack.Apply(&gl, false);
     }
 
     delete[] buf;
@@ -1206,13 +1286,29 @@ void WrappedOpenGL::ContextData::CreateDebugData(const GLHookSet &gl)
       vector<string> vs;
       vector<string> fs;
 
-      GenerateGLSLShader(vs, eShaderGLSL, "", GetEmbeddedResource(glsl_text_vert), 150);
+      ShaderType shaderType;
+      int glslVersion;
+      string fragDefines;
 
-      GenerateGLSLShader(fs, eShaderGLSL,
-                         "#extension GL_ARB_shading_language_420pack : require\n"
-                         "#extension GL_ARB_separate_shader_objects : require\n"
-                         "#extension GL_ARB_explicit_attrib_location : require\n",
-                         GetEmbeddedResource(glsl_text_frag), 150);
+      if(IsGLES)
+      {
+        shaderType = eShaderGLSLES;
+        glslVersion = 310;
+        fragDefines = "";
+      }
+      else
+      {
+        shaderType = eShaderGLSL;
+        glslVersion = 150;
+        fragDefines =
+            "#extension GL_ARB_shading_language_420pack : require\n"
+            "#extension GL_ARB_separate_shader_objects : require\n"
+            "#extension GL_ARB_explicit_attrib_location : require\n";
+      }
+
+      GenerateGLSLShader(vs, shaderType, "", GetEmbeddedResource(glsl_text_vert), glslVersion);
+      GenerateGLSLShader(fs, shaderType, fragDefines, GetEmbeddedResource(glsl_text_frag),
+                         glslVersion);
 
       vector<const char *> vsc;
       vsc.reserve(vs.size());
@@ -1349,6 +1445,7 @@ void WrappedOpenGL::ActivateContext(GLWindowingData winData)
     {
       ctxdata.built = true;
 
+      const vector<string> &globalExts = IsGLES ? m_GLESExtensions : m_GLExtensions;
       const GLHookSet &gl = m_Real;
 
       if(HasExt[KHR_debug] && gl.glDebugMessageCallback &&
@@ -1385,8 +1482,8 @@ void WrappedOpenGL::ActivateContext(GLWindowingData winData)
       {
         for(size_t i = 0, j = 0; i < implExts.size() && j < globalExts.size();)
         {
-          string &a = implExts[i];
-          string &b = globalExts[j];
+          const string &a = implExts[i];
+          const string &b = globalExts[j];
 
           if(a == b)
           {
@@ -1428,13 +1525,21 @@ void WrappedOpenGL::ActivateContext(GLWindowingData winData)
           DoVendorChecks(gl, m_Platform, winData);
         }
       }
-    }
 
-    if(m_State >= WRITING)
-    {
-      m_Internal = m_Real;
+      if(m_State >= WRITING)
+      {
+        GLuint prevArrayBuffer = 0;
+        glGetIntegerv(eGL_ARRAY_BUFFER_BINDING, (GLint *)&prevArrayBuffer);
 
-      glEmulate::EmulateRequiredExtensions(&m_Real, &m_Internal);
+        // Initialize VBOs used in case we copy from client memory.
+        glGenBuffers(ARRAY_COUNT(ctxdata.m_ClientMemoryVBOs), ctxdata.m_ClientMemoryVBOs);
+        for(size_t i = 0; i < ARRAY_COUNT(ctxdata.m_ClientMemoryVBOs); i++)
+        {
+          glBindBuffer(eGL_ARRAY_BUFFER, ctxdata.m_ClientMemoryVBOs[i]);
+          glBufferData(eGL_ARRAY_BUFFER, 64, NULL, eGL_DYNAMIC_DRAW);
+        }
+        glBindBuffer(eGL_ARRAY_BUFFER, prevArrayBuffer);
+      }
     }
   }
 }
@@ -1484,7 +1589,8 @@ struct RenderTextState
     enableBits[2] = gl.glIsEnabled(eGL_CULL_FACE) != 0;
     if(modern)
     {
-      enableBits[3] = gl.glIsEnabled(eGL_DEPTH_CLAMP) != 0;
+      if(!IsGLES)
+        enableBits[3] = gl.glIsEnabled(eGL_DEPTH_CLAMP) != 0;
 
       if(HasExt[ARB_draw_buffers_blend])
         enableBits[4] = gl.glIsEnabledi(eGL_BLEND, 0) != 0;
@@ -1539,7 +1645,7 @@ struct RenderTextState
       gl.glGetIntegerv(eGL_BLEND_DST_ALPHA, (GLint *)&DestinationAlpha);
     }
 
-    if(!VendorCheck[VendorCheck_AMD_polygon_mode_query])
+    if(!VendorCheck[VendorCheck_AMD_polygon_mode_query] && !IsGLES)
     {
       GLenum dummy[2] = {eGL_FILL, eGL_FILL};
       // docs suggest this is enumeration[2] even though polygon mode can't be set independently for
@@ -1603,10 +1709,13 @@ struct RenderTextState
 
     if(modern)
     {
-      if(enableBits[3])
-        gl.glEnable(eGL_DEPTH_CLAMP);
-      else
-        gl.glDisable(eGL_DEPTH_CLAMP);
+      if(!IsGLES)
+      {
+        if(enableBits[3])
+          gl.glEnable(eGL_DEPTH_CLAMP);
+        else
+          gl.glDisable(eGL_DEPTH_CLAMP);
+      }
 
       if(HasExt[ARB_draw_buffers_blend])
       {
@@ -1676,7 +1785,8 @@ struct RenderTextState
       gl.glBlendEquationSeparate(EquationRGB, EquationAlpha);
     }
 
-    gl.glPolygonMode(eGL_FRONT_AND_BACK, PolygonMode);
+    if(!IsGLES)
+      gl.glPolygonMode(eGL_FRONT_AND_BACK, PolygonMode);
 
     if(modern && HasExt[ARB_viewport_array])
       gl.glViewportIndexedf(0, Viewportf[0], Viewportf[1], Viewportf[2], Viewportf[3]);
@@ -1834,7 +1944,8 @@ void WrappedOpenGL::RenderOverlayStr(float x, float y, const char *text)
 
     // set depth & stencil
     gl.glDisable(eGL_DEPTH_TEST);
-    gl.glDisable(eGL_DEPTH_CLAMP);
+    if(!IsGLES)
+      gl.glDisable(eGL_DEPTH_CLAMP);
     gl.glDisable(eGL_STENCIL_TEST);
     gl.glDisable(eGL_CULL_FACE);
 
@@ -1851,7 +1962,9 @@ void WrappedOpenGL::RenderOverlayStr(float x, float y, const char *text)
       gl.glViewport(0, 0, m_InitParams.width, m_InitParams.height);
       gl.glDisable(eGL_SCISSOR_TEST);
     }
-    gl.glPolygonMode(eGL_FRONT_AND_BACK, eGL_FILL);
+
+    if(!IsGLES)
+      gl.glPolygonMode(eGL_FRONT_AND_BACK, eGL_FILL);
 
     if(gl.glClipControl && HasExt[ARB_clip_control])
       gl.glClipControl(eGL_LOWER_LEFT, eGL_NEGATIVE_ONE_TO_ONE);
@@ -2285,6 +2398,9 @@ void WrappedOpenGL::SwapBuffers(void *windowHandle)
       {
         auto remove = wit;
         ++wit;
+
+        RenderDoc::Inst().RemoveFrameCapturer(cit->first, remove->first);
+
         cit->second.windows.erase(remove);
       }
       else
@@ -2371,6 +2487,45 @@ void WrappedOpenGL::SwapBuffers(void *windowHandle)
   }
 }
 
+void WrappedOpenGL::CreateVRAPITextureSwapChain(GLuint tex, GLenum textureType,
+                                                GLenum internalformat, GLsizei width, GLsizei height)
+{
+  GLResource res = TextureRes(GetCtx(), tex);
+  ResourceId id = GetResourceManager()->RegisterResource(res);
+
+  if(m_State >= WRITING)
+  {
+    Chunk *chunk = NULL;
+
+    {
+      SCOPED_SERIALISE_CONTEXT(GEN_TEXTURE);
+      Serialise_glGenTextures(1, &tex);
+
+      chunk = scope.Get();
+    }
+
+    GLResourceRecord *record = GetResourceManager()->AddResourceRecord(id);
+    RDCASSERT(record);
+
+    record->AddChunk(chunk);
+  }
+  else
+  {
+    GetResourceManager()->AddLiveResource(id, res);
+  }
+
+  if(textureType == eGL_TEXTURE_2D_ARRAY)
+  {
+    Common_glTextureImage3DEXT(id, eGL_TEXTURE_2D, 0, internalformat, width, height, 2, 0, eGL_RGBA,
+                               eGL_UNSIGNED_BYTE, NULL);
+  }
+  else
+  {
+    Common_glTextureImage2DEXT(id, eGL_TEXTURE_2D, 0, internalformat, width, height, 0, eGL_RGBA,
+                               eGL_UNSIGNED_BYTE, NULL);
+  }
+}
+
 void WrappedOpenGL::MakeValidContextCurrent(GLWindowingData &prevctx, void *favourWnd)
 {
   if(prevctx.ctx == NULL)
@@ -2432,7 +2587,7 @@ void WrappedOpenGL::StartFrameCapture(void *dev, void *wnd)
 
   m_FrameCounter = RDCMAX(1 + (uint32_t)m_CapturedFrames.size(), m_FrameCounter);
 
-  FetchFrameInfo frame;
+  FrameDescription frame;
   frame.frameNumber = m_FrameCounter + 1;
   frame.captureTime = Timing::GetUnixTimestamp();
   RDCEraseEl(frame.stats);
@@ -2447,7 +2602,7 @@ void WrappedOpenGL::StartFrameCapture(void *dev, void *wnd)
 
   m_Real.glBindVertexArray(m_FakeVAO);
 
-  GetResourceManager()->MarkVAOReferenced(VertexArrayRes(GetCtx(), m_FakeVAO), eFrameRef_Write);
+  GetResourceManager()->MarkVAOReferenced(VertexArrayRes(NULL, m_FakeVAO), eFrameRef_Write, true);
 
   m_Real.glBindVertexArray(prevVAO);
 
@@ -2696,9 +2851,21 @@ WrappedOpenGL::BackbufferImage *WrappedOpenGL::SaveBackbufferImage()
     thwidth = m_InitParams.width;
     thheight = m_InitParams.height;
 
-    thpixels = new byte[thwidth * thheight * 3];
+    thpixels = new byte[thwidth * thheight * 4];
 
-    m_Real.glReadPixels(0, 0, thwidth, thheight, eGL_RGB, eGL_UNSIGNED_BYTE, thpixels);
+    // GLES only supports GL_RGBA
+    m_Real.glReadPixels(0, 0, thwidth, thheight, eGL_RGBA, eGL_UNSIGNED_BYTE, thpixels);
+
+    // RGBA -> RGB
+    for(uint32_t y = 0; y < thheight; y++)
+    {
+      for(uint32_t x = 0; x < thwidth; x++)
+      {
+        thpixels[(y * thwidth + x) * 3 + 0] = thpixels[(y * thwidth + x) * 4 + 0];
+        thpixels[(y * thwidth + x) * 3 + 1] = thpixels[(y * thwidth + x) * 4 + 1];
+        thpixels[(y * thwidth + x) * 3 + 2] = thpixels[(y * thwidth + x) * 4 + 2];
+      }
+    }
 
     // flip the image in-place
     for(uint32_t y = 0; y <= thheight / 2; y++)
@@ -2708,17 +2875,17 @@ WrappedOpenGL::BackbufferImage *WrappedOpenGL::SaveBackbufferImage()
       for(uint32_t x = 0; x < thwidth; x++)
       {
         byte save[3];
-        save[0] = thpixels[y * (thwidth * 3) + x * 3 + 0];
-        save[1] = thpixels[y * (thwidth * 3) + x * 3 + 1];
-        save[2] = thpixels[y * (thwidth * 3) + x * 3 + 2];
+        save[0] = thpixels[(y * thwidth + x) * 3 + 0];
+        save[1] = thpixels[(y * thwidth + x) * 3 + 1];
+        save[2] = thpixels[(y * thwidth + x) * 3 + 2];
 
-        thpixels[y * (thwidth * 3) + x * 3 + 0] = thpixels[flipY * (thwidth * 3) + x * 3 + 0];
-        thpixels[y * (thwidth * 3) + x * 3 + 1] = thpixels[flipY * (thwidth * 3) + x * 3 + 1];
-        thpixels[y * (thwidth * 3) + x * 3 + 2] = thpixels[flipY * (thwidth * 3) + x * 3 + 2];
+        thpixels[(y * thwidth + x) * 3 + 0] = thpixels[(flipY * thwidth + x) * 3 + 0];
+        thpixels[(y * thwidth + x) * 3 + 1] = thpixels[(flipY * thwidth + x) * 3 + 1];
+        thpixels[(y * thwidth + x) * 3 + 2] = thpixels[(flipY * thwidth + x) * 3 + 2];
 
-        thpixels[flipY * (thwidth * 3) + x * 3 + 0] = save[0];
-        thpixels[flipY * (thwidth * 3) + x * 3 + 1] = save[1];
-        thpixels[flipY * (thwidth * 3) + x * 3 + 2] = save[2];
+        thpixels[(flipY * thwidth + x) * 3 + 0] = save[0];
+        thpixels[(flipY * thwidth + x) * 3 + 1] = save[1];
+        thpixels[(flipY * thwidth + x) * 3 + 2] = save[2];
       }
     }
 
@@ -2771,6 +2938,9 @@ WrappedOpenGL::BackbufferImage *WrappedOpenGL::SaveBackbufferImage()
 
   if(len > 0)
   {
+    // jpge::compress_image_to_jpeg_file_in_memory requires at least 1024 bytes
+    len = len >= 1024 ? len : 1024;
+
     jpgbuf = new byte[len];
 
     jpge::params p;
@@ -2810,7 +2980,6 @@ void WrappedOpenGL::Serialise_CaptureScope(uint64_t offset)
   else
   {
     m_FrameRecord.frameInfo.fileOffset = offset;
-    m_FrameRecord.frameInfo.firstEvent = 1;    // m_pImmediateContext->GetEventID();
     m_FrameRecord.frameInfo.frameNumber = FrameNumber;
     RDCEraseEl(m_FrameRecord.frameInfo.stats);
 
@@ -2944,10 +3113,10 @@ void WrappedOpenGL::FinishCapture()
   // m_SuccessfulCapture = false;
 }
 
-void WrappedOpenGL::AddDebugMessage(DebugMessageCategory c, DebugMessageSeverity sv,
-                                    DebugMessageSource src, std::string d)
+void WrappedOpenGL::AddDebugMessage(MessageCategory c, MessageSeverity sv, MessageSource src,
+                                    std::string d)
 {
-  if(m_State == READING || src == eDbgSource_RuntimeWarning)
+  if(m_State == READING || src == MessageSource::RuntimeWarning)
   {
     DebugMessage msg;
     msg.eventID = m_CurEventID;
@@ -3020,8 +3189,8 @@ void WrappedOpenGL::Serialise_DebugMessages()
     if(m_State >= WRITING)
       desc = debugMessages[i].description.elems;
 
-    SERIALISE_ELEMENT(uint32_t, Category, debugMessages[i].category);
-    SERIALISE_ELEMENT(uint32_t, Severity, debugMessages[i].severity);
+    SERIALISE_ELEMENT(MessageCategory, Category, debugMessages[i].category);
+    SERIALISE_ELEMENT(MessageSeverity, Severity, debugMessages[i].severity);
     SERIALISE_ELEMENT(uint32_t, ID, debugMessages[i].messageID);
     SERIALISE_ELEMENT(string, Description, desc);
 
@@ -3029,9 +3198,9 @@ void WrappedOpenGL::Serialise_DebugMessages()
     {
       DebugMessage msg;
       msg.eventID = m_CurEventID;
-      msg.source = eDbgSource_API;
-      msg.category = (DebugMessageCategory)Category;
-      msg.severity = (DebugMessageSeverity)Severity;
+      msg.source = MessageSource::API;
+      msg.category = Category;
+      msg.severity = Severity;
       msg.messageID = ID;
       msg.description = Description;
 
@@ -3087,32 +3256,34 @@ void WrappedOpenGL::DebugSnoop(GLenum source, GLenum type, GLuint id, GLenum sev
 
       switch(severity)
       {
-        case eGL_DEBUG_SEVERITY_HIGH: msg.severity = eDbgSeverity_High; break;
-        case eGL_DEBUG_SEVERITY_MEDIUM: msg.severity = eDbgSeverity_Medium; break;
-        case eGL_DEBUG_SEVERITY_LOW: msg.severity = eDbgSeverity_Low; break;
+        case eGL_DEBUG_SEVERITY_HIGH: msg.severity = MessageSeverity::High; break;
+        case eGL_DEBUG_SEVERITY_MEDIUM: msg.severity = MessageSeverity::Medium; break;
+        case eGL_DEBUG_SEVERITY_LOW: msg.severity = MessageSeverity::Low; break;
         case eGL_DEBUG_SEVERITY_NOTIFICATION:
-        default: msg.severity = eDbgSeverity_Info; break;
+        default: msg.severity = MessageSeverity::Info; break;
       }
 
       if(source == eGL_DEBUG_SOURCE_APPLICATION || type == eGL_DEBUG_TYPE_MARKER)
       {
-        msg.category = eDbgCategory_Application_Defined;
+        msg.category = MessageCategory::Application_Defined;
       }
       else if(source == eGL_DEBUG_SOURCE_SHADER_COMPILER)
       {
-        msg.category = eDbgCategory_Shaders;
+        msg.category = MessageCategory::Shaders;
       }
       else
       {
         switch(type)
         {
-          case eGL_DEBUG_TYPE_DEPRECATED_BEHAVIOR: msg.category = eDbgCategory_Deprecated; break;
-          case eGL_DEBUG_TYPE_UNDEFINED_BEHAVIOR: msg.category = eDbgCategory_Undefined; break;
-          case eGL_DEBUG_TYPE_PORTABILITY: msg.category = eDbgCategory_Portability; break;
-          case eGL_DEBUG_TYPE_PERFORMANCE: msg.category = eDbgCategory_Performance; break;
+          case eGL_DEBUG_TYPE_DEPRECATED_BEHAVIOR:
+            msg.category = MessageCategory::Deprecated;
+            break;
+          case eGL_DEBUG_TYPE_UNDEFINED_BEHAVIOR: msg.category = MessageCategory::Undefined; break;
+          case eGL_DEBUG_TYPE_PORTABILITY: msg.category = MessageCategory::Portability; break;
+          case eGL_DEBUG_TYPE_PERFORMANCE: msg.category = MessageCategory::Performance; break;
           case eGL_DEBUG_TYPE_ERROR:
           case eGL_DEBUG_TYPE_OTHER:
-          default: msg.category = eDbgCategory_Miscellaneous; break;
+          default: msg.category = MessageCategory::Miscellaneous; break;
         }
       }
 
@@ -3640,9 +3811,9 @@ void WrappedOpenGL::ProcessChunk(uint64_t offset, GLChunkType context)
       {
         AddEvent("SwapBuffers()");
 
-        FetchDrawcall draw;
+        DrawcallDescription draw;
         draw.name = "SwapBuffers()";
-        draw.flags |= eDraw_Present;
+        draw.flags |= DrawFlags::Present;
 
         draw.copyDestination = GetResourceManager()->GetOriginalID(
             GetResourceManager()->GetID(TextureRes(GetCtx(), m_FakeBB_Color)));
@@ -3683,11 +3854,15 @@ void WrappedOpenGL::ContextReplayLog(LogState readType, uint32_t startEventID, u
       if(q == eGL_NONE)
         break;
 
-      for(int j = 0; j < 8; j++)
+      int indices = IsGLES ? 1 : 8;    // GLES does not support indices
+      for(int j = 0; j < indices; j++)
       {
         if(m_ActiveQueries[i][j])
         {
-          m_Real.glEndQueryIndexed(q, j);
+          if(IsGLES)
+            m_Real.glEndQuery(q);
+          else
+            m_Real.glEndQueryIndexed(q, j);
           m_ActiveQueries[i][j] = false;
         }
       }
@@ -3714,7 +3889,7 @@ void WrappedOpenGL::ContextReplayLog(LogState readType, uint32_t startEventID, u
 
   if(m_State == EXECUTING)
   {
-    FetchAPIEvent ev = GetEvent(startEventID);
+    APIEvent ev = GetEvent(startEventID);
     m_CurEventID = ev.eventID;
     m_pSerialiser->SetOffset(ev.fileOffset);
     m_FirstEventID = startEventID;
@@ -3814,9 +3989,10 @@ void WrappedOpenGL::ContextProcessChunk(uint64_t offset, GLChunkType chunk)
   m_AddedDrawcall = false;
 }
 
-void WrappedOpenGL::AddUsage(const FetchDrawcall &d)
+void WrappedOpenGL::AddUsage(const DrawcallDescription &d)
 {
-  if((d.flags & (eDraw_Drawcall | eDraw_Dispatch)) == 0)
+  DrawFlags DrawDispatchMask = DrawFlags::Drawcall | DrawFlags::Dispatch;
+  if(!(d.flags & DrawDispatchMask))
     return;
 
   const GLHookSet &gl = m_Real;
@@ -3830,13 +4006,14 @@ void WrappedOpenGL::AddUsage(const FetchDrawcall &d)
   //////////////////////////////
   // Input
 
-  if(d.flags & eDraw_UseIBuffer)
+  if(d.flags & DrawFlags::UseIBuffer)
   {
     GLuint ibuffer = 0;
     gl.glGetIntegerv(eGL_ELEMENT_ARRAY_BUFFER_BINDING, (GLint *)&ibuffer);
 
     if(ibuffer)
-      m_ResourceUses[rm->GetID(BufferRes(ctx, ibuffer))].push_back(EventUsage(e, eUsage_IndexBuffer));
+      m_ResourceUses[rm->GetID(BufferRes(ctx, ibuffer))].push_back(
+          EventUsage(e, ResourceUsage::IndexBuffer));
   }
 
   // Vertex buffers and attributes
@@ -3848,7 +4025,8 @@ void WrappedOpenGL::AddUsage(const FetchDrawcall &d)
     GLuint buffer = GetBoundVertexBuffer(m_Real, i);
 
     if(buffer)
-      m_ResourceUses[rm->GetID(BufferRes(ctx, buffer))].push_back(EventUsage(e, eUsage_VertexBuffer));
+      m_ResourceUses[rm->GetID(BufferRes(ctx, buffer))].push_back(
+          EventUsage(e, ResourceUsage::VertexBuffer));
   }
 
   //////////////////////////////
@@ -3904,9 +4082,9 @@ void WrappedOpenGL::AddUsage(const FetchDrawcall &d)
 
     for(size_t i = 0; i < ARRAY_COUNT(refl); i++)
     {
-      EventUsage cb = EventUsage(e, ResourceUsage(eUsage_VS_Constants + i));
-      EventUsage res = EventUsage(e, ResourceUsage(eUsage_VS_Resource + i));
-      EventUsage rw = EventUsage(e, ResourceUsage(eUsage_VS_RWResource + i));
+      EventUsage cb = EventUsage(e, CBUsage(i));
+      EventUsage res = EventUsage(e, ResUsage(i));
+      EventUsage rw = EventUsage(e, RWResUsage(i));
 
       if(refl[i])
       {
@@ -3937,7 +4115,7 @@ void WrappedOpenGL::AddUsage(const FetchDrawcall &d)
           {
             if(refl[i]->ReadWriteResources[r].variableType.descriptor.cols == 1 &&
                refl[i]->ReadWriteResources[r].variableType.descriptor.rows == 1 &&
-               refl[i]->ReadWriteResources[r].variableType.descriptor.type == eVar_UInt)
+               refl[i]->ReadWriteResources[r].variableType.descriptor.type == VarType::UInt)
             {
               if(rs.AtomicCounter[bind].name)
                 m_ResourceUses[rm->GetID(BufferRes(ctx, rs.AtomicCounter[bind].name))].push_back(rw);
@@ -3959,52 +4137,52 @@ void WrappedOpenGL::AddUsage(const FetchDrawcall &d)
 
           switch(refl[i]->ReadOnlyResources[r].resType)
           {
-            case eResType_None: texList = NULL; break;
-            case eResType_Buffer:
+            case TextureDim::Unknown: texList = NULL; break;
+            case TextureDim::Buffer:
               texList = rs.TexBuffer;
               listSize = (int32_t)ARRAY_COUNT(rs.TexBuffer);
               break;
-            case eResType_Texture1D:
+            case TextureDim::Texture1D:
               texList = rs.Tex1D;
               listSize = (int32_t)ARRAY_COUNT(rs.Tex1D);
               break;
-            case eResType_Texture1DArray:
+            case TextureDim::Texture1DArray:
               texList = rs.Tex1DArray;
               listSize = (int32_t)ARRAY_COUNT(rs.Tex1DArray);
               break;
-            case eResType_Texture2D:
+            case TextureDim::Texture2D:
               texList = rs.Tex2D;
               listSize = (int32_t)ARRAY_COUNT(rs.Tex2D);
               break;
-            case eResType_TextureRect:
+            case TextureDim::TextureRect:
               texList = rs.TexRect;
               listSize = (int32_t)ARRAY_COUNT(rs.TexRect);
               break;
-            case eResType_Texture2DArray:
+            case TextureDim::Texture2DArray:
               texList = rs.Tex2DArray;
               listSize = (int32_t)ARRAY_COUNT(rs.Tex2DArray);
               break;
-            case eResType_Texture2DMS:
+            case TextureDim::Texture2DMS:
               texList = rs.Tex2DMS;
               listSize = (int32_t)ARRAY_COUNT(rs.Tex2DMS);
               break;
-            case eResType_Texture2DMSArray:
+            case TextureDim::Texture2DMSArray:
               texList = rs.Tex2DMSArray;
               listSize = (int32_t)ARRAY_COUNT(rs.Tex2DMSArray);
               break;
-            case eResType_Texture3D:
+            case TextureDim::Texture3D:
               texList = rs.Tex3D;
               listSize = (int32_t)ARRAY_COUNT(rs.Tex3D);
               break;
-            case eResType_TextureCube:
+            case TextureDim::TextureCube:
               texList = rs.TexCube;
               listSize = (int32_t)ARRAY_COUNT(rs.TexCube);
               break;
-            case eResType_TextureCubeArray:
+            case TextureDim::TextureCubeArray:
               texList = rs.TexCubeArray;
               listSize = (int32_t)ARRAY_COUNT(rs.TexCubeArray);
               break;
-            case eResType_Count: RDCERR("Invalid shader resource type"); break;
+            case TextureDim::Count: RDCERR("Invalid shader resource type"); break;
           }
 
           if(texList != NULL && bind >= 0 && bind < listSize && texList[bind] != 0)
@@ -4026,7 +4204,8 @@ void WrappedOpenGL::AddUsage(const FetchDrawcall &d)
     gl.glGetIntegeri_v(eGL_TRANSFORM_FEEDBACK_BUFFER_BINDING, i, (GLint *)&buffer);
 
     if(buffer)
-      m_ResourceUses[rm->GetID(BufferRes(ctx, buffer))].push_back(EventUsage(e, eUsage_SO));
+      m_ResourceUses[rm->GetID(BufferRes(ctx, buffer))].push_back(
+          EventUsage(e, ResourceUsage::StreamOut));
   }
 
   //////////////////////////////
@@ -4051,10 +4230,10 @@ void WrappedOpenGL::AddUsage(const FetchDrawcall &d)
     {
       if(type == eGL_TEXTURE)
         m_ResourceUses[rm->GetID(TextureRes(ctx, attachment))].push_back(
-            EventUsage(e, eUsage_ColourTarget));
+            EventUsage(e, ResourceUsage::ColorTarget));
       else
         m_ResourceUses[rm->GetID(RenderbufferRes(ctx, attachment))].push_back(
-            EventUsage(e, eUsage_ColourTarget));
+            EventUsage(e, ResourceUsage::ColorTarget));
     }
   }
 
@@ -4068,10 +4247,10 @@ void WrappedOpenGL::AddUsage(const FetchDrawcall &d)
   {
     if(type == eGL_TEXTURE)
       m_ResourceUses[rm->GetID(TextureRes(ctx, attachment))].push_back(
-          EventUsage(e, eUsage_DepthStencilTarget));
+          EventUsage(e, ResourceUsage::DepthStencilTarget));
     else
       m_ResourceUses[rm->GetID(RenderbufferRes(ctx, attachment))].push_back(
-          EventUsage(e, eUsage_DepthStencilTarget));
+          EventUsage(e, ResourceUsage::DepthStencilTarget));
   }
 
   gl.glGetFramebufferAttachmentParameteriv(eGL_DRAW_FRAMEBUFFER, eGL_STENCIL_ATTACHMENT,
@@ -4084,20 +4263,20 @@ void WrappedOpenGL::AddUsage(const FetchDrawcall &d)
   {
     if(type == eGL_TEXTURE)
       m_ResourceUses[rm->GetID(TextureRes(ctx, attachment))].push_back(
-          EventUsage(e, eUsage_DepthStencilTarget));
+          EventUsage(e, ResourceUsage::DepthStencilTarget));
     else
       m_ResourceUses[rm->GetID(RenderbufferRes(ctx, attachment))].push_back(
-          EventUsage(e, eUsage_DepthStencilTarget));
+          EventUsage(e, ResourceUsage::DepthStencilTarget));
   }
 }
 
-void WrappedOpenGL::AddDrawcall(const FetchDrawcall &d, bool hasEvents)
+void WrappedOpenGL::AddDrawcall(const DrawcallDescription &d, bool hasEvents)
 {
   m_AddedDrawcall = true;
 
   WrappedOpenGL *context = this;
 
-  FetchDrawcall draw = d;
+  DrawcallDescription draw = d;
   draw.eventID = m_CurEventID;
   draw.drawcallID = m_CurDrawcallID;
 
@@ -4125,7 +4304,8 @@ void WrappedOpenGL::AddDrawcall(const FetchDrawcall &d, bool hasEvents)
   }
 
   // markers don't increment drawcall ID
-  if((draw.flags & (eDraw_SetMarker | eDraw_PushMarker | eDraw_MultiDraw)) == 0)
+  DrawFlags MarkerMask = DrawFlags::SetMarker | DrawFlags::PushMarker | DrawFlags::MultiDraw;
+  if(!(draw.flags & MarkerMask))
     m_CurDrawcallID++;
 
   if(hasEvents)
@@ -4151,9 +4331,8 @@ void WrappedOpenGL::AddDrawcall(const FetchDrawcall &d, bool hasEvents)
 
 void WrappedOpenGL::AddEvent(string description)
 {
-  FetchAPIEvent apievent;
+  APIEvent apievent;
 
-  apievent.context = GetResourceManager()->GetOriginalID(m_ContextResourceID);
   apievent.fileOffset = m_CurChunkOffset;
   apievent.eventID = m_CurEventID;
 
@@ -4172,7 +4351,7 @@ void WrappedOpenGL::AddEvent(string description)
     m_Events.push_back(apievent);
 }
 
-FetchAPIEvent WrappedOpenGL::GetEvent(uint32_t eventID)
+APIEvent WrappedOpenGL::GetEvent(uint32_t eventID)
 {
   for(size_t i = m_Events.size() - 1; i > 0; i--)
   {
@@ -4183,7 +4362,7 @@ FetchAPIEvent WrappedOpenGL::GetEvent(uint32_t eventID)
   return m_Events[0];
 }
 
-const FetchDrawcall *WrappedOpenGL::GetDrawcall(uint32_t eventID)
+const DrawcallDescription *WrappedOpenGL::GetDrawcall(uint32_t eventID)
 {
   if(eventID >= m_Drawcalls.size())
     return NULL;
@@ -4201,7 +4380,7 @@ void WrappedOpenGL::ReplayLog(uint32_t startEventID, uint32_t endEventID, Replay
 
   if(startEventID == 0 && (replayType == eReplay_WithoutDraw || replayType == eReplay_Full))
   {
-    startEventID = m_FrameRecord.frameInfo.firstEvent;
+    startEventID = 1;
     partial = false;
   }
 

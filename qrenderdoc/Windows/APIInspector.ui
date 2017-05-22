@@ -30,14 +30,14 @@
     <number>0</number>
    </property>
    <item>
-    <widget class="QSplitter" name="splitter">
+    <widget class="RDSplitter" name="splitter">
      <property name="orientation">
       <enum>Qt::Vertical</enum>
      </property>
      <property name="handleWidth">
-      <number>16</number>
+      <number>27</number>
      </property>
-     <widget class="QTreeWidget" name="apiEvents">
+     <widget class="RDTreeWidget" name="apiEvents">
       <property name="editTriggers">
        <set>QAbstractItemView::NoEditTriggers</set>
       </property>
@@ -59,19 +59,6 @@
       <property name="allColumnsShowFocus">
        <bool>true</bool>
       </property>
-      <property name="columnCount">
-       <number>2</number>
-      </property>
-      <column>
-       <property name="text">
-        <string notr="true">1</string>
-       </property>
-      </column>
-      <column>
-       <property name="text">
-        <string notr="true">2</string>
-       </property>
-      </column>
      </widget>
      <widget class="QListWidget" name="callstack">
       <property name="sizePolicy">
@@ -85,6 +72,19 @@
    </item>
   </layout>
  </widget>
+ <customwidgets>
+  <customwidget>
+   <class>RDTreeWidget</class>
+   <extends>QTreeView</extends>
+   <header>Widgets/Extended/RDTreeWidget.h</header>
+  </customwidget>
+  <customwidget>
+   <class>RDSplitter</class>
+   <extends>QSplitter</extends>
+   <header>Widgets/Extended/RDSplitter.h</header>
+   <container>1</container>
+  </customwidget>
+ </customwidgets>
  <resources/>
  <connections/>
 </ui>

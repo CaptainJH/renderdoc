@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0"?>
 <ui version="4.0">
  <class>VulkanPipelineStateViewer</class>
  <widget class="QFrame" name="VulkanPipelineStateViewer">
@@ -69,6 +69,9 @@
       </item>
       <item>
        <widget class="QToolButton" name="showDisabled">
+        <property name="toolTip">
+         <string>Show Disabled Items</string>
+        </property>
         <property name="text">
          <string>Show Disabled Items</string>
         </property>
@@ -89,6 +92,9 @@
       </item>
       <item>
        <widget class="QToolButton" name="showEmpty">
+        <property name="toolTip">
+         <string>Show Empty Items</string>
+        </property>
         <property name="text">
          <string>Show Empty Items</string>
         </property>
@@ -109,6 +115,9 @@
       </item>
       <item>
        <widget class="QToolButton" name="exportHTML">
+        <property name="toolTip">
+         <string>Export the current pipeline state to an HTML file</string>
+        </property>
         <property name="text">
          <string>Export</string>
         </property>
@@ -257,41 +266,6 @@
             <attribute name="headerStretchLastSection">
              <bool>false</bool>
             </attribute>
-            <column>
-             <property name="text">
-              <string notr="true">Index</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Name</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Location</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Binding</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Format</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Offset</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Go</string>
-             </property>
-            </column>
            </widget>
           </item>
          </layout>
@@ -359,41 +333,6 @@
             <attribute name="headerStretchLastSection">
              <bool>false</bool>
             </attribute>
-            <column>
-             <property name="text">
-              <string notr="true">Slot</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Buffer</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Rate</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Offset</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Stride</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Byte Length</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Go</string>
-             </property>
-            </column>
            </widget>
           </item>
          </layout>
@@ -413,6 +352,9 @@
          <layout class="QVBoxLayout" name="verticalLayout_3">
           <item>
            <widget class="QToolButton" name="meshView">
+            <property name="toolTip">
+             <string>View the mesh input data</string>
+            </property>
             <property name="text">
              <string/>
             </property>
@@ -697,46 +639,6 @@ padding: 0px;</string>
             <attribute name="headerStretchLastSection">
              <bool>false</bool>
             </attribute>
-            <column>
-             <property name="text">
-              <string notr="true"/>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Set</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Binding</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Type</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Resource</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Contents</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string/>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Go</string>
-             </property>
-            </column>
            </widget>
           </item>
          </layout>
@@ -792,41 +694,6 @@ padding: 0px;</string>
             <attribute name="headerStretchLastSection">
              <bool>false</bool>
             </attribute>
-            <column>
-             <property name="text">
-              <string notr="true"/>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Set</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Binding</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Buffer</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Byte Range</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Size</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Go</string>
-             </property>
-            </column>
            </widget>
           </item>
          </layout>
@@ -1025,46 +892,6 @@ padding: 0px;</string>
             <attribute name="headerStretchLastSection">
              <bool>false</bool>
             </attribute>
-            <column>
-             <property name="text">
-              <string notr="true"/>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Set</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Binding</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Type</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Resource</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Contents</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string/>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Go</string>
-             </property>
-            </column>
            </widget>
           </item>
          </layout>
@@ -1120,41 +947,6 @@ padding: 0px;</string>
             <attribute name="headerStretchLastSection">
              <bool>false</bool>
             </attribute>
-            <column>
-             <property name="text">
-              <string notr="true"/>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Set</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Binding</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Buffer</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Byte Range</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Size</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Go</string>
-             </property>
-            </column>
            </widget>
           </item>
          </layout>
@@ -1353,46 +1145,6 @@ padding: 0px;</string>
             <attribute name="headerStretchLastSection">
              <bool>false</bool>
             </attribute>
-            <column>
-             <property name="text">
-              <string notr="true"/>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Set</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Binding</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Type</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Resource</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Contents</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string/>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Go</string>
-             </property>
-            </column>
            </widget>
           </item>
          </layout>
@@ -1448,41 +1200,6 @@ padding: 0px;</string>
             <attribute name="headerStretchLastSection">
              <bool>false</bool>
             </attribute>
-            <column>
-             <property name="text">
-              <string notr="true"/>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Set</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Binding</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Buffer</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Byte Range</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Size</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Go</string>
-             </property>
-            </column>
            </widget>
           </item>
          </layout>
@@ -1681,46 +1398,6 @@ padding: 0px;</string>
             <attribute name="headerStretchLastSection">
              <bool>false</bool>
             </attribute>
-            <column>
-             <property name="text">
-              <string notr="true"/>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Set</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Binding</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Type</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Resource</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Contents</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string/>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Go</string>
-             </property>
-            </column>
            </widget>
           </item>
          </layout>
@@ -1776,41 +1453,6 @@ padding: 0px;</string>
             <attribute name="headerStretchLastSection">
              <bool>false</bool>
             </attribute>
-            <column>
-             <property name="text">
-              <string notr="true"/>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Set</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Binding</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Buffer</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Byte Range</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Size</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Go</string>
-             </property>
-            </column>
            </widget>
           </item>
          </layout>
@@ -2162,7 +1804,7 @@ padding: 0px;</string>
            <number>2</number>
           </property>
           <item>
-           <widget class="QTreeWidget" name="scissors">
+           <widget class="RDTreeWidget" name="scissors">
             <property name="frameShape">
              <enum>QFrame::Box</enum>
             </property>
@@ -2190,31 +1832,6 @@ padding: 0px;</string>
             <attribute name="headerMinimumSectionSize">
              <number>50</number>
             </attribute>
-            <column>
-             <property name="text">
-              <string>Slot</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>X</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Y</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Width</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Height</string>
-             </property>
-            </column>
            </widget>
           </item>
          </layout>
@@ -2245,7 +1862,7 @@ padding: 0px;</string>
            <number>2</number>
           </property>
           <item>
-           <widget class="QTreeWidget" name="viewports">
+           <widget class="RDTreeWidget" name="viewports">
             <property name="frameShape">
              <enum>QFrame::Box</enum>
             </property>
@@ -2273,41 +1890,6 @@ padding: 0px;</string>
             <attribute name="headerMinimumSectionSize">
              <number>50</number>
             </attribute>
-            <column>
-             <property name="text">
-              <string>Slot</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>X</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Y</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Width</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Height</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>MinDepth</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>MaxDepth</string>
-             </property>
-            </column>
            </widget>
           </item>
          </layout>
@@ -2672,46 +2254,6 @@ padding: 0px;</string>
             <attribute name="headerStretchLastSection">
              <bool>false</bool>
             </attribute>
-            <column>
-             <property name="text">
-              <string notr="true"/>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Set</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Binding</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Type</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Resource</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Contents</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string/>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Go</string>
-             </property>
-            </column>
            </widget>
           </item>
          </layout>
@@ -2767,41 +2309,6 @@ padding: 0px;</string>
             <attribute name="headerStretchLastSection">
              <bool>false</bool>
             </attribute>
-            <column>
-             <property name="text">
-              <string notr="true"/>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Set</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Binding</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Buffer</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Byte Range</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Size</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Go</string>
-             </property>
-            </column>
            </widget>
           </item>
          </layout>
@@ -2885,51 +2392,6 @@ padding: 0px;</string>
             <attribute name="headerStretchLastSection">
              <bool>false</bool>
             </attribute>
-            <column>
-             <property name="text">
-              <string>Slot</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Resource</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Type</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Width</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Height</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Depth</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Array Size</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Format</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Go</string>
-             </property>
-            </column>
            </widget>
           </item>
          </layout>
@@ -2960,7 +2422,7 @@ padding: 0px;</string>
            <number>2</number>
           </property>
           <item>
-           <widget class="QTreeWidget" name="blends">
+           <widget class="RDTreeWidget" name="blends">
             <property name="frameShape">
              <enum>QFrame::Box</enum>
             </property>
@@ -2994,51 +2456,6 @@ padding: 0px;</string>
             <property name="expandsOnDoubleClick">
              <bool>false</bool>
             </property>
-            <column>
-             <property name="text">
-              <string>Slot</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Enabled</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Colour Src</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Colour Dst</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Colour Op</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Alpha Src</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Alpha Dst</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Alpha Op</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Write Mask</string>
-             </property>
-            </column>
            </widget>
           </item>
          </layout>
@@ -3323,7 +2740,7 @@ padding: 0px;</string>
            <number>2</number>
           </property>
           <item>
-           <widget class="QTreeWidget" name="stencils">
+           <widget class="RDTreeWidget" name="stencils">
             <property name="sizePolicy">
              <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
               <horstretch>0</horstretch>
@@ -3375,46 +2792,6 @@ padding: 0px;</string>
             <attribute name="headerStretchLastSection">
              <bool>false</bool>
             </attribute>
-            <column>
-             <property name="text">
-              <string>Face</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Func</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Fail Op</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Depth Fail Op</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Pass Op</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Write</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Comp</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Ref</string>
-             </property>
-            </column>
            </widget>
           </item>
          </layout>
@@ -3613,46 +2990,6 @@ padding: 0px;</string>
             <attribute name="headerStretchLastSection">
              <bool>false</bool>
             </attribute>
-            <column>
-             <property name="text">
-              <string notr="true"/>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Set</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Binding</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Type</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Resource</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Contents</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string/>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Go</string>
-             </property>
-            </column>
            </widget>
           </item>
          </layout>
@@ -3708,41 +3045,6 @@ padding: 0px;</string>
             <attribute name="headerStretchLastSection">
              <bool>false</bool>
             </attribute>
-            <column>
-             <property name="text">
-              <string notr="true"/>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Set</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Binding</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Buffer</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Byte Range</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Size</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Go</string>
-             </property>
-            </column>
            </widget>
           </item>
          </layout>
@@ -3757,7 +3059,7 @@ padding: 0px;</string>
  <customwidgets>
   <customwidget>
    <class>RDTreeWidget</class>
-   <extends>QTreeWidget</extends>
+   <extends>QTreeView</extends>
    <header>Widgets/Extended/RDTreeWidget.h</header>
   </customwidget>
   <customwidget>

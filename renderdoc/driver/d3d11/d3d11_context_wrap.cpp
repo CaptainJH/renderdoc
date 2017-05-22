@@ -55,19 +55,19 @@ bool WrappedID3D11DeviceContext::Serialise_SetMarker(uint32_t col, const wchar_t
 
   if(m_State == READING)
   {
-    FetchDrawcall draw;
+    DrawcallDescription draw;
     draw.name = name;
-    draw.flags |= eDraw_SetMarker;
+    draw.flags |= DrawFlags::SetMarker;
 
     byte alpha = (colour >> 24) & 0xff;
     byte red = (colour >> 16) & 0xff;
     byte green = (colour >> 8) & 0xff;
     byte blue = (colour >> 0) & 0xff;
 
-    draw.markerColour[0] = float(red) / 255.0f;
-    draw.markerColour[1] = float(green) / 255.0f;
-    draw.markerColour[2] = float(blue) / 255.0f;
-    draw.markerColour[3] = float(alpha) / 255.0f;
+    draw.markerColor[0] = float(red) / 255.0f;
+    draw.markerColor[1] = float(green) / 255.0f;
+    draw.markerColor[2] = float(blue) / 255.0f;
+    draw.markerColor[3] = float(alpha) / 255.0f;
 
     AddDrawcall(draw, false);
   }
@@ -91,19 +91,19 @@ bool WrappedID3D11DeviceContext::Serialise_PushEvent(uint32_t col, const wchar_t
 
   if(m_State == READING)
   {
-    FetchDrawcall draw;
+    DrawcallDescription draw;
     draw.name = name;
-    draw.flags |= eDraw_PushMarker;
+    draw.flags |= DrawFlags::PushMarker;
 
     byte alpha = (colour >> 24) & 0xff;
     byte red = (colour >> 16) & 0xff;
     byte green = (colour >> 8) & 0xff;
     byte blue = (colour >> 0) & 0xff;
 
-    draw.markerColour[0] = float(red) / 255.0f;
-    draw.markerColour[1] = float(green) / 255.0f;
-    draw.markerColour[2] = float(blue) / 255.0f;
-    draw.markerColour[3] = float(alpha) / 255.0f;
+    draw.markerColor[0] = float(red) / 255.0f;
+    draw.markerColor[1] = float(green) / 255.0f;
+    draw.markerColor[2] = float(blue) / 255.0f;
+    draw.markerColor[3] = float(alpha) / 255.0f;
 
     AddDrawcall(draw, false);
   }
@@ -115,9 +115,9 @@ bool WrappedID3D11DeviceContext::Serialise_PopEvent()
 {
   if(m_State == READING && !m_CurEvents.empty())
   {
-    FetchDrawcall draw;
+    DrawcallDescription draw;
     draw.name = "API Calls";
-    draw.flags |= eDraw_SetMarker | eDraw_APICalls;
+    draw.flags |= DrawFlags::SetMarker | DrawFlags::APICalls;
 
     AddDrawcall(draw, true);
   }
@@ -664,7 +664,7 @@ bool WrappedID3D11DeviceContext::Serialise_VSSetConstantBuffers(UINT StartSlot_,
       Buffers[i] = UNWRAP(WrappedID3D11Buffer, Buffers[i]);
 
     if(m_State == READING)
-      RecordConstantStats(eShaderStage_Vertex, NumBuffers, Buffers);
+      RecordConstantStats(ShaderStage::Vertex, NumBuffers, Buffers);
 
     m_pRealContext->VSSetConstantBuffers(StartSlot, NumBuffers, Buffers);
     VerifyState();
@@ -736,7 +736,7 @@ bool WrappedID3D11DeviceContext::Serialise_VSSetShaderResources(
       Views[i] = UNWRAP(WrappedID3D11ShaderResourceView1, Views[i]);
 
     if(m_State == READING)
-      RecordResourceStats(eShaderStage_Vertex, NumViews, Views);
+      RecordResourceStats(ShaderStage::Vertex, NumViews, Views);
 
     m_pRealContext->VSSetShaderResources(StartSlot, NumViews, Views);
     VerifyState();
@@ -812,7 +812,7 @@ bool WrappedID3D11DeviceContext::Serialise_VSSetSamplers(UINT StartSlot_, UINT N
       Samplers[i] = UNWRAP(WrappedID3D11SamplerState, Samplers[i]);
 
     if(m_State == READING)
-      RecordSamplerStats(eShaderStage_Vertex, NumSamplers, Samplers);
+      RecordSamplerStats(ShaderStage::Vertex, NumSamplers, Samplers);
 
     m_pRealContext->VSSetSamplers(StartSlot, NumSamplers, Samplers);
     VerifyState();
@@ -883,7 +883,7 @@ bool WrappedID3D11DeviceContext::Serialise_VSSetShader(ID3D11VertexShader *pShad
       pSH = (ID3D11DeviceChild *)m_pDevice->GetResourceManager()->GetLiveResource(Shader);
 
     if(m_State == READING)
-      RecordShaderStats(eShaderStage_Vertex, m_CurrentPipelineState->VS.Shader, pSH);
+      RecordShaderStats(ShaderStage::Vertex, m_CurrentPipelineState->VS.Shader, pSH);
 
     m_CurrentPipelineState->ChangeRefRead(m_CurrentPipelineState->VS.Shader, pSH);
     m_pRealContext->VSSetShader(UNWRAP(WrappedID3D11Shader<ID3D11VertexShader>, pSH), Instances,
@@ -1066,7 +1066,7 @@ bool WrappedID3D11DeviceContext::Serialise_HSSetConstantBuffers(UINT StartSlot_,
       Buffers[i] = UNWRAP(WrappedID3D11Buffer, Buffers[i]);
 
     if(m_State == READING)
-      RecordConstantStats(eShaderStage_Hull, NumBuffers, Buffers);
+      RecordConstantStats(ShaderStage::Hull, NumBuffers, Buffers);
 
     if(m_State <= EXECUTING)
       m_pRealContext->HSSetConstantBuffers(StartSlot, NumBuffers, Buffers);
@@ -1141,7 +1141,7 @@ bool WrappedID3D11DeviceContext::Serialise_HSSetShaderResources(
       Views[i] = UNWRAP(WrappedID3D11ShaderResourceView1, Views[i]);
 
     if(m_State == READING)
-      RecordResourceStats(eShaderStage_Hull, NumViews, Views);
+      RecordResourceStats(ShaderStage::Hull, NumViews, Views);
 
     m_pRealContext->HSSetShaderResources(StartSlot, NumViews, Views);
     VerifyState();
@@ -1217,7 +1217,7 @@ bool WrappedID3D11DeviceContext::Serialise_HSSetSamplers(UINT StartSlot_, UINT N
       Samplers[i] = UNWRAP(WrappedID3D11SamplerState, Samplers[i]);
 
     if(m_State == READING)
-      RecordSamplerStats(eShaderStage_Hull, NumSamplers, Samplers);
+      RecordSamplerStats(ShaderStage::Hull, NumSamplers, Samplers);
 
     m_pRealContext->HSSetSamplers(StartSlot, NumSamplers, Samplers);
     VerifyState();
@@ -1288,7 +1288,7 @@ bool WrappedID3D11DeviceContext::Serialise_HSSetShader(ID3D11HullShader *pShader
       pSH = (ID3D11DeviceChild *)m_pDevice->GetResourceManager()->GetLiveResource(Shader);
 
     if(m_State == READING)
-      RecordShaderStats(eShaderStage_Hull, m_CurrentPipelineState->HS.Shader, pSH);
+      RecordShaderStats(ShaderStage::Hull, m_CurrentPipelineState->HS.Shader, pSH);
 
     m_CurrentPipelineState->ChangeRefRead(m_CurrentPipelineState->HS.Shader, pSH);
     m_pRealContext->HSSetShader(UNWRAP(WrappedID3D11Shader<ID3D11HullShader>, pSH), Instances,
@@ -1471,7 +1471,7 @@ bool WrappedID3D11DeviceContext::Serialise_DSSetConstantBuffers(UINT StartSlot_,
       Buffers[i] = UNWRAP(WrappedID3D11Buffer, Buffers[i]);
 
     if(m_State == READING)
-      RecordConstantStats(eShaderStage_Domain, NumBuffers, Buffers);
+      RecordConstantStats(ShaderStage::Domain, NumBuffers, Buffers);
 
     m_pRealContext->DSSetConstantBuffers(StartSlot, NumBuffers, Buffers);
     VerifyState();
@@ -1545,7 +1545,7 @@ bool WrappedID3D11DeviceContext::Serialise_DSSetShaderResources(
       Views[i] = UNWRAP(WrappedID3D11ShaderResourceView1, Views[i]);
 
     if(m_State == READING)
-      RecordResourceStats(eShaderStage_Domain, NumViews, Views);
+      RecordResourceStats(ShaderStage::Domain, NumViews, Views);
 
     m_pRealContext->DSSetShaderResources(StartSlot, NumViews, Views);
     VerifyState();
@@ -1621,7 +1621,7 @@ bool WrappedID3D11DeviceContext::Serialise_DSSetSamplers(UINT StartSlot_, UINT N
       Samplers[i] = UNWRAP(WrappedID3D11SamplerState, Samplers[i]);
 
     if(m_State == READING)
-      RecordSamplerStats(eShaderStage_Domain, NumSamplers, Samplers);
+      RecordSamplerStats(ShaderStage::Domain, NumSamplers, Samplers);
 
     m_pRealContext->DSSetSamplers(StartSlot, NumSamplers, Samplers);
     VerifyState();
@@ -1692,7 +1692,7 @@ bool WrappedID3D11DeviceContext::Serialise_DSSetShader(ID3D11DomainShader *pShad
       pSH = (ID3D11DeviceChild *)m_pDevice->GetResourceManager()->GetLiveResource(Shader);
 
     if(m_State == READING)
-      RecordShaderStats(eShaderStage_Domain, m_CurrentPipelineState->DS.Shader, pSH);
+      RecordShaderStats(ShaderStage::Domain, m_CurrentPipelineState->DS.Shader, pSH);
 
     m_CurrentPipelineState->ChangeRefRead(m_CurrentPipelineState->DS.Shader, pSH);
     m_pRealContext->DSSetShader(UNWRAP(WrappedID3D11Shader<ID3D11DomainShader>, pSH), Instances,
@@ -1876,7 +1876,7 @@ bool WrappedID3D11DeviceContext::Serialise_GSSetConstantBuffers(UINT StartSlot_,
       Buffers[i] = UNWRAP(WrappedID3D11Buffer, Buffers[i]);
 
     if(m_State == READING)
-      RecordConstantStats(eShaderStage_Geometry, NumBuffers, Buffers);
+      RecordConstantStats(ShaderStage::Geometry, NumBuffers, Buffers);
 
     m_pRealContext->GSSetConstantBuffers(StartSlot, NumBuffers, Buffers);
     VerifyState();
@@ -1950,7 +1950,7 @@ bool WrappedID3D11DeviceContext::Serialise_GSSetShaderResources(
       Views[i] = UNWRAP(WrappedID3D11ShaderResourceView1, Views[i]);
 
     if(m_State == READING)
-      RecordResourceStats(eShaderStage_Geometry, NumViews, Views);
+      RecordResourceStats(ShaderStage::Geometry, NumViews, Views);
 
     m_pRealContext->GSSetShaderResources(StartSlot, NumViews, Views);
     VerifyState();
@@ -2026,7 +2026,7 @@ bool WrappedID3D11DeviceContext::Serialise_GSSetSamplers(UINT StartSlot_, UINT N
       Samplers[i] = UNWRAP(WrappedID3D11SamplerState, Samplers[i]);
 
     if(m_State == READING)
-      RecordSamplerStats(eShaderStage_Geometry, NumSamplers, Samplers);
+      RecordSamplerStats(ShaderStage::Geometry, NumSamplers, Samplers);
 
     m_pRealContext->GSSetSamplers(StartSlot, NumSamplers, Samplers);
     VerifyState();
@@ -2097,7 +2097,7 @@ bool WrappedID3D11DeviceContext::Serialise_GSSetShader(ID3D11GeometryShader *pSh
       pSH = (ID3D11DeviceChild *)m_pDevice->GetResourceManager()->GetLiveResource(Shader);
 
     if(m_State == READING)
-      RecordShaderStats(eShaderStage_Geometry, m_CurrentPipelineState->GS.Shader, pSH);
+      RecordShaderStats(ShaderStage::Geometry, m_CurrentPipelineState->GS.Shader, pSH);
 
     m_CurrentPipelineState->ChangeRefRead(m_CurrentPipelineState->GS.Shader, pSH);
     m_pRealContext->GSSetShader(UNWRAP(WrappedID3D11Shader<ID3D11GeometryShader>, pSH), Instances,
@@ -2687,7 +2687,7 @@ bool WrappedID3D11DeviceContext::Serialise_PSSetConstantBuffers(UINT StartSlot_,
       Buffers[i] = UNWRAP(WrappedID3D11Buffer, Buffers[i]);
 
     if(m_State == READING)
-      RecordConstantStats(eShaderStage_Pixel, NumBuffers, Buffers);
+      RecordConstantStats(ShaderStage::Pixel, NumBuffers, Buffers);
 
     m_pRealContext->PSSetConstantBuffers(StartSlot, NumBuffers, Buffers);
     VerifyState();
@@ -2759,7 +2759,7 @@ bool WrappedID3D11DeviceContext::Serialise_PSSetShaderResources(
       Views[i] = UNWRAP(WrappedID3D11ShaderResourceView1, Views[i]);
 
     if(m_State == READING)
-      RecordResourceStats(eShaderStage_Pixel, NumViews, Views);
+      RecordResourceStats(ShaderStage::Pixel, NumViews, Views);
 
     m_pRealContext->PSSetShaderResources(StartSlot, NumViews, Views);
     VerifyState();
@@ -2833,7 +2833,7 @@ bool WrappedID3D11DeviceContext::Serialise_PSSetSamplers(UINT StartSlot_, UINT N
       Samplers[i] = UNWRAP(WrappedID3D11SamplerState, Samplers[i]);
 
     if(m_State == READING)
-      RecordSamplerStats(eShaderStage_Pixel, NumSamplers, Samplers);
+      RecordSamplerStats(ShaderStage::Pixel, NumSamplers, Samplers);
 
     m_pRealContext->PSSetSamplers(StartSlot, NumSamplers, Samplers);
     VerifyState();
@@ -2902,7 +2902,7 @@ bool WrappedID3D11DeviceContext::Serialise_PSSetShader(ID3D11PixelShader *pShade
       pSH = (ID3D11DeviceChild *)m_pDevice->GetResourceManager()->GetLiveResource(Shader);
 
     if(m_State == READING)
-      RecordShaderStats(eShaderStage_Pixel, m_CurrentPipelineState->PS.Shader, pSH);
+      RecordShaderStats(ShaderStage::Pixel, m_CurrentPipelineState->PS.Shader, pSH);
 
     m_CurrentPipelineState->ChangeRefRead(m_CurrentPipelineState->PS.Shader, pSH);
     m_pRealContext->PSSetShader(UNWRAP(WrappedID3D11Shader<ID3D11PixelShader>, pSH), Instances,
@@ -3725,8 +3725,8 @@ void WrappedID3D11DeviceContext::Serialise_DebugMessages()
     if(m_State >= WRITING)
       desc = debugMessages[i].description.elems;
 
-    SERIALISE_ELEMENT(uint32_t, Category, debugMessages[i].category);
-    SERIALISE_ELEMENT(uint32_t, Severity, debugMessages[i].severity);
+    SERIALISE_ELEMENT(MessageCategory, Category, debugMessages[i].category);
+    SERIALISE_ELEMENT(MessageSeverity, Severity, debugMessages[i].severity);
     SERIALISE_ELEMENT(uint32_t, ID, debugMessages[i].messageID);
     SERIALISE_ELEMENT(string, Description, desc);
 
@@ -3734,9 +3734,9 @@ void WrappedID3D11DeviceContext::Serialise_DebugMessages()
     {
       DebugMessage msg;
       msg.eventID = m_CurEventID;
-      msg.source = eDbgSource_API;
-      msg.category = (DebugMessageCategory)Category;
-      msg.severity = (DebugMessageSeverity)Severity;
+      msg.source = MessageSource::API;
+      msg.category = Category;
+      msg.severity = Severity;
       msg.messageID = ID;
       msg.description = Description;
 
@@ -3776,7 +3776,7 @@ bool WrappedID3D11DeviceContext::Serialise_DrawIndexedInstanced(UINT IndexCountP
     string name = "DrawIndexedInstanced(" + ToStr::Get(IndexCountPerInstance) + ", " +
                   ToStr::Get(InstanceCount) + ")";
 
-    FetchDrawcall draw;
+    DrawcallDescription draw;
     draw.name = name;
     draw.numIndices = IndexCountPerInstance;
     draw.numInstances = InstanceCount;
@@ -3784,7 +3784,7 @@ bool WrappedID3D11DeviceContext::Serialise_DrawIndexedInstanced(UINT IndexCountP
     draw.baseVertex = BaseVertexLocation;
     draw.instanceOffset = StartInstanceLocation;
 
-    draw.flags |= eDraw_Drawcall | eDraw_Instanced | eDraw_UseIBuffer;
+    draw.flags |= DrawFlags::Drawcall | DrawFlags::Instanced | DrawFlags::UseIBuffer;
 
     AddDrawcall(draw, true);
   }
@@ -3849,14 +3849,14 @@ bool WrappedID3D11DeviceContext::Serialise_DrawInstanced(UINT VertexCountPerInst
     string name = "DrawInstanced(" + ToStr::Get(VertexCountPerInstance) + ", " +
                   ToStr::Get(InstanceCount) + ")";
 
-    FetchDrawcall draw;
+    DrawcallDescription draw;
     draw.name = name;
     draw.numIndices = VertexCountPerInstance;
     draw.numInstances = InstanceCount;
     draw.vertexOffset = StartVertexLocation;
     draw.instanceOffset = StartInstanceLocation;
 
-    draw.flags |= eDraw_Drawcall | eDraw_Instanced;
+    draw.flags |= DrawFlags::Drawcall | DrawFlags::Instanced;
 
     AddDrawcall(draw, true);
   }
@@ -3915,13 +3915,13 @@ bool WrappedID3D11DeviceContext::Serialise_DrawIndexed(UINT IndexCount_, UINT St
     AddEvent(desc);
     string name = "DrawIndexed(" + ToStr::Get(IndexCount) + ")";
 
-    FetchDrawcall draw;
+    DrawcallDescription draw;
     draw.name = name;
     draw.numIndices = IndexCount;
     draw.baseVertex = BaseVertexLocation;
     draw.indexOffset = StartIndexLocation;
 
-    draw.flags |= eDraw_Drawcall | eDraw_UseIBuffer;
+    draw.flags |= DrawFlags::Drawcall | DrawFlags::UseIBuffer;
 
     AddDrawcall(draw, true);
   }
@@ -3976,12 +3976,12 @@ bool WrappedID3D11DeviceContext::Serialise_Draw(UINT VertexCount_, UINT StartVer
     AddEvent(desc);
     string name = "Draw(" + ToStr::Get(VertexCount) + ")";
 
-    FetchDrawcall draw;
+    DrawcallDescription draw;
     draw.name = name;
     draw.numIndices = VertexCount;
     draw.vertexOffset = StartVertexLocation;
 
-    draw.flags |= eDraw_Drawcall;
+    draw.flags |= DrawFlags::Drawcall;
 
     AddDrawcall(draw, true);
   }
@@ -4082,9 +4082,9 @@ bool WrappedID3D11DeviceContext::Serialise_DrawAuto()
     AddEvent(desc);
     string name = "DrawAuto(<" + ToStr::Get(numVerts) + ">)";
 
-    FetchDrawcall draw;
+    DrawcallDescription draw;
     draw.name = name;
-    draw.flags |= eDraw_Drawcall | eDraw_Auto;
+    draw.flags |= DrawFlags::Drawcall | DrawFlags::Auto;
     draw.numIndices = (uint32_t)numVerts;
     draw.vertexOffset = 0;
     draw.indexOffset = 0;
@@ -4142,7 +4142,7 @@ bool WrappedID3D11DeviceContext::Serialise_DrawIndexedInstancedIndirect(ID3D11Bu
   {
     AddEvent(desc);
 
-    FetchDrawcall draw;
+    DrawcallDescription draw;
 
     string name = "DrawIndexedInstancedIndirect(-, -)";
 
@@ -4177,12 +4177,14 @@ bool WrappedID3D11DeviceContext::Serialise_DrawIndexedInstancedIndirect(ID3D11Bu
       name = "DrawIndexedInstancedIndirect(<" + ToStr::Get(draw.numIndices) + ", " +
              ToStr::Get(draw.numInstances) + ">)";
 
-      m_ResourceUses[GetIDForResource(argBuffer)].push_back(EventUsage(m_CurEventID, eUsage_Indirect));
+      m_ResourceUses[GetIDForResource(argBuffer)].push_back(
+          EventUsage(m_CurEventID, ResourceUsage::Indirect));
     }
 
     draw.name = name;
 
-    draw.flags |= eDraw_Drawcall | eDraw_Instanced | eDraw_UseIBuffer | eDraw_Indirect;
+    draw.flags |=
+        DrawFlags::Drawcall | DrawFlags::Instanced | DrawFlags::UseIBuffer | DrawFlags::Indirect;
 
     AddDrawcall(draw, true);
   }
@@ -4240,7 +4242,7 @@ bool WrappedID3D11DeviceContext::Serialise_DrawInstancedIndirect(ID3D11Buffer *p
   {
     AddEvent(desc);
 
-    FetchDrawcall draw;
+    DrawcallDescription draw;
 
     string name = "DrawInstancedIndirect(-, -)";
     if(m_pDevice->GetResourceManager()->HasLiveResource(BufferForArgs))
@@ -4262,12 +4264,13 @@ bool WrappedID3D11DeviceContext::Serialise_DrawInstancedIndirect(ID3D11Buffer *p
 
       RecordDrawStats(true, true, draw.numInstances);
 
-      m_ResourceUses[GetIDForResource(argBuffer)].push_back(EventUsage(m_CurEventID, eUsage_Indirect));
+      m_ResourceUses[GetIDForResource(argBuffer)].push_back(
+          EventUsage(m_CurEventID, ResourceUsage::Indirect));
     }
 
     draw.name = name;
 
-    draw.flags |= eDraw_Drawcall | eDraw_Instanced | eDraw_Indirect;
+    draw.flags |= DrawFlags::Drawcall | DrawFlags::Instanced | DrawFlags::Indirect;
 
     AddDrawcall(draw, true);
   }
@@ -4459,7 +4462,7 @@ bool WrappedID3D11DeviceContext::Serialise_CSSetConstantBuffers(UINT StartSlot_,
       Buffers[i] = UNWRAP(WrappedID3D11Buffer, Buffers[i]);
 
     if(m_State == READING)
-      RecordConstantStats(eShaderStage_Compute, NumBuffers, Buffers);
+      RecordConstantStats(ShaderStage::Compute, NumBuffers, Buffers);
 
     m_pRealContext->CSSetConstantBuffers(StartSlot, NumBuffers, Buffers);
     VerifyState();
@@ -4533,7 +4536,7 @@ bool WrappedID3D11DeviceContext::Serialise_CSSetShaderResources(
       Views[i] = UNWRAP(WrappedID3D11ShaderResourceView1, Views[i]);
 
     if(m_State == READING)
-      RecordResourceStats(eShaderStage_Compute, NumViews, Views);
+      RecordResourceStats(ShaderStage::Compute, NumViews, Views);
 
     m_pRealContext->CSSetShaderResources(StartSlot, NumViews, Views);
     VerifyState();
@@ -4760,7 +4763,7 @@ bool WrappedID3D11DeviceContext::Serialise_CSSetShader(ID3D11ComputeShader *pSha
       pSH = (ID3D11DeviceChild *)m_pDevice->GetResourceManager()->GetLiveResource(Shader);
 
     if(m_State == READING)
-      RecordShaderStats(eShaderStage_Compute, m_CurrentPipelineState->CS.Shader, pSH);
+      RecordShaderStats(ShaderStage::Compute, m_CurrentPipelineState->CS.Shader, pSH);
 
     m_CurrentPipelineState->ChangeRefRead(m_CurrentPipelineState->CS.Shader, pSH);
     m_pRealContext->CSSetShader(UNWRAP(WrappedID3D11Shader<ID3D11ComputeShader>, pSH), Instances,
@@ -4832,9 +4835,9 @@ bool WrappedID3D11DeviceContext::Serialise_ExecuteCommandList(ID3D11CommandList 
   {
     string name = "ExecuteCommandList(" + ToStr::Get(cmdList) + ")";
 
-    FetchDrawcall draw;
+    DrawcallDescription draw;
     draw.name = name;
-    draw.flags |= eDraw_CmdList;
+    draw.flags |= DrawFlags::CmdList;
 
     AddDrawcall(draw, true);
   }
@@ -4940,27 +4943,27 @@ bool WrappedID3D11DeviceContext::Serialise_Dispatch(UINT ThreadGroupCountX_,
     string name = "Dispatch(" + ToStr::Get(ThreadGroupCountX) + ", " +
                   ToStr::Get(ThreadGroupCountY) + ", " + ToStr::Get(ThreadGroupCountZ) + ")";
 
-    FetchDrawcall draw;
+    DrawcallDescription draw;
     draw.name = name;
-    draw.flags |= eDraw_Dispatch;
+    draw.flags |= DrawFlags::Dispatch;
 
     draw.dispatchDimension[0] = ThreadGroupCountX;
     draw.dispatchDimension[1] = ThreadGroupCountY;
     draw.dispatchDimension[2] = ThreadGroupCountZ;
 
     if(ThreadGroupCountX == 0)
-      m_pDevice->AddDebugMessage(eDbgCategory_Execution, eDbgSeverity_Medium,
-                                 eDbgSource_IncorrectAPIUse,
+      m_pDevice->AddDebugMessage(MessageCategory::Execution, MessageSeverity::Medium,
+                                 MessageSource::IncorrectAPIUse,
                                  "Dispatch call has ThreadGroup count X=0. This will do nothing, "
                                  "which is unusual for a non-indirect Dispatch. Did you mean X=1?");
     if(ThreadGroupCountY == 0)
-      m_pDevice->AddDebugMessage(eDbgCategory_Execution, eDbgSeverity_Medium,
-                                 eDbgSource_IncorrectAPIUse,
+      m_pDevice->AddDebugMessage(MessageCategory::Execution, MessageSeverity::Medium,
+                                 MessageSource::IncorrectAPIUse,
                                  "Dispatch call has ThreadGroup count Y=0. This will do nothing, "
                                  "which is unusual for a non-indirect Dispatch. Did you mean Y=1?");
     if(ThreadGroupCountZ == 0)
-      m_pDevice->AddDebugMessage(eDbgCategory_Execution, eDbgSeverity_Medium,
-                                 eDbgSource_IncorrectAPIUse,
+      m_pDevice->AddDebugMessage(MessageCategory::Execution, MessageSeverity::Medium,
+                                 MessageSource::IncorrectAPIUse,
                                  "Dispatch call has ThreadGroup count Z=0. This will do nothing, "
                                  "which is unusual for a non-indirect Dispatch. Did you mean Z=1?");
 
@@ -5019,7 +5022,7 @@ bool WrappedID3D11DeviceContext::Serialise_DispatchIndirect(ID3D11Buffer *pBuffe
   {
     AddEvent(desc);
 
-    FetchDrawcall draw;
+    DrawcallDescription draw;
 
     string name = "DispatchIndirect(-, -, -)";
     if(m_pDevice->GetResourceManager()->HasLiveResource(BufferForArgs))
@@ -5039,11 +5042,12 @@ bool WrappedID3D11DeviceContext::Serialise_DispatchIndirect(ID3D11Buffer *pBuffe
       draw.dispatchDimension[1] = uargs[1];
       draw.dispatchDimension[2] = uargs[2];
 
-      m_ResourceUses[GetIDForResource(argBuffer)].push_back(EventUsage(m_CurEventID, eUsage_Indirect));
+      m_ResourceUses[GetIDForResource(argBuffer)].push_back(
+          EventUsage(m_CurEventID, ResourceUsage::Indirect));
     }
 
     draw.name = name;
-    draw.flags |= eDraw_Dispatch | eDraw_Indirect;
+    draw.flags |= DrawFlags::Dispatch | DrawFlags::Indirect;
 
     AddDrawcall(draw, true);
   }
@@ -5095,9 +5099,9 @@ bool WrappedID3D11DeviceContext::Serialise_FinishCommandList(BOOL RestoreDeferre
     AddEvent(desc);
     string name = "FinishCommandList() -> " + ToStr::Get(cmdList);
 
-    FetchDrawcall draw;
+    DrawcallDescription draw;
     draw.name = name;
-    draw.flags |= eDraw_CmdList;
+    draw.flags |= DrawFlags::CmdList;
 
     AddDrawcall(draw, true);
   }
@@ -5110,7 +5114,8 @@ HRESULT WrappedID3D11DeviceContext::FinishCommandList(BOOL RestoreDeferredContex
 {
   if(GetType() == D3D11_DEVICE_CONTEXT_IMMEDIATE)
   {
-    m_pDevice->AddDebugMessage(eDbgCategory_Execution, eDbgSeverity_High, eDbgSource_IncorrectAPIUse,
+    m_pDevice->AddDebugMessage(MessageCategory::Execution, MessageSeverity::High,
+                               MessageSource::IncorrectAPIUse,
                                "It is invalid to call FinishCommandList on an immediate context. "
                                "The call has been dropped from the capture.");
     return DXGI_ERROR_INVALID_CALL;
@@ -5163,6 +5168,7 @@ HRESULT WrappedID3D11DeviceContext::FinishCommandList(BOOL RestoreDeferredContex
     RDCASSERT(r);
 
     m_ContextRecord->SwapChunks(r);
+    wrapped->SetReferences(m_DeferredReferences);
     wrapped->SetDirtyResources(m_DeferredDirty);
 
     // if we're supposed to restore, save the state to restore to now
@@ -5307,9 +5313,9 @@ bool WrappedID3D11DeviceContext::Serialise_CopySubresourceRegion(
     AddEvent(desc);
     string name = "CopySubresourceRegion(" + dstName + ", " + srcName + ")";
 
-    FetchDrawcall draw;
+    DrawcallDescription draw;
     draw.name = name;
-    draw.flags |= eDraw_Copy;
+    draw.flags |= DrawFlags::Copy;
 
     if(m_pDevice->GetResourceManager()->HasLiveResource(Destination) &&
        m_pDevice->GetResourceManager()->HasLiveResource(Source))
@@ -5320,14 +5326,14 @@ bool WrappedID3D11DeviceContext::Serialise_CopySubresourceRegion(
       if(Destination == Source)
       {
         m_ResourceUses[m_pDevice->GetResourceManager()->GetLiveID(Destination)].push_back(
-            EventUsage(m_CurEventID, eUsage_Copy));
+            EventUsage(m_CurEventID, ResourceUsage::Copy));
       }
       else
       {
         m_ResourceUses[m_pDevice->GetResourceManager()->GetLiveID(Destination)].push_back(
-            EventUsage(m_CurEventID, eUsage_CopyDst));
+            EventUsage(m_CurEventID, ResourceUsage::CopyDst));
         m_ResourceUses[m_pDevice->GetResourceManager()->GetLiveID(Source)].push_back(
-            EventUsage(m_CurEventID, eUsage_CopySrc));
+            EventUsage(m_CurEventID, ResourceUsage::CopySrc));
       }
     }
 
@@ -5456,9 +5462,9 @@ bool WrappedID3D11DeviceContext::Serialise_CopyResource(ID3D11Resource *pDstReso
     AddEvent(desc);
     string name = "CopyResource(" + dstName + ", " + srcName + ")";
 
-    FetchDrawcall draw;
+    DrawcallDescription draw;
     draw.name = name;
-    draw.flags |= eDraw_Copy;
+    draw.flags |= DrawFlags::Copy;
 
     if(m_pDevice->GetResourceManager()->HasLiveResource(Destination) &&
        m_pDevice->GetResourceManager()->HasLiveResource(Source))
@@ -5469,14 +5475,14 @@ bool WrappedID3D11DeviceContext::Serialise_CopyResource(ID3D11Resource *pDstReso
       if(Destination == Source)
       {
         m_ResourceUses[m_pDevice->GetResourceManager()->GetLiveID(Destination)].push_back(
-            EventUsage(m_CurEventID, eUsage_Copy));
+            EventUsage(m_CurEventID, ResourceUsage::Copy));
       }
       else
       {
         m_ResourceUses[m_pDevice->GetResourceManager()->GetLiveID(Destination)].push_back(
-            EventUsage(m_CurEventID, eUsage_CopyDst));
+            EventUsage(m_CurEventID, ResourceUsage::CopyDst));
         m_ResourceUses[m_pDevice->GetResourceManager()->GetLiveID(Source)].push_back(
-            EventUsage(m_CurEventID, eUsage_CopySrc));
+            EventUsage(m_CurEventID, ResourceUsage::CopySrc));
       }
     }
 
@@ -5996,9 +6002,9 @@ bool WrappedID3D11DeviceContext::Serialise_ResolveSubresource(ID3D11Resource *pD
     AddEvent(desc);
     string name = "ResolveSubresource(" + dstName + ", " + srcName + ")";
 
-    FetchDrawcall draw;
+    DrawcallDescription draw;
     draw.name = name;
-    draw.flags |= eDraw_Resolve;
+    draw.flags |= DrawFlags::Resolve;
 
     if(m_pDevice->GetResourceManager()->HasLiveResource(DestResource) &&
        m_pDevice->GetResourceManager()->HasLiveResource(SourceResource))
@@ -6009,14 +6015,14 @@ bool WrappedID3D11DeviceContext::Serialise_ResolveSubresource(ID3D11Resource *pD
       if(DestResource == SourceResource)
       {
         m_ResourceUses[m_pDevice->GetResourceManager()->GetLiveID(DestResource)].push_back(
-            EventUsage(m_CurEventID, eUsage_Resolve));
+            EventUsage(m_CurEventID, ResourceUsage::Resolve));
       }
       else
       {
         m_ResourceUses[m_pDevice->GetResourceManager()->GetLiveID(DestResource)].push_back(
-            EventUsage(m_CurEventID, eUsage_ResolveDst));
+            EventUsage(m_CurEventID, ResourceUsage::ResolveDst));
         m_ResourceUses[m_pDevice->GetResourceManager()->GetLiveID(SourceResource)].push_back(
-            EventUsage(m_CurEventID, eUsage_ResolveSrc));
+            EventUsage(m_CurEventID, ResourceUsage::ResolveSrc));
       }
     }
 
@@ -6140,7 +6146,8 @@ bool WrappedID3D11DeviceContext::Serialise_GenerateMips(ID3D11ShaderResourceView
           (WrappedID3D11ShaderResourceView1 *)m_pDevice->GetResourceManager()->GetLiveResource(
               ShaderResourceView);
       id = view->GetResourceResID();
-      m_ResourceUses[id].push_back(EventUsage(m_CurEventID, eUsage_GenMips, view->GetResourceID()));
+      m_ResourceUses[id].push_back(
+          EventUsage(m_CurEventID, ResourceUsage::GenMips, view->GetResourceID()));
       id = m_pDevice->GetResourceManager()->GetOriginalID(id);
     }
 
@@ -6152,9 +6159,9 @@ bool WrappedID3D11DeviceContext::Serialise_GenerateMips(ID3D11ShaderResourceView
     AddEvent(desc);
     string name = "GenerateMips(" + resName + ")";
 
-    FetchDrawcall draw;
+    DrawcallDescription draw;
     draw.name = name;
-    draw.flags |= eDraw_GenMips;
+    draw.flags |= DrawFlags::GenMips;
 
     AddDrawcall(draw, true);
   }
@@ -6312,9 +6319,9 @@ bool WrappedID3D11DeviceContext::Serialise_ClearRenderTargetView(
     string name = "ClearRenderTargetView(" + ToStr::Get(Color[0]) + ", " + ToStr::Get(Color[1]) +
                   ", " + ToStr::Get(Color[2]) + ", " + ToStr::Get(Color[3]) + ")";
 
-    FetchDrawcall draw;
+    DrawcallDescription draw;
     draw.name = name;
-    draw.flags |= eDraw_Clear | eDraw_ClearColour;
+    draw.flags |= DrawFlags::Clear | DrawFlags::ClearColor;
 
     AddDrawcall(draw, true);
 
@@ -6323,7 +6330,7 @@ bool WrappedID3D11DeviceContext::Serialise_ClearRenderTargetView(
       WrappedID3D11RenderTargetView1 *view =
           (WrappedID3D11RenderTargetView1 *)m_pDevice->GetResourceManager()->GetLiveResource(View);
       m_ResourceUses[view->GetResourceResID()].push_back(
-          EventUsage(m_CurEventID, eUsage_Clear, view->GetResourceID()));
+          EventUsage(m_CurEventID, ResourceUsage::Clear, view->GetResourceID()));
     }
   }
 
@@ -6493,10 +6500,10 @@ bool WrappedID3D11DeviceContext::Serialise_ClearUnorderedAccessViewUint(
                   ToStr::Get(Values[1]) + ", " + ToStr::Get(Values[2]) + ", " +
                   ToStr::Get(Values[3]) + ")";
 
-    FetchDrawcall draw;
+    DrawcallDescription draw;
     draw.name = name;
 
-    draw.flags |= eDraw_Clear;
+    draw.flags |= DrawFlags::Clear;
 
     AddDrawcall(draw, true);
 
@@ -6505,7 +6512,7 @@ bool WrappedID3D11DeviceContext::Serialise_ClearUnorderedAccessViewUint(
       WrappedID3D11UnorderedAccessView1 *view =
           (WrappedID3D11UnorderedAccessView1 *)m_pDevice->GetResourceManager()->GetLiveResource(View);
       m_ResourceUses[view->GetResourceResID()].push_back(
-          EventUsage(m_CurEventID, eUsage_Clear, view->GetResourceID()));
+          EventUsage(m_CurEventID, ResourceUsage::Clear, view->GetResourceID()));
     }
   }
 
@@ -6666,9 +6673,9 @@ bool WrappedID3D11DeviceContext::Serialise_ClearUnorderedAccessViewFloat(
                   ToStr::Get(Values[1]) + ", " + ToStr::Get(Values[2]) + ", " +
                   ToStr::Get(Values[3]) + ", " + ")";
 
-    FetchDrawcall draw;
+    DrawcallDescription draw;
     draw.name = (name);
-    draw.flags |= eDraw_Clear;
+    draw.flags |= DrawFlags::Clear;
 
     AddDrawcall(draw, true);
 
@@ -6677,7 +6684,7 @@ bool WrappedID3D11DeviceContext::Serialise_ClearUnorderedAccessViewFloat(
       WrappedID3D11UnorderedAccessView1 *view =
           (WrappedID3D11UnorderedAccessView1 *)m_pDevice->GetResourceManager()->GetLiveResource(View);
       m_ResourceUses[view->GetResourceResID()].push_back(
-          EventUsage(m_CurEventID, eUsage_Clear, view->GetResourceID()));
+          EventUsage(m_CurEventID, ResourceUsage::Clear, view->GetResourceID()));
     }
   }
 
@@ -6824,9 +6831,9 @@ bool WrappedID3D11DeviceContext::Serialise_ClearDepthStencilView(
     AddEvent(desc);
     string name = "ClearDepthStencilView(" + ToStr::Get(Depth) + ", " + ToStr::Get(Stencil) + ")";
 
-    FetchDrawcall draw;
+    DrawcallDescription draw;
     draw.name = name;
-    draw.flags |= eDraw_Clear | eDraw_ClearDepthStencil;
+    draw.flags |= DrawFlags::Clear | DrawFlags::ClearDepthStencil;
 
     AddDrawcall(draw, true);
 
@@ -6835,7 +6842,7 @@ bool WrappedID3D11DeviceContext::Serialise_ClearDepthStencilView(
       WrappedID3D11DepthStencilView *view =
           (WrappedID3D11DepthStencilView *)m_pDevice->GetResourceManager()->GetLiveResource(View);
       m_ResourceUses[view->GetResourceResID()].push_back(
-          EventUsage(m_CurEventID, eUsage_Clear, view->GetResourceID()));
+          EventUsage(m_CurEventID, ResourceUsage::Clear, view->GetResourceID()));
     }
   }
 

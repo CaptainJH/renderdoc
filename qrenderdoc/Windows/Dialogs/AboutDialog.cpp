@@ -26,12 +26,34 @@
 #include <QApplication>
 #include <QLabel>
 #include <QString>
+#include "Code/QRDUtils.h"
 #include "ui_AboutDialog.h"
+#include "version.h"
 
 AboutDialog::AboutDialog(QWidget *parent) : QDialog(parent), ui(new Ui::AboutDialog)
 {
   ui->setupUi(this);
-  ui->version->setText("Version v" + qApp->applicationVersion());
+
+  QString hash = lit(GIT_COMMIT_HASH);
+
+  if(hash[0] == QLatin1Char('N') && hash[1] == QLatin1Char('O'))
+  {
+    ui->version->setText(
+        QFormatStr("Version %1 (built from unknown source)").arg(lit(FULL_VERSION_STRING)));
+  }
+  else
+  {
+    ui->version->setText(
+        QFormatStr("Version %1 (built from <a href='%2'>%3</a>)")
+            .arg(lit(FULL_VERSION_STRING))
+            .arg(lit("https://github.com/baldurk/renderdoc/commit/" GIT_COMMIT_HASH))
+            .arg(lit(GIT_COMMIT_HASH).left(8)));
+  }
+
+#if defined(DISTRIBUTION_VERSION)
+  ui->owner->setText(QFormatStr("Baldur Karlsson - Packaged for %1").arg(lit(DISTRIBUTION_NAME)));
+  ui->contact->setText(QFormatStr("<a href='%1'>%1</a>").arg(lit(DISTRIBUTION_CONTACT)));
+#endif
 
   setWindowFlags(windowFlags() & ~Qt::WindowContextHelpButtonHint);
 }

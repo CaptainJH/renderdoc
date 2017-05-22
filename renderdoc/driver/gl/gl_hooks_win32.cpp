@@ -44,14 +44,15 @@
 #define HookExtension(funcPtrType, function)         \
   if(!strcmp(func, STRINGIZE(function)))             \
   {                                                  \
-    glhooks.GL.function = (funcPtrType)realFunc;     \
+    if(glhooks.GL.function == NULL)                  \
+      glhooks.GL.function = (funcPtrType)realFunc;   \
     return (PROC)&glhooks.CONCAT(function, _hooked); \
   }
 
 #define HookExtensionAlias(funcPtrType, function, alias) \
   if(!strcmp(func, STRINGIZE(alias)))                    \
   {                                                      \
-    if(OpenGLHook::glhooks.GL.function == NULL)          \
+    if(glhooks.GL.function == NULL)                      \
       glhooks.GL.function = (funcPtrType)realFunc;       \
     return (PROC)&glhooks.CONCAT(function, _hooked);     \
   }
@@ -431,7 +432,7 @@ public:
   {
     GLWindowingData ret;
 
-    RDCASSERT(system == eWindowingSystem_Win32 || system == eWindowingSystem_Unknown, system);
+    RDCASSERT(system == WindowingSystem::Win32 || system == WindowingSystem::Unknown, system);
 
     HWND w = (HWND)data;
 
@@ -1070,8 +1071,7 @@ private:
     // see gl_emulated.cpp
     glEmulate::EmulateUnsupportedFunctions(&GL);
 
-    if(RenderDoc::Inst().IsReplayApp())
-      glEmulate::EmulateRequiredExtensions(&GL, &GL);
+    glEmulate::EmulateRequiredExtensions(&GL);
 
     return true;
   }

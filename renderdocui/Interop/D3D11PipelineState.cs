@@ -119,8 +119,7 @@ namespace renderdoc
             {
                 public ResourceId View;
                 public ResourceId Resource;
-                [CustomMarshalAs(CustomUnmanagedType.UTF8TemplatedString)]
-                public string Type;
+                public ShaderResourceType Type;
                 [CustomMarshalAs(CustomUnmanagedType.CustomClass)]
                 public ResourceFormat Format;
 
@@ -128,11 +127,7 @@ namespace renderdoc
                 public UInt32 BufferStructCount;
                 public UInt32 ElementSize;
 
-                // Buffer (SRV)
-                public UInt32 ElementOffset;
-                public UInt32 ElementWidth;
-
-                // Buffer (UAV)
+                // Buffer
                 public UInt32 FirstElement;
                 public UInt32 NumElements;
 
@@ -161,20 +156,23 @@ namespace renderdoc
                 public string SamplerName;
                 public bool customSamplerName;
 
-                [CustomMarshalAs(CustomUnmanagedType.UTF8TemplatedString)]
-                public string AddressU, AddressV, AddressW;
+                public AddressMode AddressU, AddressV, AddressW;
                 [CustomMarshalAs(CustomUnmanagedType.FixedArray, FixedLength = 4)]
                 public float[] BorderColor;
-                [CustomMarshalAs(CustomUnmanagedType.UTF8TemplatedString)]
-                public string Comparison;
-                [CustomMarshalAs(CustomUnmanagedType.UTF8TemplatedString)]
-                public string Filter;
-                public bool UseBorder;
-                public bool UseComparison;
+                public CompareFunc Comparison;
+                [CustomMarshalAs(CustomUnmanagedType.CustomClass)]
+                public TextureFilter Filter;
                 public UInt32 MaxAniso;
                 public float MaxLOD;
                 public float MinLOD;
                 public float MipLODBias;
+
+                public bool UseBorder()
+                {
+                    return AddressU == AddressMode.ClampBorder ||
+                           AddressV == AddressMode.ClampBorder ||
+                           AddressW == AddressMode.ClampBorder;
+                }
             };
             [CustomMarshalAs(CustomUnmanagedType.TemplatedArray)]
             public Sampler[] Samplers;
@@ -272,27 +270,22 @@ namespace renderdoc
             {
                 public ResourceId State;
                 public bool DepthEnable;
-                [CustomMarshalAs(CustomUnmanagedType.UTF8TemplatedString)]
-                public string DepthFunc;
+                public CompareFunc DepthFunc;
                 public bool DepthWrites;
                 public bool StencilEnable;
                 public byte StencilReadMask;
                 public byte StencilWriteMask;
 
                 [StructLayout(LayoutKind.Sequential)]
-                public class StencilOp
+                public class StencilFace
                 {
-                    [CustomMarshalAs(CustomUnmanagedType.UTF8TemplatedString)]
-                    public string FailOp;
-                    [CustomMarshalAs(CustomUnmanagedType.UTF8TemplatedString)]
-                    public string DepthFailOp;
-                    [CustomMarshalAs(CustomUnmanagedType.UTF8TemplatedString)]
-                    public string PassOp;
-                    [CustomMarshalAs(CustomUnmanagedType.UTF8TemplatedString)]
-                    public string Func;
+                    public StencilOp FailOp;
+                    public StencilOp DepthFailOp;
+                    public StencilOp PassOp;
+                    public CompareFunc Func;
                 };
                 [CustomMarshalAs(CustomUnmanagedType.CustomClass)]
-                public StencilOp m_FrontFace, m_BackFace;
+                public StencilFace m_FrontFace, m_BackFace;
 
                 public UInt32 StencilRef;
             };
@@ -311,20 +304,16 @@ namespace renderdoc
                 public class RTBlend
                 {
                     [StructLayout(LayoutKind.Sequential)]
-                    public class BlendOp
+                    public class BlendEquation
                     {
-                        [CustomMarshalAs(CustomUnmanagedType.UTF8TemplatedString)]
-                        public string Source;
-                        [CustomMarshalAs(CustomUnmanagedType.UTF8TemplatedString)]
-                        public string Destination;
-                        [CustomMarshalAs(CustomUnmanagedType.UTF8TemplatedString)]
-                        public string Operation;
+                        public BlendMultiplier Source;
+                        public BlendMultiplier Destination;
+                        public BlendOp Operation;
                     };
                     [CustomMarshalAs(CustomUnmanagedType.CustomClass)]
-                    public BlendOp m_Blend, m_AlphaBlend;
+                    public BlendEquation m_Blend, m_AlphaBlend;
 
-                    [CustomMarshalAs(CustomUnmanagedType.UTF8TemplatedString)]
-                    public string LogicOp;
+                    public LogicOp Logic;
 
                     public bool Enabled;
                     public bool LogicEnabled;
