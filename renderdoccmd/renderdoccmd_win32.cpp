@@ -233,7 +233,7 @@ void Daemonise()
   // nothing really to do, windows version of renderdoccmd is already 'detached'
 }
 
-void DisplayRendererPreview(ReplayRenderer *renderer, TextureDisplay &displayCfg, uint32_t width,
+void DisplayRendererPreview(IReplayController *renderer, TextureDisplay &displayCfg, uint32_t width,
                             uint32_t height)
 {
   RECT wr = {0, 0, (LONG)width, (LONG)height};
@@ -249,13 +249,9 @@ void DisplayRendererPreview(ReplayRenderer *renderer, TextureDisplay &displayCfg
   ShowWindow(wnd, SW_SHOW);
   UpdateWindow(wnd);
 
-  ReplayOutput *out =
-      ReplayRenderer_CreateOutput(renderer, eWindowingSystem_Win32, wnd, eOutputType_TexDisplay);
+  IReplayOutput *out = renderer->CreateOutput(WindowingSystem::Win32, wnd, ReplayOutputType::Texture);
 
-  OutputConfig c = {eOutputType_TexDisplay};
-
-  ReplayOutput_SetOutputConfig(out, c);
-  ReplayOutput_SetTextureDisplay(out, displayCfg);
+  out->SetTextureDisplay(displayCfg);
 
   MSG msg;
   ZeroMemory(&msg, sizeof(msg));
@@ -274,8 +270,8 @@ void DisplayRendererPreview(ReplayRenderer *renderer, TextureDisplay &displayCfg
       break;
 
     // set to random event beyond the end of the frame to ensure output is marked as dirty
-    ReplayRenderer_SetFrameEvent(renderer, 10000000, true);
-    ReplayOutput_Display(out);
+    renderer->SetFrameEvent(10000000, true);
+    out->Display();
 
     Sleep(40);
   }

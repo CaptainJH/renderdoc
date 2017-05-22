@@ -26,6 +26,17 @@
 #include "d3d12_command_list.h"
 #include "d3d12_resources.h"
 
+bool WrappedID3D12CommandQueue::Serialise_UpdateTileMappings(
+    ID3D12Resource *pResource, UINT NumResourceRegions,
+    const D3D12_TILED_RESOURCE_COORDINATE *pResourceRegionStartCoordinates,
+    const D3D12_TILE_REGION_SIZE *pResourceRegionSizes, ID3D12Heap *pHeap, UINT NumRanges,
+    const D3D12_TILE_RANGE_FLAGS *pRangeFlags, const UINT *pHeapRangeStartOffsets,
+    const UINT *pRangeTileCounts, D3D12_TILE_MAPPING_FLAGS Flags)
+{
+  D3D12NOTIMP("Tiled Resources");
+  return true;
+}
+
 void STDMETHODCALLTYPE WrappedID3D12CommandQueue::UpdateTileMappings(
     ID3D12Resource *pResource, UINT NumResourceRegions,
     const D3D12_TILED_RESOURCE_COORDINATE *pResourceRegionStartCoordinates,
@@ -37,6 +48,15 @@ void STDMETHODCALLTYPE WrappedID3D12CommandQueue::UpdateTileMappings(
   m_pReal->UpdateTileMappings(Unwrap(pResource), NumResourceRegions, pResourceRegionStartCoordinates,
                               pResourceRegionSizes, Unwrap(pHeap), NumRanges, pRangeFlags,
                               pHeapRangeStartOffsets, pRangeTileCounts, Flags);
+}
+
+bool WrappedID3D12CommandQueue::Serialise_CopyTileMappings(
+    ID3D12Resource *pDstResource, const D3D12_TILED_RESOURCE_COORDINATE *pDstRegionStartCoordinate,
+    ID3D12Resource *pSrcResource, const D3D12_TILED_RESOURCE_COORDINATE *pSrcRegionStartCoordinate,
+    const D3D12_TILE_REGION_SIZE *pRegionSize, D3D12_TILE_MAPPING_FLAGS Flags)
+{
+  D3D12NOTIMP("Tiled Resources");
+  return true;
 }
 
 void STDMETHODCALLTYPE WrappedID3D12CommandQueue::CopyTileMappings(
@@ -101,17 +121,17 @@ bool WrappedID3D12CommandQueue::Serialise_ExecuteCommandLists(UINT NumCommandLis
       if(m_State >= WRITING)
         msgDesc = debugMessages[i].description.elems;
 
-      SERIALISE_ELEMENT(uint32_t, Category, debugMessages[i].category);
-      SERIALISE_ELEMENT(uint32_t, Severity, debugMessages[i].severity);
+      SERIALISE_ELEMENT(MessageCategory, Category, debugMessages[i].category);
+      SERIALISE_ELEMENT(MessageSeverity, Severity, debugMessages[i].severity);
       SERIALISE_ELEMENT(uint32_t, ID, debugMessages[i].messageID);
       SERIALISE_ELEMENT(string, Description, msgDesc);
 
       if(m_State == READING)
       {
         DebugMessage msg;
-        msg.source = eDbgSource_API;
-        msg.category = (DebugMessageCategory)Category;
-        msg.severity = (DebugMessageSeverity)Severity;
+        msg.source = MessageSource::API;
+        msg.category = Category;
+        msg.severity = Severity;
         msg.messageID = ID;
         msg.description = Description;
 
@@ -183,9 +203,9 @@ bool WrappedID3D12CommandQueue::Serialise_ExecuteCommandLists(UINT NumCommandLis
                                       ToStr::Get(cmdIds[c]).c_str());
 
       // add a fake marker
-      FetchDrawcall draw;
+      DrawcallDescription draw;
       draw.name = name;
-      draw.flags = eDraw_PassBoundary | eDraw_BeginPass;
+      draw.flags = DrawFlags::PassBoundary | DrawFlags::BeginPass;
       m_Cmd.AddEvent(name);
       m_Cmd.AddDrawcall(draw, true);
       m_Cmd.m_RootEventID++;
@@ -222,7 +242,7 @@ bool WrappedID3D12CommandQueue::Serialise_ExecuteCommandLists(UINT NumCommandLis
       name = StringFormat::Fmt("=> %s[%u]: Close(%s)", basename.c_str(), c,
                                ToStr::Get(cmdIds[c]).c_str());
       draw.name = name;
-      draw.flags = eDraw_PassBoundary | eDraw_EndPass;
+      draw.flags = DrawFlags::PassBoundary | DrawFlags::EndPass;
       m_Cmd.AddEvent(name);
       m_Cmd.AddDrawcall(draw, true);
       m_Cmd.m_RootEventID++;

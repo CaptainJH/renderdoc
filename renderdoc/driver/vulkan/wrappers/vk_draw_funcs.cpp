@@ -107,7 +107,8 @@ bool WrappedVulkan::Serialise_vkCmdDraw(Serialiser *localSerialiser, VkCommandBu
 
     if(!IsDrawInRenderPass())
     {
-      AddDebugMessage(eDbgCategory_Execution, eDbgSeverity_High, eDbgSource_IncorrectAPIUse,
+      AddDebugMessage(MessageCategory::Execution, MessageSeverity::High,
+                      MessageSource::IncorrectAPIUse,
                       "Drawcall in happening outside of render pass, or in secondary command "
                       "buffer without RENDER_PASS_CONTINUE_BIT");
     }
@@ -116,7 +117,7 @@ bool WrappedVulkan::Serialise_vkCmdDraw(Serialiser *localSerialiser, VkCommandBu
       AddEvent(desc);
       string name = "vkCmdDraw(" + ToStr::Get(vtxCount) + "," + ToStr::Get(instCount) + ")";
 
-      FetchDrawcall draw;
+      DrawcallDescription draw;
       draw.name = name;
       draw.numIndices = vtxCount;
       draw.numInstances = instCount;
@@ -124,7 +125,7 @@ bool WrappedVulkan::Serialise_vkCmdDraw(Serialiser *localSerialiser, VkCommandBu
       draw.vertexOffset = firstVtx;
       draw.instanceOffset = firstInst;
 
-      draw.flags |= eDraw_Drawcall | eDraw_Instanced;
+      draw.flags |= DrawFlags::Drawcall | DrawFlags::Instanced;
 
       AddDrawcall(draw, true);
     }
@@ -203,7 +204,8 @@ bool WrappedVulkan::Serialise_vkCmdDrawIndexed(Serialiser *localSerialiser,
 
     if(!IsDrawInRenderPass())
     {
-      AddDebugMessage(eDbgCategory_Execution, eDbgSeverity_High, eDbgSource_IncorrectAPIUse,
+      AddDebugMessage(MessageCategory::Execution, MessageSeverity::High,
+                      MessageSource::IncorrectAPIUse,
                       "Drawcall in happening outside of render pass, or in secondary command "
                       "buffer without RENDER_PASS_CONTINUE_BIT");
     }
@@ -212,7 +214,7 @@ bool WrappedVulkan::Serialise_vkCmdDrawIndexed(Serialiser *localSerialiser,
       AddEvent(desc);
       string name = "vkCmdDrawIndexed(" + ToStr::Get(idxCount) + "," + ToStr::Get(instCount) + ")";
 
-      FetchDrawcall draw;
+      DrawcallDescription draw;
       draw.name = name;
       draw.numIndices = idxCount;
       draw.numInstances = instCount;
@@ -220,7 +222,7 @@ bool WrappedVulkan::Serialise_vkCmdDrawIndexed(Serialiser *localSerialiser,
       draw.baseVertex = vtxOffs;
       draw.instanceOffset = firstInst;
 
-      draw.flags |= eDraw_Drawcall | eDraw_UseIBuffer | eDraw_Instanced;
+      draw.flags |= DrawFlags::Drawcall | DrawFlags::UseIBuffer | DrawFlags::Instanced;
 
       AddDrawcall(draw, true);
     }
@@ -329,7 +331,7 @@ bool WrappedVulkan::Serialise_vkCmdDrawIndirect(Serialiser *localSerialiser,
       {
         for(uint32_t i = 0; i < cnt; i++)
         {
-          uint32_t eventID = HandlePreCallback(commandBuffer, eDraw_Drawcall, i + 1);
+          uint32_t eventID = HandlePreCallback(commandBuffer, DrawFlags::Drawcall, i + 1);
 
           ObjDisp(commandBuffer)->CmdDrawIndirect(Unwrap(commandBuffer), Unwrap(buffer), offs, 1, strd);
 
@@ -370,7 +372,7 @@ bool WrappedVulkan::Serialise_vkCmdDrawIndirect(Serialiser *localSerialiser,
 
         if(IsDrawInRenderPass())
         {
-          uint32_t eventID = HandlePreCallback(commandBuffer, eDraw_Drawcall, drawidx + 1);
+          uint32_t eventID = HandlePreCallback(commandBuffer, DrawFlags::Drawcall, drawidx + 1);
 
           ObjDisp(commandBuffer)->CmdDrawIndirect(Unwrap(commandBuffer), Unwrap(buffer), offs, cnt, strd);
 
@@ -400,7 +402,8 @@ bool WrappedVulkan::Serialise_vkCmdDrawIndirect(Serialiser *localSerialiser,
 
     if(!IsDrawInRenderPass())
     {
-      AddDebugMessage(eDbgCategory_Execution, eDbgSeverity_High, eDbgSource_IncorrectAPIUse,
+      AddDebugMessage(MessageCategory::Execution, MessageSeverity::High,
+                      MessageSource::IncorrectAPIUse,
                       "Drawcall in happening outside of render pass, or in secondary command "
                       "buffer without RENDER_PASS_CONTINUE_BIT");
     }
@@ -408,7 +411,7 @@ bool WrappedVulkan::Serialise_vkCmdDrawIndirect(Serialiser *localSerialiser,
     // for 'single' draws, don't do complex multi-draw just inline it
     if(cnt <= 1)
     {
-      FetchDrawcall draw;
+      DrawcallDescription draw;
 
       if(cnt == 1)
       {
@@ -432,28 +435,28 @@ bool WrappedVulkan::Serialise_vkCmdDrawIndirect(Serialiser *localSerialiser,
       AddEvent(desc);
 
       draw.name = name;
-      draw.flags = eDraw_Drawcall | eDraw_Instanced;
+      draw.flags = DrawFlags::Drawcall | DrawFlags::Instanced;
 
       AddDrawcall(draw, true);
 
       VulkanDrawcallTreeNode &drawNode = GetDrawcallStack().back()->children.back();
 
-      drawNode.resourceUsage.push_back(
-          std::make_pair(GetResID(buffer), EventUsage(drawNode.draw.eventID, eUsage_Indirect)));
+      drawNode.resourceUsage.push_back(std::make_pair(
+          GetResID(buffer), EventUsage(drawNode.draw.eventID, ResourceUsage::Indirect)));
 
       return true;
     }
 
-    FetchDrawcall draw;
+    DrawcallDescription draw;
     draw.name = name;
-    draw.flags = eDraw_MultiDraw | eDraw_PushMarker;
+    draw.flags = DrawFlags::MultiDraw | DrawFlags::PushMarker;
     AddEvent(desc);
     AddDrawcall(draw, true);
 
     VulkanDrawcallTreeNode &drawNode = GetDrawcallStack().back()->children.back();
 
-    drawNode.resourceUsage.push_back(
-        std::make_pair(GetResID(buffer), EventUsage(drawNode.draw.eventID, eUsage_Indirect)));
+    drawNode.resourceUsage.push_back(std::make_pair(
+        GetResID(buffer), EventUsage(drawNode.draw.eventID, ResourceUsage::Indirect)));
 
     m_BakedCmdBufferInfo[m_LastCmdBufferID].curEventID++;
 
@@ -468,11 +471,12 @@ bool WrappedVulkan::Serialise_vkCmdDrawIndirect(Serialiser *localSerialiser,
       {
         params = *((VkDrawIndirectCommand *)&argbuf[cmdOffs]);
         valid = true;
+        cmdOffs += sizeof(VkDrawIndirectCommand);
       }
 
       offs += strd;
 
-      FetchDrawcall multi;
+      DrawcallDescription multi;
       multi.numIndices = params.vertexCount;
       multi.numInstances = params.instanceCount;
       multi.vertexOffset = params.firstVertex;
@@ -481,7 +485,7 @@ bool WrappedVulkan::Serialise_vkCmdDrawIndirect(Serialiser *localSerialiser,
       multi.name = "vkCmdDrawIndirect[" + ToStr::Get(i) + "](<" + ToStr::Get(multi.numIndices) +
                    ", " + ToStr::Get(multi.numInstances) + ">)";
 
-      multi.flags |= eDraw_Drawcall | eDraw_Instanced | eDraw_Indirect;
+      multi.flags |= DrawFlags::Drawcall | DrawFlags::Instanced | DrawFlags::Indirect;
 
       AddEvent(multi.name.elems);
       AddDrawcall(multi, true);
@@ -490,7 +494,7 @@ bool WrappedVulkan::Serialise_vkCmdDrawIndirect(Serialiser *localSerialiser,
     }
 
     draw.name = name;
-    draw.flags = eDraw_PopMarker;
+    draw.flags = DrawFlags::PopMarker;
     AddDrawcall(draw, false);
   }
   else if(multidraw)
@@ -550,7 +554,7 @@ bool WrappedVulkan::Serialise_vkCmdDrawIndexedIndirect(Serialiser *localSerialis
     commandBuffer = GetResourceManager()->GetLiveHandle<VkCommandBuffer>(cmdid);
     buffer = GetResourceManager()->GetLiveHandle<VkBuffer>(bufid);
 
-    ObjDisp(commandBuffer)->CmdDrawIndirect(Unwrap(commandBuffer), Unwrap(buffer), offs, cnt, strd);
+    ObjDisp(commandBuffer)->CmdDrawIndexedIndirect(Unwrap(commandBuffer), Unwrap(buffer), offs, cnt, strd);
   }
   else if(m_State == EXECUTING && cnt <= 1)
   {
@@ -606,7 +610,7 @@ bool WrappedVulkan::Serialise_vkCmdDrawIndexedIndirect(Serialiser *localSerialis
       {
         for(uint32_t i = 0; i < cnt; i++)
         {
-          uint32_t eventID = HandlePreCallback(commandBuffer, eDraw_Drawcall, i + 1);
+          uint32_t eventID = HandlePreCallback(commandBuffer, DrawFlags::Drawcall, i + 1);
 
           ObjDisp(commandBuffer)
               ->CmdDrawIndexedIndirect(Unwrap(commandBuffer), Unwrap(buffer), offs, 1, strd);
@@ -661,7 +665,7 @@ bool WrappedVulkan::Serialise_vkCmdDrawIndexedIndirect(Serialiser *localSerialis
 
         if(IsDrawInRenderPass())
         {
-          uint32_t eventID = HandlePreCallback(commandBuffer, eDraw_Drawcall, drawidx + 1);
+          uint32_t eventID = HandlePreCallback(commandBuffer, DrawFlags::Drawcall, drawidx + 1);
 
           ObjDisp(commandBuffer)
               ->CmdDrawIndexedIndirect(Unwrap(commandBuffer), Unwrap(buffer), offs, cnt, strd);
@@ -692,7 +696,8 @@ bool WrappedVulkan::Serialise_vkCmdDrawIndexedIndirect(Serialiser *localSerialis
 
     if(!IsDrawInRenderPass())
     {
-      AddDebugMessage(eDbgCategory_Execution, eDbgSeverity_High, eDbgSource_IncorrectAPIUse,
+      AddDebugMessage(MessageCategory::Execution, MessageSeverity::High,
+                      MessageSource::IncorrectAPIUse,
                       "Drawcall in happening outside of render pass, or in secondary command "
                       "buffer without RENDER_PASS_CONTINUE_BIT");
     }
@@ -700,7 +705,7 @@ bool WrappedVulkan::Serialise_vkCmdDrawIndexedIndirect(Serialiser *localSerialis
     // for 'single' draws, don't do complex multi-draw just inline it
     if(cnt <= 1)
     {
-      FetchDrawcall draw;
+      DrawcallDescription draw;
 
       if(cnt == 1)
       {
@@ -725,28 +730,28 @@ bool WrappedVulkan::Serialise_vkCmdDrawIndexedIndirect(Serialiser *localSerialis
       AddEvent(desc);
 
       draw.name = name;
-      draw.flags = eDraw_Drawcall | eDraw_UseIBuffer | eDraw_Instanced;
+      draw.flags = DrawFlags::Drawcall | DrawFlags::UseIBuffer | DrawFlags::Instanced;
 
       AddDrawcall(draw, true);
 
       VulkanDrawcallTreeNode &drawNode = GetDrawcallStack().back()->children.back();
 
-      drawNode.resourceUsage.push_back(
-          std::make_pair(GetResID(buffer), EventUsage(drawNode.draw.eventID, eUsage_Indirect)));
+      drawNode.resourceUsage.push_back(std::make_pair(
+          GetResID(buffer), EventUsage(drawNode.draw.eventID, ResourceUsage::Indirect)));
 
       return true;
     }
 
-    FetchDrawcall draw;
+    DrawcallDescription draw;
     draw.name = name;
-    draw.flags = eDraw_MultiDraw | eDraw_PushMarker;
+    draw.flags = DrawFlags::MultiDraw | DrawFlags::PushMarker;
     AddEvent(desc);
     AddDrawcall(draw, true);
 
     VulkanDrawcallTreeNode &drawNode = GetDrawcallStack().back()->children.back();
 
-    drawNode.resourceUsage.push_back(
-        std::make_pair(GetResID(buffer), EventUsage(drawNode.draw.eventID, eUsage_Indirect)));
+    drawNode.resourceUsage.push_back(std::make_pair(
+        GetResID(buffer), EventUsage(drawNode.draw.eventID, ResourceUsage::Indirect)));
 
     m_BakedCmdBufferInfo[m_LastCmdBufferID].curEventID++;
 
@@ -761,11 +766,12 @@ bool WrappedVulkan::Serialise_vkCmdDrawIndexedIndirect(Serialiser *localSerialis
       {
         params = *((VkDrawIndexedIndirectCommand *)&argbuf[cmdOffs]);
         valid = true;
+        cmdOffs += sizeof(VkDrawIndexedIndirectCommand);
       }
 
       offs += strd;
 
-      FetchDrawcall multi;
+      DrawcallDescription multi;
       multi.numIndices = params.indexCount;
       multi.numInstances = params.instanceCount;
       multi.vertexOffset = params.vertexOffset;
@@ -775,7 +781,8 @@ bool WrappedVulkan::Serialise_vkCmdDrawIndexedIndirect(Serialiser *localSerialis
       multi.name = "vkCmdDrawIndexedIndirect[" + ToStr::Get(i) + "](<" +
                    ToStr::Get(multi.numIndices) + ", " + ToStr::Get(multi.numInstances) + ">)";
 
-      multi.flags |= eDraw_Drawcall | eDraw_UseIBuffer | eDraw_Instanced | eDraw_Indirect;
+      multi.flags |=
+          DrawFlags::Drawcall | DrawFlags::UseIBuffer | DrawFlags::Instanced | DrawFlags::Indirect;
 
       AddEvent(multi.name.elems);
       AddDrawcall(multi, true);
@@ -784,7 +791,7 @@ bool WrappedVulkan::Serialise_vkCmdDrawIndexedIndirect(Serialiser *localSerialis
     }
 
     draw.name = name;
-    draw.flags = eDraw_PopMarker;
+    draw.flags = DrawFlags::PopMarker;
     AddDrawcall(draw, false);
   }
   else if(multidraw)
@@ -842,7 +849,7 @@ bool WrappedVulkan::Serialise_vkCmdDispatch(Serialiser *localSerialiser,
     {
       commandBuffer = RerecordCmdBuf(cmdid);
 
-      uint32_t eventID = HandlePreCallback(commandBuffer, eDraw_Dispatch);
+      uint32_t eventID = HandlePreCallback(commandBuffer, DrawFlags::Dispatch);
 
       ObjDisp(commandBuffer)->CmdDispatch(Unwrap(commandBuffer), X, Y, Z);
 
@@ -866,13 +873,13 @@ bool WrappedVulkan::Serialise_vkCmdDispatch(Serialiser *localSerialiser,
       string name =
           "vkCmdDispatch(" + ToStr::Get(X) + "," + ToStr::Get(Y) + "," + ToStr::Get(Z) + ")";
 
-      FetchDrawcall draw;
+      DrawcallDescription draw;
       draw.name = name;
       draw.dispatchDimension[0] = X;
       draw.dispatchDimension[1] = Y;
       draw.dispatchDimension[2] = Z;
 
-      draw.flags |= eDraw_Dispatch;
+      draw.flags |= DrawFlags::Dispatch;
 
       AddDrawcall(draw, true);
     }
@@ -921,7 +928,7 @@ bool WrappedVulkan::Serialise_vkCmdDispatchIndirect(Serialiser *localSerialiser,
     {
       commandBuffer = RerecordCmdBuf(cmdid);
 
-      uint32_t eventID = HandlePreCallback(commandBuffer, eDraw_Dispatch);
+      uint32_t eventID = HandlePreCallback(commandBuffer, DrawFlags::Dispatch);
 
       ObjDisp(commandBuffer)->CmdDispatchIndirect(Unwrap(commandBuffer), Unwrap(buffer), offs);
 
@@ -958,20 +965,20 @@ bool WrappedVulkan::Serialise_vkCmdDispatchIndirect(Serialiser *localSerialiser,
       string name = "vkCmdDispatchIndirect(<" + ToStr::Get(args->x) + "," + ToStr::Get(args->y) +
                     "," + ToStr::Get(args->z) + ">)";
 
-      FetchDrawcall draw;
+      DrawcallDescription draw;
       draw.name = name;
       draw.dispatchDimension[0] = args->x;
       draw.dispatchDimension[1] = args->y;
       draw.dispatchDimension[2] = args->z;
 
-      draw.flags |= eDraw_Dispatch | eDraw_Indirect;
+      draw.flags |= DrawFlags::Dispatch | DrawFlags::Indirect;
 
       AddDrawcall(draw, true);
 
       VulkanDrawcallTreeNode &drawNode = GetDrawcallStack().back()->children.back();
 
-      drawNode.resourceUsage.push_back(
-          std::make_pair(GetResID(buffer), EventUsage(drawNode.draw.eventID, eUsage_Indirect)));
+      drawNode.resourceUsage.push_back(std::make_pair(
+          GetResID(buffer), EventUsage(drawNode.draw.eventID, ResourceUsage::Indirect)));
     }
   }
 
@@ -1034,19 +1041,19 @@ bool WrappedVulkan::Serialise_vkCmdBlitImage(Serialiser *localSerialiser,
     {
       commandBuffer = RerecordCmdBuf(cmdid);
 
-      uint32_t eventID = HandlePreCallback(commandBuffer, eDraw_Resolve);
+      uint32_t eventID = HandlePreCallback(commandBuffer, DrawFlags::Resolve);
 
       ObjDisp(commandBuffer)
           ->CmdBlitImage(Unwrap(commandBuffer), Unwrap(srcImage), srclayout, Unwrap(destImage),
                          dstlayout, count, regions, f);
 
-      if(eventID && m_DrawcallCallback->PostMisc(eventID, eDraw_Resolve, commandBuffer))
+      if(eventID && m_DrawcallCallback->PostMisc(eventID, DrawFlags::Resolve, commandBuffer))
       {
         ObjDisp(commandBuffer)
             ->CmdBlitImage(Unwrap(commandBuffer), Unwrap(srcImage), srclayout, Unwrap(destImage),
                            dstlayout, count, regions, f);
 
-        m_DrawcallCallback->PostRemisc(eventID, eDraw_Resolve, commandBuffer);
+        m_DrawcallCallback->PostRemisc(eventID, DrawFlags::Resolve, commandBuffer);
       }
     }
   }
@@ -1066,9 +1073,9 @@ bool WrappedVulkan::Serialise_vkCmdBlitImage(Serialiser *localSerialiser,
       AddEvent(desc);
       string name = "vkCmdBlitImage(" + ToStr::Get(srcid) + "," + ToStr::Get(dstid) + ")";
 
-      FetchDrawcall draw;
+      DrawcallDescription draw;
       draw.name = name;
-      draw.flags |= eDraw_Resolve;
+      draw.flags |= DrawFlags::Resolve;
 
       draw.copySource = srcid;
       draw.copyDestination = dstid;
@@ -1079,15 +1086,15 @@ bool WrappedVulkan::Serialise_vkCmdBlitImage(Serialiser *localSerialiser,
 
       if(srcImage == destImage)
       {
-        drawNode.resourceUsage.push_back(
-            std::make_pair(GetResID(srcImage), EventUsage(drawNode.draw.eventID, eUsage_Resolve)));
+        drawNode.resourceUsage.push_back(std::make_pair(
+            GetResID(srcImage), EventUsage(drawNode.draw.eventID, ResourceUsage::Resolve)));
       }
       else
       {
         drawNode.resourceUsage.push_back(std::make_pair(
-            GetResID(srcImage), EventUsage(drawNode.draw.eventID, eUsage_ResolveSrc)));
+            GetResID(srcImage), EventUsage(drawNode.draw.eventID, ResourceUsage::ResolveSrc)));
         drawNode.resourceUsage.push_back(std::make_pair(
-            GetResID(destImage), EventUsage(drawNode.draw.eventID, eUsage_ResolveSrc)));
+            GetResID(destImage), EventUsage(drawNode.draw.eventID, ResourceUsage::ResolveSrc)));
       }
     }
   }
@@ -1161,19 +1168,19 @@ bool WrappedVulkan::Serialise_vkCmdResolveImage(Serialiser *localSerialiser,
     {
       commandBuffer = RerecordCmdBuf(cmdid);
 
-      uint32_t eventID = HandlePreCallback(commandBuffer, eDraw_Resolve);
+      uint32_t eventID = HandlePreCallback(commandBuffer, DrawFlags::Resolve);
 
       ObjDisp(commandBuffer)
           ->CmdResolveImage(Unwrap(commandBuffer), Unwrap(srcImage), srclayout, Unwrap(destImage),
                             dstlayout, count, regions);
 
-      if(eventID && m_DrawcallCallback->PostMisc(eventID, eDraw_Resolve, commandBuffer))
+      if(eventID && m_DrawcallCallback->PostMisc(eventID, DrawFlags::Resolve, commandBuffer))
       {
         ObjDisp(commandBuffer)
             ->CmdResolveImage(Unwrap(commandBuffer), Unwrap(srcImage), srclayout, Unwrap(destImage),
                               dstlayout, count, regions);
 
-        m_DrawcallCallback->PostRemisc(eventID, eDraw_Resolve, commandBuffer);
+        m_DrawcallCallback->PostRemisc(eventID, DrawFlags::Resolve, commandBuffer);
       }
     }
   }
@@ -1193,9 +1200,9 @@ bool WrappedVulkan::Serialise_vkCmdResolveImage(Serialiser *localSerialiser,
       AddEvent(desc);
       string name = "vkCmdResolveImage(" + ToStr::Get(srcid) + "," + ToStr::Get(dstid) + ")";
 
-      FetchDrawcall draw;
+      DrawcallDescription draw;
       draw.name = name;
-      draw.flags |= eDraw_Resolve;
+      draw.flags |= DrawFlags::Resolve;
 
       draw.copySource = srcid;
       draw.copyDestination = dstid;
@@ -1206,15 +1213,15 @@ bool WrappedVulkan::Serialise_vkCmdResolveImage(Serialiser *localSerialiser,
 
       if(srcImage == destImage)
       {
-        drawNode.resourceUsage.push_back(
-            std::make_pair(GetResID(srcImage), EventUsage(drawNode.draw.eventID, eUsage_Resolve)));
+        drawNode.resourceUsage.push_back(std::make_pair(
+            GetResID(srcImage), EventUsage(drawNode.draw.eventID, ResourceUsage::Resolve)));
       }
       else
       {
         drawNode.resourceUsage.push_back(std::make_pair(
-            GetResID(srcImage), EventUsage(drawNode.draw.eventID, eUsage_ResolveSrc)));
+            GetResID(srcImage), EventUsage(drawNode.draw.eventID, ResourceUsage::ResolveSrc)));
         drawNode.resourceUsage.push_back(std::make_pair(
-            GetResID(destImage), EventUsage(drawNode.draw.eventID, eUsage_ResolveDst)));
+            GetResID(destImage), EventUsage(drawNode.draw.eventID, ResourceUsage::ResolveDst)));
       }
     }
   }
@@ -1288,19 +1295,19 @@ bool WrappedVulkan::Serialise_vkCmdCopyImage(Serialiser *localSerialiser,
     {
       commandBuffer = RerecordCmdBuf(cmdid);
 
-      uint32_t eventID = HandlePreCallback(commandBuffer, eDraw_Copy);
+      uint32_t eventID = HandlePreCallback(commandBuffer, DrawFlags::Copy);
 
       ObjDisp(commandBuffer)
           ->CmdCopyImage(Unwrap(commandBuffer), Unwrap(srcImage), srclayout, Unwrap(destImage),
                          dstlayout, count, regions);
 
-      if(eventID && m_DrawcallCallback->PostMisc(eventID, eDraw_Copy, commandBuffer))
+      if(eventID && m_DrawcallCallback->PostMisc(eventID, DrawFlags::Copy, commandBuffer))
       {
         ObjDisp(commandBuffer)
             ->CmdCopyImage(Unwrap(commandBuffer), Unwrap(srcImage), srclayout, Unwrap(destImage),
                            dstlayout, count, regions);
 
-        m_DrawcallCallback->PostRemisc(eventID, eDraw_Copy, commandBuffer);
+        m_DrawcallCallback->PostRemisc(eventID, DrawFlags::Copy, commandBuffer);
       }
     }
   }
@@ -1320,9 +1327,9 @@ bool WrappedVulkan::Serialise_vkCmdCopyImage(Serialiser *localSerialiser,
       AddEvent(desc);
       string name = "vkCmdCopyImage(" + ToStr::Get(srcid) + "," + ToStr::Get(dstid) + ")";
 
-      FetchDrawcall draw;
+      DrawcallDescription draw;
       draw.name = name;
-      draw.flags |= eDraw_Copy;
+      draw.flags |= DrawFlags::Copy;
 
       draw.copySource = srcid;
       draw.copyDestination = dstid;
@@ -1333,15 +1340,15 @@ bool WrappedVulkan::Serialise_vkCmdCopyImage(Serialiser *localSerialiser,
 
       if(srcImage == destImage)
       {
-        drawNode.resourceUsage.push_back(
-            std::make_pair(GetResID(srcImage), EventUsage(drawNode.draw.eventID, eUsage_Copy)));
+        drawNode.resourceUsage.push_back(std::make_pair(
+            GetResID(srcImage), EventUsage(drawNode.draw.eventID, ResourceUsage::Copy)));
       }
       else
       {
-        drawNode.resourceUsage.push_back(
-            std::make_pair(GetResID(srcImage), EventUsage(drawNode.draw.eventID, eUsage_CopySrc)));
-        drawNode.resourceUsage.push_back(
-            std::make_pair(GetResID(destImage), EventUsage(drawNode.draw.eventID, eUsage_CopyDst)));
+        drawNode.resourceUsage.push_back(std::make_pair(
+            GetResID(srcImage), EventUsage(drawNode.draw.eventID, ResourceUsage::CopySrc)));
+        drawNode.resourceUsage.push_back(std::make_pair(
+            GetResID(destImage), EventUsage(drawNode.draw.eventID, ResourceUsage::CopyDst)));
       }
     }
   }
@@ -1415,19 +1422,19 @@ bool WrappedVulkan::Serialise_vkCmdCopyBufferToImage(Serialiser *localSerialiser
     {
       commandBuffer = RerecordCmdBuf(cmdid);
 
-      uint32_t eventID = HandlePreCallback(commandBuffer, eDraw_Copy);
+      uint32_t eventID = HandlePreCallback(commandBuffer, DrawFlags::Copy);
 
       ObjDisp(commandBuffer)
           ->CmdCopyBufferToImage(Unwrap(commandBuffer), Unwrap(srcBuffer), Unwrap(destImage),
                                  layout, count, regions);
 
-      if(eventID && m_DrawcallCallback->PostMisc(eventID, eDraw_Copy, commandBuffer))
+      if(eventID && m_DrawcallCallback->PostMisc(eventID, DrawFlags::Copy, commandBuffer))
       {
         ObjDisp(commandBuffer)
             ->CmdCopyBufferToImage(Unwrap(commandBuffer), Unwrap(srcBuffer), Unwrap(destImage),
                                    layout, count, regions);
 
-        m_DrawcallCallback->PostRemisc(eventID, eDraw_Copy, commandBuffer);
+        m_DrawcallCallback->PostRemisc(eventID, DrawFlags::Copy, commandBuffer);
       }
     }
   }
@@ -1447,9 +1454,9 @@ bool WrappedVulkan::Serialise_vkCmdCopyBufferToImage(Serialiser *localSerialiser
       AddEvent(desc);
       string name = "vkCmdCopyBufferToImage(" + ToStr::Get(bufid) + "," + ToStr::Get(imgid) + ")";
 
-      FetchDrawcall draw;
+      DrawcallDescription draw;
       draw.name = name;
-      draw.flags |= eDraw_Copy;
+      draw.flags |= DrawFlags::Copy;
 
       draw.copySource = bufid;
       draw.copyDestination = imgid;
@@ -1458,10 +1465,10 @@ bool WrappedVulkan::Serialise_vkCmdCopyBufferToImage(Serialiser *localSerialiser
 
       VulkanDrawcallTreeNode &drawNode = GetDrawcallStack().back()->children.back();
 
-      drawNode.resourceUsage.push_back(
-          std::make_pair(GetResID(srcBuffer), EventUsage(drawNode.draw.eventID, eUsage_CopySrc)));
-      drawNode.resourceUsage.push_back(
-          std::make_pair(GetResID(destImage), EventUsage(drawNode.draw.eventID, eUsage_CopyDst)));
+      drawNode.resourceUsage.push_back(std::make_pair(
+          GetResID(srcBuffer), EventUsage(drawNode.draw.eventID, ResourceUsage::CopySrc)));
+      drawNode.resourceUsage.push_back(std::make_pair(
+          GetResID(destImage), EventUsage(drawNode.draw.eventID, ResourceUsage::CopyDst)));
     }
   }
 
@@ -1533,19 +1540,19 @@ bool WrappedVulkan::Serialise_vkCmdCopyImageToBuffer(Serialiser *localSerialiser
     {
       commandBuffer = RerecordCmdBuf(cmdid);
 
-      uint32_t eventID = HandlePreCallback(commandBuffer, eDraw_Copy);
+      uint32_t eventID = HandlePreCallback(commandBuffer, DrawFlags::Copy);
 
       ObjDisp(commandBuffer)
           ->CmdCopyImageToBuffer(Unwrap(commandBuffer), Unwrap(srcImage), layout,
                                  Unwrap(destBuffer), count, regions);
 
-      if(eventID && m_DrawcallCallback->PostMisc(eventID, eDraw_Copy, commandBuffer))
+      if(eventID && m_DrawcallCallback->PostMisc(eventID, DrawFlags::Copy, commandBuffer))
       {
         ObjDisp(commandBuffer)
             ->CmdCopyImageToBuffer(Unwrap(commandBuffer), Unwrap(srcImage), layout,
                                    Unwrap(destBuffer), count, regions);
 
-        m_DrawcallCallback->PostRemisc(eventID, eDraw_Copy, commandBuffer);
+        m_DrawcallCallback->PostRemisc(eventID, DrawFlags::Copy, commandBuffer);
       }
     }
   }
@@ -1565,9 +1572,9 @@ bool WrappedVulkan::Serialise_vkCmdCopyImageToBuffer(Serialiser *localSerialiser
       AddEvent(desc);
       string name = "vkCmdCopyImageToBuffer(" + ToStr::Get(imgid) + "," + ToStr::Get(bufid) + ")";
 
-      FetchDrawcall draw;
+      DrawcallDescription draw;
       draw.name = name;
-      draw.flags |= eDraw_Copy;
+      draw.flags |= DrawFlags::Copy;
 
       draw.copySource = imgid;
       draw.copyDestination = bufid;
@@ -1576,10 +1583,10 @@ bool WrappedVulkan::Serialise_vkCmdCopyImageToBuffer(Serialiser *localSerialiser
 
       VulkanDrawcallTreeNode &drawNode = GetDrawcallStack().back()->children.back();
 
-      drawNode.resourceUsage.push_back(
-          std::make_pair(GetResID(srcImage), EventUsage(drawNode.draw.eventID, eUsage_CopySrc)));
-      drawNode.resourceUsage.push_back(
-          std::make_pair(GetResID(destBuffer), EventUsage(drawNode.draw.eventID, eUsage_CopyDst)));
+      drawNode.resourceUsage.push_back(std::make_pair(
+          GetResID(srcImage), EventUsage(drawNode.draw.eventID, ResourceUsage::CopySrc)));
+      drawNode.resourceUsage.push_back(std::make_pair(
+          GetResID(destBuffer), EventUsage(drawNode.draw.eventID, ResourceUsage::CopyDst)));
     }
   }
 
@@ -1652,19 +1659,19 @@ bool WrappedVulkan::Serialise_vkCmdCopyBuffer(Serialiser *localSerialiser,
     {
       commandBuffer = RerecordCmdBuf(cmdid);
 
-      uint32_t eventID = HandlePreCallback(commandBuffer, eDraw_Copy);
+      uint32_t eventID = HandlePreCallback(commandBuffer, DrawFlags::Copy);
 
       ObjDisp(commandBuffer)
           ->CmdCopyBuffer(Unwrap(commandBuffer), Unwrap(srcBuffer), Unwrap(destBuffer), count,
                           regions);
 
-      if(eventID && m_DrawcallCallback->PostMisc(eventID, eDraw_Copy, commandBuffer))
+      if(eventID && m_DrawcallCallback->PostMisc(eventID, DrawFlags::Copy, commandBuffer))
       {
         ObjDisp(commandBuffer)
             ->CmdCopyBuffer(Unwrap(commandBuffer), Unwrap(srcBuffer), Unwrap(destBuffer), count,
                             regions);
 
-        m_DrawcallCallback->PostRemisc(eventID, eDraw_Copy, commandBuffer);
+        m_DrawcallCallback->PostRemisc(eventID, DrawFlags::Copy, commandBuffer);
       }
     }
   }
@@ -1683,9 +1690,9 @@ bool WrappedVulkan::Serialise_vkCmdCopyBuffer(Serialiser *localSerialiser,
       AddEvent(desc);
       string name = "vkCmdCopyBuffer(" + ToStr::Get(srcid) + "," + ToStr::Get(dstid) + ")";
 
-      FetchDrawcall draw;
+      DrawcallDescription draw;
       draw.name = name;
-      draw.flags |= eDraw_Copy;
+      draw.flags |= DrawFlags::Copy;
 
       draw.copySource = srcid;
       draw.copyDestination = dstid;
@@ -1696,15 +1703,15 @@ bool WrappedVulkan::Serialise_vkCmdCopyBuffer(Serialiser *localSerialiser,
 
       if(srcBuffer == destBuffer)
       {
-        drawNode.resourceUsage.push_back(
-            std::make_pair(GetResID(srcBuffer), EventUsage(drawNode.draw.eventID, eUsage_Copy)));
+        drawNode.resourceUsage.push_back(std::make_pair(
+            GetResID(srcBuffer), EventUsage(drawNode.draw.eventID, ResourceUsage::Copy)));
       }
       else
       {
-        drawNode.resourceUsage.push_back(
-            std::make_pair(GetResID(srcBuffer), EventUsage(drawNode.draw.eventID, eUsage_CopySrc)));
         drawNode.resourceUsage.push_back(std::make_pair(
-            GetResID(destBuffer), EventUsage(drawNode.draw.eventID, eUsage_CopyDst)));
+            GetResID(srcBuffer), EventUsage(drawNode.draw.eventID, ResourceUsage::CopySrc)));
+        drawNode.resourceUsage.push_back(std::make_pair(
+            GetResID(destBuffer), EventUsage(drawNode.draw.eventID, ResourceUsage::CopyDst)));
       }
     }
   }
@@ -1781,19 +1788,19 @@ bool WrappedVulkan::Serialise_vkCmdClearColorImage(Serialiser *localSerialiser,
       commandBuffer = RerecordCmdBuf(cmdid);
 
       uint32_t eventID =
-          HandlePreCallback(commandBuffer, DrawcallFlags(eDraw_Clear | eDraw_ClearColour));
+          HandlePreCallback(commandBuffer, DrawFlags(DrawFlags::Clear | DrawFlags::ClearColor));
 
       ObjDisp(commandBuffer)
           ->CmdClearColorImage(Unwrap(commandBuffer), Unwrap(image), layout, &col, count, ranges);
 
       if(eventID &&
-         m_DrawcallCallback->PostMisc(eventID, DrawcallFlags(eDraw_Clear | eDraw_ClearColour),
+         m_DrawcallCallback->PostMisc(eventID, DrawFlags(DrawFlags::Clear | DrawFlags::ClearColor),
                                       commandBuffer))
       {
         ObjDisp(commandBuffer)
             ->CmdClearColorImage(Unwrap(commandBuffer), Unwrap(image), layout, &col, count, ranges);
 
-        m_DrawcallCallback->PostRemisc(eventID, DrawcallFlags(eDraw_Clear | eDraw_ClearColour),
+        m_DrawcallCallback->PostRemisc(eventID, DrawFlags(DrawFlags::Clear | DrawFlags::ClearColor),
                                        commandBuffer);
       }
     }
@@ -1812,16 +1819,16 @@ bool WrappedVulkan::Serialise_vkCmdClearColorImage(Serialiser *localSerialiser,
       AddEvent(desc);
       string name = "vkCmdClearColorImage(" + ToStr::Get(col) + ")";
 
-      FetchDrawcall draw;
+      DrawcallDescription draw;
       draw.name = name;
-      draw.flags |= eDraw_Clear | eDraw_ClearColour;
+      draw.flags |= DrawFlags::Clear | DrawFlags::ClearColor;
 
       AddDrawcall(draw, true);
 
       VulkanDrawcallTreeNode &drawNode = GetDrawcallStack().back()->children.back();
 
       drawNode.resourceUsage.push_back(
-          std::make_pair(GetResID(image), EventUsage(drawNode.draw.eventID, eUsage_Clear)));
+          std::make_pair(GetResID(image), EventUsage(drawNode.draw.eventID, ResourceUsage::Clear)));
     }
   }
 
@@ -1883,21 +1890,21 @@ bool WrappedVulkan::Serialise_vkCmdClearDepthStencilImage(
     {
       commandBuffer = RerecordCmdBuf(cmdid);
 
-      uint32_t eventID =
-          HandlePreCallback(commandBuffer, DrawcallFlags(eDraw_Clear | eDraw_ClearDepthStencil));
+      uint32_t eventID = HandlePreCallback(
+          commandBuffer, DrawFlags(DrawFlags::Clear | DrawFlags::ClearDepthStencil));
 
       ObjDisp(commandBuffer)
           ->CmdClearDepthStencilImage(Unwrap(commandBuffer), Unwrap(image), l, &ds, count, ranges);
 
       if(eventID &&
-         m_DrawcallCallback->PostMisc(eventID, DrawcallFlags(eDraw_Clear | eDraw_ClearDepthStencil),
-                                      commandBuffer))
+         m_DrawcallCallback->PostMisc(
+             eventID, DrawFlags(DrawFlags::Clear | DrawFlags::ClearDepthStencil), commandBuffer))
       {
         ObjDisp(commandBuffer)
             ->CmdClearDepthStencilImage(Unwrap(commandBuffer), Unwrap(image), l, &ds, count, ranges);
 
         m_DrawcallCallback->PostRemisc(
-            eventID, DrawcallFlags(eDraw_Clear | eDraw_ClearDepthStencil), commandBuffer);
+            eventID, DrawFlags(DrawFlags::Clear | DrawFlags::ClearDepthStencil), commandBuffer);
       }
     }
   }
@@ -1916,16 +1923,16 @@ bool WrappedVulkan::Serialise_vkCmdClearDepthStencilImage(
       string name =
           "vkCmdClearDepthStencilImage(" + ToStr::Get(ds.depth) + "," + ToStr::Get(ds.stencil) + ")";
 
-      FetchDrawcall draw;
+      DrawcallDescription draw;
       draw.name = name;
-      draw.flags |= eDraw_Clear | eDraw_ClearDepthStencil;
+      draw.flags |= DrawFlags::Clear | DrawFlags::ClearDepthStencil;
 
       AddDrawcall(draw, true);
 
       VulkanDrawcallTreeNode &drawNode = GetDrawcallStack().back()->children.back();
 
       drawNode.resourceUsage.push_back(
-          std::make_pair(GetResID(image), EventUsage(drawNode.draw.eventID, eUsage_Clear)));
+          std::make_pair(GetResID(image), EventUsage(drawNode.draw.eventID, ResourceUsage::Clear)));
     }
   }
 
@@ -1989,15 +1996,15 @@ bool WrappedVulkan::Serialise_vkCmdClearAttachments(Serialiser *localSerialiser,
     {
       commandBuffer = RerecordCmdBuf(cmdid);
 
-      uint32_t eventID = HandlePreCallback(commandBuffer, DrawcallFlags(eDraw_Clear));
+      uint32_t eventID = HandlePreCallback(commandBuffer, DrawFlags(DrawFlags::Clear));
 
       ObjDisp(commandBuffer)->CmdClearAttachments(Unwrap(commandBuffer), acount, atts, rcount, rects);
 
-      if(eventID && m_DrawcallCallback->PostMisc(eventID, DrawcallFlags(eDraw_Clear), commandBuffer))
+      if(eventID && m_DrawcallCallback->PostMisc(eventID, DrawFlags(DrawFlags::Clear), commandBuffer))
       {
         ObjDisp(commandBuffer)->CmdClearAttachments(Unwrap(commandBuffer), acount, atts, rcount, rects);
 
-        m_DrawcallCallback->PostRemisc(eventID, DrawcallFlags(eDraw_Clear), commandBuffer);
+        m_DrawcallCallback->PostRemisc(eventID, DrawFlags(DrawFlags::Clear), commandBuffer);
       }
     }
   }
@@ -2016,15 +2023,15 @@ bool WrappedVulkan::Serialise_vkCmdClearAttachments(Serialiser *localSerialiser,
         name += ToStr::Get(atts[a]);
       name += ")";
 
-      FetchDrawcall draw;
+      DrawcallDescription draw;
       draw.name = name;
-      draw.flags |= eDraw_Clear;
+      draw.flags |= DrawFlags::Clear;
       for(uint32_t a = 0; a < acount; a++)
       {
         if(atts[a].aspectMask & VK_IMAGE_ASPECT_COLOR_BIT)
-          draw.flags |= eDraw_ClearColour;
+          draw.flags |= DrawFlags::ClearColor;
         if(atts[a].aspectMask & VK_IMAGE_ASPECT_DEPTH_BIT)
-          draw.flags |= eDraw_ClearDepthStencil;
+          draw.flags |= DrawFlags::ClearDepthStencil;
       }
 
       AddDrawcall(draw, true);
@@ -2044,16 +2051,16 @@ bool WrappedVulkan::Serialise_vkCmdClearAttachments(Serialiser *localSerialiser,
           uint32_t att = rp.subpasses[state.subpass].colorAttachments[i];
           drawNode.resourceUsage.push_back(std::make_pair(
               m_CreationInfo.m_ImageView[fb.attachments[att].view].image,
-              EventUsage(drawNode.draw.eventID, eUsage_Clear, fb.attachments[att].view)));
+              EventUsage(drawNode.draw.eventID, ResourceUsage::Clear, fb.attachments[att].view)));
         }
 
-        if(draw.flags & eDraw_ClearDepthStencil &&
+        if(draw.flags & DrawFlags::ClearDepthStencil &&
            rp.subpasses[state.subpass].depthstencilAttachment >= 0)
         {
           int32_t att = rp.subpasses[state.subpass].depthstencilAttachment;
           drawNode.resourceUsage.push_back(std::make_pair(
               m_CreationInfo.m_ImageView[fb.attachments[att].view].image,
-              EventUsage(drawNode.draw.eventID, eUsage_Clear, fb.attachments[att].view)));
+              EventUsage(drawNode.draw.eventID, ResourceUsage::Clear, fb.attachments[att].view)));
         }
       }
     }

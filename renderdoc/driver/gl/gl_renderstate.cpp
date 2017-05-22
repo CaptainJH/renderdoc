@@ -26,9 +26,126 @@
 #include "gl_renderstate.h"
 #include "gl_driver.h"
 
+static const GLenum enable_disable_cap[] = {
+    eGL_CLIP_DISTANCE0,
+    eGL_CLIP_DISTANCE1,
+    eGL_CLIP_DISTANCE2,
+    eGL_CLIP_DISTANCE3,
+    eGL_CLIP_DISTANCE4,
+    eGL_CLIP_DISTANCE5,
+    eGL_CLIP_DISTANCE6,
+    eGL_CLIP_DISTANCE7,
+    eGL_COLOR_LOGIC_OP,
+    eGL_CULL_FACE,
+    eGL_DEPTH_CLAMP,
+    eGL_DEPTH_TEST,
+    eGL_DEPTH_BOUNDS_TEST_EXT,
+    eGL_DITHER,
+    eGL_FRAMEBUFFER_SRGB,
+    eGL_LINE_SMOOTH,
+    eGL_MULTISAMPLE,
+    eGL_POLYGON_SMOOTH,
+    eGL_POLYGON_OFFSET_FILL,
+    eGL_POLYGON_OFFSET_LINE,
+    eGL_POLYGON_OFFSET_POINT,
+    eGL_PROGRAM_POINT_SIZE,
+    eGL_PRIMITIVE_RESTART,
+    eGL_PRIMITIVE_RESTART_FIXED_INDEX,
+    eGL_SAMPLE_ALPHA_TO_COVERAGE,
+    eGL_SAMPLE_ALPHA_TO_ONE,
+    eGL_SAMPLE_COVERAGE,
+    eGL_SAMPLE_MASK,
+    eGL_SAMPLE_SHADING,
+    eGL_RASTER_MULTISAMPLE_EXT,
+    eGL_STENCIL_TEST,
+    eGL_TEXTURE_CUBE_MAP_SEAMLESS,
+    eGL_BLEND_ADVANCED_COHERENT_KHR,
+    eGL_RASTERIZER_DISCARD,
+};
+
+void ResetPixelPackState(const GLHookSet &gl, bool compressed, GLint alignment)
+{
+  PixelPackState empty;
+  empty.alignment = alignment;
+  empty.Apply(&gl, compressed);
+}
+
+void ResetPixelUnpackState(const GLHookSet &gl, bool compressed, GLint alignment)
+{
+  PixelUnpackState empty;
+  empty.alignment = alignment;
+  empty.Apply(&gl, compressed);
+}
+
+PixelStorageState::PixelStorageState()
+    : swapBytes(),
+      lsbFirst(),
+      rowlength(),
+      imageheight(),
+      skipPixels(),
+      skipRows(),
+      skipImages(),
+      alignment(),
+      compressedBlockWidth(),
+      compressedBlockHeight(),
+      compressedBlockDepth(),
+      compressedBlockSize()
+{
+}
+
+void PixelPackState::Fetch(const GLHookSet *funcs, bool compressed)
+{
+  if(!IsGLES)
+  {
+    funcs->glGetIntegerv(eGL_PACK_SWAP_BYTES, &swapBytes);
+    funcs->glGetIntegerv(eGL_PACK_LSB_FIRST, &lsbFirst);
+    funcs->glGetIntegerv(eGL_PACK_IMAGE_HEIGHT, &imageheight);
+    funcs->glGetIntegerv(eGL_PACK_SKIP_IMAGES, &skipImages);
+  }
+  funcs->glGetIntegerv(eGL_PACK_ROW_LENGTH, &rowlength);
+  funcs->glGetIntegerv(eGL_PACK_SKIP_PIXELS, &skipPixels);
+  funcs->glGetIntegerv(eGL_PACK_SKIP_ROWS, &skipRows);
+  funcs->glGetIntegerv(eGL_PACK_ALIGNMENT, &alignment);
+
+  if(!IsGLES && compressed)
+  {
+    funcs->glGetIntegerv(eGL_PACK_COMPRESSED_BLOCK_WIDTH, &compressedBlockWidth);
+    funcs->glGetIntegerv(eGL_PACK_COMPRESSED_BLOCK_HEIGHT, &compressedBlockHeight);
+    funcs->glGetIntegerv(eGL_PACK_COMPRESSED_BLOCK_DEPTH, &compressedBlockDepth);
+    funcs->glGetIntegerv(eGL_PACK_COMPRESSED_BLOCK_SIZE, &compressedBlockSize);
+  }
+}
+
+void PixelPackState::Apply(const GLHookSet *funcs, bool compressed)
+{
+  if(!IsGLES)
+  {
+    funcs->glPixelStorei(eGL_PACK_SWAP_BYTES, swapBytes);
+    funcs->glPixelStorei(eGL_PACK_LSB_FIRST, lsbFirst);
+    funcs->glPixelStorei(eGL_PACK_IMAGE_HEIGHT, imageheight);
+    funcs->glPixelStorei(eGL_PACK_SKIP_IMAGES, skipImages);
+  }
+  funcs->glPixelStorei(eGL_PACK_ROW_LENGTH, rowlength);
+  funcs->glPixelStorei(eGL_PACK_SKIP_PIXELS, skipPixels);
+  funcs->glPixelStorei(eGL_PACK_SKIP_ROWS, skipRows);
+  funcs->glPixelStorei(eGL_PACK_ALIGNMENT, alignment);
+
+  if(!IsGLES && compressed)
+  {
+    funcs->glPixelStorei(eGL_PACK_COMPRESSED_BLOCK_WIDTH, compressedBlockWidth);
+    funcs->glPixelStorei(eGL_PACK_COMPRESSED_BLOCK_HEIGHT, compressedBlockHeight);
+    funcs->glPixelStorei(eGL_PACK_COMPRESSED_BLOCK_DEPTH, compressedBlockDepth);
+    funcs->glPixelStorei(eGL_PACK_COMPRESSED_BLOCK_SIZE, compressedBlockSize);
+  }
+}
+
 void PixelUnpackState::Fetch(const GLHookSet *funcs, bool compressed)
 {
-  funcs->glGetIntegerv(eGL_UNPACK_SWAP_BYTES, &swapBytes);
+  if(!IsGLES)
+  {
+    funcs->glGetIntegerv(eGL_UNPACK_SWAP_BYTES, &swapBytes);
+    funcs->glGetIntegerv(eGL_UNPACK_LSB_FIRST, &lsbFirst);
+  }
   funcs->glGetIntegerv(eGL_UNPACK_ROW_LENGTH, &rowlength);
   funcs->glGetIntegerv(eGL_UNPACK_IMAGE_HEIGHT, &imageheight);
   funcs->glGetIntegerv(eGL_UNPACK_SKIP_PIXELS, &skipPixels);
@@ -36,7 +153,7 @@ void PixelUnpackState::Fetch(const GLHookSet *funcs, bool compressed)
   funcs->glGetIntegerv(eGL_UNPACK_SKIP_IMAGES, &skipImages);
   funcs->glGetIntegerv(eGL_UNPACK_ALIGNMENT, &alignment);
 
-  if(compressed)
+  if(!IsGLES && compressed)
   {
     funcs->glGetIntegerv(eGL_UNPACK_COMPRESSED_BLOCK_WIDTH, &compressedBlockWidth);
     funcs->glGetIntegerv(eGL_UNPACK_COMPRESSED_BLOCK_HEIGHT, &compressedBlockHeight);
@@ -47,7 +164,11 @@ void PixelUnpackState::Fetch(const GLHookSet *funcs, bool compressed)
 
 void PixelUnpackState::Apply(const GLHookSet *funcs, bool compressed)
 {
-  funcs->glPixelStorei(eGL_UNPACK_SWAP_BYTES, swapBytes);
+  if(!IsGLES)
+  {
+    funcs->glPixelStorei(eGL_UNPACK_SWAP_BYTES, swapBytes);
+    funcs->glPixelStorei(eGL_UNPACK_LSB_FIRST, lsbFirst);
+  }
   funcs->glPixelStorei(eGL_UNPACK_ROW_LENGTH, rowlength);
   funcs->glPixelStorei(eGL_UNPACK_IMAGE_HEIGHT, imageheight);
   funcs->glPixelStorei(eGL_UNPACK_SKIP_PIXELS, skipPixels);
@@ -55,7 +176,7 @@ void PixelUnpackState::Apply(const GLHookSet *funcs, bool compressed)
   funcs->glPixelStorei(eGL_UNPACK_SKIP_IMAGES, skipImages);
   funcs->glPixelStorei(eGL_UNPACK_ALIGNMENT, alignment);
 
-  if(compressed)
+  if(!IsGLES && compressed)
   {
     funcs->glPixelStorei(eGL_UNPACK_COMPRESSED_BLOCK_WIDTH, compressedBlockWidth);
     funcs->glPixelStorei(eGL_UNPACK_COMPRESSED_BLOCK_HEIGHT, compressedBlockHeight);
@@ -142,20 +263,7 @@ byte *PixelUnpackState::Unpack(byte *pixels, GLsizei width, GLsizei height, GLsi
   size_t destrowstride = pixelSize * width;
   size_t destimgstride = destrowstride * height;
 
-  size_t elemSize = 1;
-  switch(basetype)
-  {
-    case eGL_UNSIGNED_BYTE:
-    case eGL_BYTE: elemSize = 1; break;
-    case eGL_UNSIGNED_SHORT:
-    case eGL_SHORT:
-    case eGL_HALF_FLOAT: elemSize = 2; break;
-    case eGL_UNSIGNED_INT:
-    case eGL_INT:
-    case eGL_FLOAT: elemSize = 4; break;
-    case eGL_DOUBLE: elemSize = 8; break;
-    default: break;
-  }
+  size_t elemSize = GLTypeSize(basetype);
 
   size_t allocsize = width * RDCMAX(1, height) * RDCMAX(1, depth) * pixelSize;
   byte *ret = new byte[allocsize];
@@ -512,6 +620,71 @@ void GLRenderState::MarkDirty(WrappedOpenGL *gl)
   }
 }
 
+bool GLRenderState::CheckEnableDisableParam(GLenum pname)
+{
+  RDCCOMPILE_ASSERT(ARRAY_COUNT(enable_disable_cap) == eEnabled_Count,
+                    "Wrong number of capabilities");
+
+  if(IsGLES)
+  {
+    switch(pname)
+    {
+      case eGL_COLOR_LOGIC_OP:
+      case eGL_DEPTH_CLAMP:
+      case eGL_DEPTH_BOUNDS_TEST_EXT:
+      case eGL_LINE_SMOOTH:
+      case eGL_POLYGON_SMOOTH:
+      case eGL_PROGRAM_POINT_SIZE:
+      case eGL_PRIMITIVE_RESTART:
+      case eGL_TEXTURE_CUBE_MAP_SEAMLESS:
+        // these are not supported by OpenGL ES
+        return false;
+
+      case eGL_POLYGON_OFFSET_LINE:
+      case eGL_POLYGON_OFFSET_POINT:
+        // these are in GL_NV_polygon_mode, however they are not accepted by the NVIDIA driver
+        // see DoVendorChecks()
+        return false;
+
+      case eGL_CLIP_DISTANCE0:
+      case eGL_CLIP_DISTANCE1:
+      case eGL_CLIP_DISTANCE2:
+      case eGL_CLIP_DISTANCE3:
+      case eGL_CLIP_DISTANCE4:
+      case eGL_CLIP_DISTANCE5:
+      case eGL_CLIP_DISTANCE6:
+      case eGL_CLIP_DISTANCE7: return HasExt[EXT_clip_cull_distance];
+
+      case eGL_SAMPLE_ALPHA_TO_ONE:
+      case eGL_MULTISAMPLE: return HasExt[EXT_multisample_compatibility];
+
+      case eGL_SAMPLE_SHADING: return HasExt[ARB_sample_shading];
+
+      default: break;
+    }
+  }
+  else
+  {
+    switch(pname)
+    {
+      case eGL_DEPTH_BOUNDS_TEST_EXT: return HasExt[EXT_depth_bounds_test];
+      case eGL_SAMPLE_SHADING: return HasExt[ARB_sample_shading];
+      case eGL_PRIMITIVE_RESTART_FIXED_INDEX: return HasExt[ARB_ES3_compatibility];
+      default: break;
+    }
+  }
+
+  // both OpenGL and OpenGL ES
+  switch(pname)
+  {
+    case eGL_BLEND_ADVANCED_COHERENT_KHR: return HasExt[KHR_blend_equation_advanced_coherent];
+    case eGL_RASTER_MULTISAMPLE_EXT: return HasExt[EXT_raster_multisample];
+    default: break;
+  }
+
+  return true;
+}
+
 void GLRenderState::FetchState(void *ctx, WrappedOpenGL *gl)
 {
   GLint boolread = 0;
@@ -522,80 +695,15 @@ void GLRenderState::FetchState(void *ctx, WrappedOpenGL *gl)
     return;
   }
 
+  for(GLuint i = 0; i < eEnabled_Count; i++)
   {
-    GLenum pnames[] = {
-        eGL_CLIP_DISTANCE0,
-        eGL_CLIP_DISTANCE1,
-        eGL_CLIP_DISTANCE2,
-        eGL_CLIP_DISTANCE3,
-        eGL_CLIP_DISTANCE4,
-        eGL_CLIP_DISTANCE5,
-        eGL_CLIP_DISTANCE6,
-        eGL_CLIP_DISTANCE7,
-        eGL_COLOR_LOGIC_OP,
-        eGL_CULL_FACE,
-        eGL_DEPTH_CLAMP,
-        eGL_DEPTH_TEST,
-        eGL_DEPTH_BOUNDS_TEST_EXT,
-        eGL_DITHER,
-        eGL_FRAMEBUFFER_SRGB,
-        eGL_LINE_SMOOTH,
-        eGL_MULTISAMPLE,
-        eGL_POLYGON_SMOOTH,
-        eGL_POLYGON_OFFSET_FILL,
-        eGL_POLYGON_OFFSET_LINE,
-        eGL_POLYGON_OFFSET_POINT,
-        eGL_PROGRAM_POINT_SIZE,
-        eGL_PRIMITIVE_RESTART,
-        eGL_PRIMITIVE_RESTART_FIXED_INDEX,
-        eGL_SAMPLE_ALPHA_TO_COVERAGE,
-        eGL_SAMPLE_ALPHA_TO_ONE,
-        eGL_SAMPLE_COVERAGE,
-        eGL_SAMPLE_MASK,
-        eGL_SAMPLE_SHADING,
-        eGL_RASTER_MULTISAMPLE_EXT,
-        eGL_STENCIL_TEST,
-        eGL_TEXTURE_CUBE_MAP_SEAMLESS,
-        eGL_BLEND_ADVANCED_COHERENT_KHR,
-        eGL_RASTERIZER_DISCARD,
-    };
-
-    RDCCOMPILE_ASSERT(ARRAY_COUNT(pnames) == eEnabled_Count, "Wrong number of pnames");
-
-    for(GLuint i = 0; i < eEnabled_Count; i++)
+    if(!CheckEnableDisableParam(enable_disable_cap[i]))
     {
-      if(pnames[i] == eGL_BLEND_ADVANCED_COHERENT_KHR && !HasExt[KHR_blend_equation_advanced_coherent])
-      {
-        Enabled[i] = true;
-        continue;
-      }
-
-      if(pnames[i] == eGL_RASTER_MULTISAMPLE_EXT && !HasExt[EXT_raster_multisample])
-      {
-        Enabled[i] = false;
-        continue;
-      }
-
-      if(pnames[i] == eGL_DEPTH_BOUNDS_TEST_EXT && !HasExt[EXT_depth_bounds_test])
-      {
-        Enabled[i] = false;
-        continue;
-      }
-
-      if(pnames[i] == eGL_SAMPLE_SHADING && !HasExt[ARB_sample_shading])
-      {
-        Enabled[i] = false;
-        continue;
-      }
-
-      if(pnames[i] == eGL_PRIMITIVE_RESTART_FIXED_INDEX && !HasExt[ARB_ES3_compatibility])
-      {
-        Enabled[i] = false;
-        continue;
-      }
-
-      Enabled[i] = (m_Real->glIsEnabled(pnames[i]) == GL_TRUE);
+      Enabled[i] = false;
+      continue;
     }
+
+    Enabled[i] = (m_Real->glIsEnabled(enable_disable_cap[i]) == GL_TRUE);
   }
 
   m_Real->glGetIntegerv(eGL_ACTIVE_TEXTURE, (GLint *)&ActiveTexture);
@@ -615,13 +723,22 @@ void GLRenderState::FetchState(void *ctx, WrappedOpenGL *gl)
   for(GLuint i = 0; i < RDCMIN(maxTextures, (GLuint)ARRAY_COUNT(Tex2D)); i++)
   {
     m_Real->glActiveTexture(GLenum(eGL_TEXTURE0 + i));
-    m_Real->glGetIntegerv(eGL_TEXTURE_BINDING_1D, (GLint *)&Tex1D[i]);
+    if(!IsGLES)
+      m_Real->glGetIntegerv(eGL_TEXTURE_BINDING_1D, (GLint *)&Tex1D[i]);
+    else
+      Tex1D[i] = 0;
     m_Real->glGetIntegerv(eGL_TEXTURE_BINDING_2D, (GLint *)&Tex2D[i]);
     m_Real->glGetIntegerv(eGL_TEXTURE_BINDING_3D, (GLint *)&Tex3D[i]);
-    m_Real->glGetIntegerv(eGL_TEXTURE_BINDING_1D_ARRAY, (GLint *)&Tex1DArray[i]);
+    if(!IsGLES)
+      m_Real->glGetIntegerv(eGL_TEXTURE_BINDING_1D_ARRAY, (GLint *)&Tex1DArray[i]);
+    else
+      Tex1DArray[i] = 0;
     m_Real->glGetIntegerv(eGL_TEXTURE_BINDING_2D_ARRAY, (GLint *)&Tex2DArray[i]);
     m_Real->glGetIntegerv(eGL_TEXTURE_BINDING_CUBE_MAP, (GLint *)&TexCube[i]);
-    m_Real->glGetIntegerv(eGL_TEXTURE_BINDING_RECTANGLE, (GLint *)&TexRect[i]);
+    if(!IsGLES)
+      m_Real->glGetIntegerv(eGL_TEXTURE_BINDING_RECTANGLE, (GLint *)&TexRect[i]);
+    else
+      TexRect[i] = 0;
     m_Real->glGetIntegerv(eGL_TEXTURE_BINDING_BUFFER, (GLint *)&TexBuffer[i]);
     m_Real->glGetIntegerv(eGL_TEXTURE_BINDING_2D_MULTISAMPLE, (GLint *)&Tex2DMS[i]);
     m_Real->glGetIntegerv(eGL_TEXTURE_BINDING_2D_MULTISAMPLE_ARRAY, (GLint *)&Tex2DMSArray[i]);
@@ -674,12 +791,16 @@ void GLRenderState::FetchState(void *ctx, WrappedOpenGL *gl)
   for(GLuint i = 0; i < RDCMIN(maxNumAttribs, (GLuint)ARRAY_COUNT(GenericVertexAttribs)); i++)
     m_Real->glGetVertexAttribfv(i, eGL_CURRENT_VERTEX_ATTRIB, &GenericVertexAttribs[i].x);
 
-  m_Real->glGetFloatv(eGL_POINT_FADE_THRESHOLD_SIZE, &PointFadeThresholdSize);
-  m_Real->glGetIntegerv(eGL_POINT_SPRITE_COORD_ORIGIN, (GLint *)&PointSpriteOrigin);
   m_Real->glGetFloatv(eGL_LINE_WIDTH, &LineWidth);
-  m_Real->glGetFloatv(eGL_POINT_SIZE, &PointSize);
+  if(!IsGLES)
+  {
+    m_Real->glGetFloatv(eGL_POINT_FADE_THRESHOLD_SIZE, &PointFadeThresholdSize);
+    m_Real->glGetIntegerv(eGL_POINT_SPRITE_COORD_ORIGIN, (GLint *)&PointSpriteOrigin);
+    m_Real->glGetFloatv(eGL_POINT_SIZE, &PointSize);
+  }
 
-  m_Real->glGetIntegerv(eGL_PRIMITIVE_RESTART_INDEX, (GLint *)&PrimitiveRestartIndex);
+  if(!IsGLES)
+    m_Real->glGetIntegerv(eGL_PRIMITIVE_RESTART_INDEX, (GLint *)&PrimitiveRestartIndex);
   if(HasExt[ARB_clip_control])
   {
     m_Real->glGetIntegerv(eGL_CLIP_ORIGIN, (GLint *)&ClipOrigin);
@@ -690,7 +811,8 @@ void GLRenderState::FetchState(void *ctx, WrappedOpenGL *gl)
     ClipOrigin = eGL_LOWER_LEFT;
     ClipDepth = eGL_NEGATIVE_ONE_TO_ONE;
   }
-  m_Real->glGetIntegerv(eGL_PROVOKING_VERTEX, (GLint *)&ProvokingVertex);
+  if(!IsGLES)
+    m_Real->glGetIntegerv(eGL_PROVOKING_VERTEX, (GLint *)&ProvokingVertex);
 
   m_Real->glGetIntegerv(eGL_CURRENT_PROGRAM, (GLint *)&Program);
 
@@ -879,7 +1001,8 @@ void GLRenderState::FetchState(void *ctx, WrappedOpenGL *gl)
     m_Real->glGetFloatv(eGL_VIEWPORT, &Viewports[0].x);
     m_Real->glGetIntegerv(eGL_SCISSOR_BOX, &Scissors[0].x);
     Scissors[0].enabled = (m_Real->glIsEnabled(eGL_SCISSOR_TEST) == GL_TRUE);
-    m_Real->glGetDoublev(eGL_DEPTH_RANGE, &DepthRanges[0].nearZ);
+    if(!IsGLES)
+      m_Real->glGetDoublev(eGL_DEPTH_RANGE, &DepthRanges[0].nearZ);
 
     for(GLuint i = 1; i < (GLuint)ARRAY_COUNT(Viewports); i++)
       memcpy(&Viewports[i], &Viewports[0], sizeof(Viewports[i]));
@@ -887,8 +1010,11 @@ void GLRenderState::FetchState(void *ctx, WrappedOpenGL *gl)
     for(GLuint i = 1; i < (GLuint)ARRAY_COUNT(Scissors); i++)
       memcpy(&Scissors[i], &Scissors[0], sizeof(Scissors[i]));
 
-    for(GLuint i = 1; i < (GLuint)ARRAY_COUNT(DepthRanges); i++)
-      memcpy(&DepthRanges[i], &DepthRanges[0], sizeof(DepthRanges[i]));
+    if(!IsGLES)
+    {
+      for(GLuint i = 1; i < (GLuint)ARRAY_COUNT(DepthRanges); i++)
+        memcpy(&DepthRanges[i], &DepthRanges[0], sizeof(DepthRanges[i]));
+    }
   }
 
   m_Real->glGetIntegerv(eGL_DRAW_FRAMEBUFFER_BINDING, (GLint *)&DrawFBO);
@@ -906,9 +1032,12 @@ void GLRenderState::FetchState(void *ctx, WrappedOpenGL *gl)
   m_Real->glBindFramebuffer(eGL_READ_FRAMEBUFFER, ReadFBO);
 
   m_Real->glGetIntegerv(eGL_FRAGMENT_SHADER_DERIVATIVE_HINT, (GLint *)&Hints.Derivatives);
-  m_Real->glGetIntegerv(eGL_LINE_SMOOTH_HINT, (GLint *)&Hints.LineSmooth);
-  m_Real->glGetIntegerv(eGL_POLYGON_SMOOTH_HINT, (GLint *)&Hints.PolySmooth);
-  m_Real->glGetIntegerv(eGL_TEXTURE_COMPRESSION_HINT, (GLint *)&Hints.TexCompression);
+  if(!IsGLES)
+  {
+    m_Real->glGetIntegerv(eGL_LINE_SMOOTH_HINT, (GLint *)&Hints.LineSmooth);
+    m_Real->glGetIntegerv(eGL_POLYGON_SMOOTH_HINT, (GLint *)&Hints.PolySmooth);
+    m_Real->glGetIntegerv(eGL_TEXTURE_COMPRESSION_HINT, (GLint *)&Hints.TexCompression);
+  }
 
   m_Real->glGetBooleanv(eGL_DEPTH_WRITEMASK, &DepthWriteMask);
   m_Real->glGetFloatv(eGL_DEPTH_CLEAR_VALUE, &DepthClearValue);
@@ -977,25 +1106,29 @@ void GLRenderState::FetchState(void *ctx, WrappedOpenGL *gl)
   else
     RasterFixed = false;
 
-  m_Real->glGetIntegerv(eGL_LOGIC_OP_MODE, (GLint *)&LogicOp);
+  if(!IsGLES)
+    m_Real->glGetIntegerv(eGL_LOGIC_OP_MODE, (GLint *)&LogicOp);
 
   m_Real->glGetFloatv(eGL_COLOR_CLEAR_VALUE, &ColorClearValue.red);
 
   if(HasExt[ARB_tessellation_shader])
-  {
     m_Real->glGetIntegerv(eGL_PATCH_VERTICES, &PatchParams.numVerts);
+  else
+    PatchParams.numVerts = 3;
+
+  if(!IsGLES && HasExt[ARB_tessellation_shader])
+  {
     m_Real->glGetFloatv(eGL_PATCH_DEFAULT_INNER_LEVEL, &PatchParams.defaultInnerLevel[0]);
     m_Real->glGetFloatv(eGL_PATCH_DEFAULT_OUTER_LEVEL, &PatchParams.defaultOuterLevel[0]);
   }
   else
   {
-    PatchParams.numVerts = 3;
     PatchParams.defaultInnerLevel[0] = PatchParams.defaultInnerLevel[1] = 1.0f;
     PatchParams.defaultOuterLevel[0] = PatchParams.defaultOuterLevel[1] =
         PatchParams.defaultOuterLevel[2] = PatchParams.defaultOuterLevel[3] = 1.0f;
   }
 
-  if(!VendorCheck[VendorCheck_AMD_polygon_mode_query])
+  if(!VendorCheck[VendorCheck_AMD_polygon_mode_query] && !IsGLES)
   {
     // This was listed in docs as enumeration[2] even though polygon mode can't be set independently
     // for front
@@ -1031,68 +1164,15 @@ void GLRenderState::ApplyState(void *ctx, WrappedOpenGL *gl)
   if(!ContextPresent || ctx == NULL)
     return;
 
+  for(GLuint i = 0; i < eEnabled_Count; i++)
   {
-    GLenum pnames[] = {
-        eGL_CLIP_DISTANCE0,
-        eGL_CLIP_DISTANCE1,
-        eGL_CLIP_DISTANCE2,
-        eGL_CLIP_DISTANCE3,
-        eGL_CLIP_DISTANCE4,
-        eGL_CLIP_DISTANCE5,
-        eGL_CLIP_DISTANCE6,
-        eGL_CLIP_DISTANCE7,
-        eGL_COLOR_LOGIC_OP,
-        eGL_CULL_FACE,
-        eGL_DEPTH_CLAMP,
-        eGL_DEPTH_TEST,
-        eGL_DEPTH_BOUNDS_TEST_EXT,
-        eGL_DITHER,
-        eGL_FRAMEBUFFER_SRGB,
-        eGL_LINE_SMOOTH,
-        eGL_MULTISAMPLE,
-        eGL_POLYGON_SMOOTH,
-        eGL_POLYGON_OFFSET_FILL,
-        eGL_POLYGON_OFFSET_LINE,
-        eGL_POLYGON_OFFSET_POINT,
-        eGL_PROGRAM_POINT_SIZE,
-        eGL_PRIMITIVE_RESTART,
-        eGL_PRIMITIVE_RESTART_FIXED_INDEX,
-        eGL_SAMPLE_ALPHA_TO_COVERAGE,
-        eGL_SAMPLE_ALPHA_TO_ONE,
-        eGL_SAMPLE_COVERAGE,
-        eGL_SAMPLE_MASK,
-        eGL_SAMPLE_SHADING,
-        eGL_RASTER_MULTISAMPLE_EXT,
-        eGL_STENCIL_TEST,
-        eGL_TEXTURE_CUBE_MAP_SEAMLESS,
-        eGL_BLEND_ADVANCED_COHERENT_KHR,
-        eGL_RASTERIZER_DISCARD,
-    };
+    if(!CheckEnableDisableParam(enable_disable_cap[i]))
+      continue;
 
-    RDCCOMPILE_ASSERT(ARRAY_COUNT(pnames) == eEnabled_Count, "Wrong number of pnames");
-
-    for(GLuint i = 0; i < eEnabled_Count; i++)
-    {
-      if(pnames[i] == eGL_BLEND_ADVANCED_COHERENT_KHR && !HasExt[KHR_blend_equation_advanced_coherent])
-        continue;
-
-      if(pnames[i] == eGL_RASTER_MULTISAMPLE_EXT && !HasExt[EXT_raster_multisample])
-        continue;
-
-      if(pnames[i] == eGL_DEPTH_BOUNDS_TEST_EXT && !HasExt[EXT_depth_bounds_test])
-        continue;
-
-      if(pnames[i] == eGL_SAMPLE_SHADING && !HasExt[ARB_sample_shading])
-        continue;
-
-      if(pnames[i] == eGL_PRIMITIVE_RESTART_FIXED_INDEX && !HasExt[ARB_ES3_compatibility])
-        continue;
-
-      if(Enabled[i])
-        m_Real->glEnable(pnames[i]);
-      else
-        m_Real->glDisable(pnames[i]);
-    }
+    if(Enabled[i])
+      m_Real->glEnable(enable_disable_cap[i]);
+    else
+      m_Real->glDisable(enable_disable_cap[i]);
   }
 
   GLuint maxTextures = 0;
@@ -1101,12 +1181,15 @@ void GLRenderState::ApplyState(void *ctx, WrappedOpenGL *gl)
   for(GLuint i = 0; i < RDCMIN(maxTextures, (GLuint)ARRAY_COUNT(Tex2D)); i++)
   {
     m_Real->glActiveTexture(GLenum(eGL_TEXTURE0 + i));
-    m_Real->glBindTexture(eGL_TEXTURE_1D, Tex1D[i]);
+    if(!IsGLES)
+      m_Real->glBindTexture(eGL_TEXTURE_1D, Tex1D[i]);
     m_Real->glBindTexture(eGL_TEXTURE_2D, Tex2D[i]);
     m_Real->glBindTexture(eGL_TEXTURE_3D, Tex3D[i]);
-    m_Real->glBindTexture(eGL_TEXTURE_1D_ARRAY, Tex1DArray[i]);
+    if(!IsGLES)
+      m_Real->glBindTexture(eGL_TEXTURE_1D_ARRAY, Tex1DArray[i]);
     m_Real->glBindTexture(eGL_TEXTURE_2D_ARRAY, Tex2DArray[i]);
-    m_Real->glBindTexture(eGL_TEXTURE_RECTANGLE, TexRect[i]);
+    if(!IsGLES)
+      m_Real->glBindTexture(eGL_TEXTURE_RECTANGLE, TexRect[i]);
     m_Real->glBindTexture(eGL_TEXTURE_BUFFER, TexBuffer[i]);
     m_Real->glBindTexture(eGL_TEXTURE_CUBE_MAP, TexCube[i]);
     m_Real->glBindTexture(eGL_TEXTURE_2D_MULTISAMPLE, Tex2DMS[i]);
@@ -1128,7 +1211,7 @@ void GLRenderState::ApplyState(void *ctx, WrappedOpenGL *gl)
     {
       // use sanitised parameters when no image is bound
       if(Images[i].name == 0)
-        m_Real->glBindImageTexture(i, 0, 0, GL_FALSE, 0, eGL_READ_ONLY, eGL_R8);
+        m_Real->glBindImageTexture(i, 0, 0, GL_FALSE, 0, eGL_READ_ONLY, eGL_RGBA8);
       else
         m_Real->glBindImageTexture(i, Images[i].name, (GLint)Images[i].level, Images[i].layered,
                                    (GLint)Images[i].layer, Images[i].access, Images[i].format);
@@ -1148,15 +1231,20 @@ void GLRenderState::ApplyState(void *ctx, WrappedOpenGL *gl)
   for(GLuint i = 0; i < RDCMIN(maxNumAttribs, (GLuint)ARRAY_COUNT(GenericVertexAttribs)); i++)
     m_Real->glVertexAttrib4fv(i, &GenericVertexAttribs[i].x);
 
-  m_Real->glPointParameterf(eGL_POINT_FADE_THRESHOLD_SIZE, PointFadeThresholdSize);
-  m_Real->glPointParameteri(eGL_POINT_SPRITE_COORD_ORIGIN, (GLint)PointSpriteOrigin);
   m_Real->glLineWidth(LineWidth);
-  m_Real->glPointSize(PointSize);
+  if(!IsGLES)
+  {
+    m_Real->glPointParameterf(eGL_POINT_FADE_THRESHOLD_SIZE, PointFadeThresholdSize);
+    m_Real->glPointParameteri(eGL_POINT_SPRITE_COORD_ORIGIN, (GLint)PointSpriteOrigin);
+    m_Real->glPointSize(PointSize);
+  }
 
-  m_Real->glPrimitiveRestartIndex(PrimitiveRestartIndex);
+  if(!IsGLES)
+    m_Real->glPrimitiveRestartIndex(PrimitiveRestartIndex);
   if(m_Real->glClipControl && HasExt[ARB_clip_control])
     m_Real->glClipControl(ClipOrigin, ClipDepth);
-  m_Real->glProvokingVertex(ProvokingVertex);
+  if(!IsGLES)
+    m_Real->glProvokingVertex(ProvokingVertex);
 
   m_Real->glUseProgram(Program);
   if(HasExt[ARB_separate_shader_objects])
@@ -1256,6 +1344,10 @@ void GLRenderState::ApplyState(void *ctx, WrappedOpenGL *gl)
   {
     for(GLuint i = 0; i < RDCMIN(maxDraws, (GLuint)ARRAY_COUNT(Blends)); i++)
     {
+      if(Blends[i].EquationRGB ==
+         eGL_NONE)    // not set, possibly there were lesser draw buffers during capture
+        continue;
+
       m_Real->glBlendFuncSeparatei(i, Blends[i].SourceRGB, Blends[i].DestinationRGB,
                                    Blends[i].SourceAlpha, Blends[i].DestinationAlpha);
       m_Real->glBlendEquationSeparatei(i, Blends[i].EquationRGB, Blends[i].EquationAlpha);
@@ -1304,7 +1396,8 @@ void GLRenderState::ApplyState(void *ctx, WrappedOpenGL *gl)
     else
       m_Real->glDisable(eGL_SCISSOR_TEST);
 
-    m_Real->glDepthRange(DepthRanges[0].nearZ, DepthRanges[0].farZ);
+    if(!IsGLES)
+      m_Real->glDepthRange(DepthRanges[0].nearZ, DepthRanges[0].farZ);
   }
 
   GLenum DBs[8] = {eGL_NONE};
@@ -1353,12 +1446,15 @@ void GLRenderState::ApplyState(void *ctx, WrappedOpenGL *gl)
   }
 
   m_Real->glHint(eGL_FRAGMENT_SHADER_DERIVATIVE_HINT, Hints.Derivatives);
-  m_Real->glHint(eGL_LINE_SMOOTH_HINT, Hints.LineSmooth);
-  m_Real->glHint(eGL_POLYGON_SMOOTH_HINT, Hints.PolySmooth);
-  m_Real->glHint(eGL_TEXTURE_COMPRESSION_HINT, Hints.TexCompression);
+  if(!IsGLES)
+  {
+    m_Real->glHint(eGL_LINE_SMOOTH_HINT, Hints.LineSmooth);
+    m_Real->glHint(eGL_POLYGON_SMOOTH_HINT, Hints.PolySmooth);
+    m_Real->glHint(eGL_TEXTURE_COMPRESSION_HINT, Hints.TexCompression);
+  }
 
   m_Real->glDepthMask(DepthWriteMask);
-  m_Real->glClearDepth(DepthClearValue);
+  m_Real->glClearDepthf(DepthClearValue);
   m_Real->glDepthFunc(DepthFunc);
 
   if(HasExt[EXT_depth_bounds_test] && m_Real->glDepthBoundsEXT)
@@ -1392,7 +1488,8 @@ void GLRenderState::ApplyState(void *ctx, WrappedOpenGL *gl)
   if(HasExt[EXT_raster_multisample] && m_Real->glRasterSamplesEXT)
     m_Real->glRasterSamplesEXT(RasterSamples, RasterFixed);
 
-  m_Real->glLogicOp(LogicOp);
+  if(!IsGLES)
+    m_Real->glLogicOp(LogicOp);
 
   m_Real->glClearColor(ColorClearValue.red, ColorClearValue.green, ColorClearValue.blue,
                        ColorClearValue.alpha);
@@ -1400,11 +1497,16 @@ void GLRenderState::ApplyState(void *ctx, WrappedOpenGL *gl)
   if(HasExt[ARB_tessellation_shader])
   {
     m_Real->glPatchParameteri(eGL_PATCH_VERTICES, PatchParams.numVerts);
-    m_Real->glPatchParameterfv(eGL_PATCH_DEFAULT_INNER_LEVEL, PatchParams.defaultInnerLevel);
-    m_Real->glPatchParameterfv(eGL_PATCH_DEFAULT_OUTER_LEVEL, PatchParams.defaultOuterLevel);
+    if(!IsGLES)
+    {
+      m_Real->glPatchParameterfv(eGL_PATCH_DEFAULT_INNER_LEVEL, PatchParams.defaultInnerLevel);
+      m_Real->glPatchParameterfv(eGL_PATCH_DEFAULT_OUTER_LEVEL, PatchParams.defaultOuterLevel);
+    }
   }
 
-  m_Real->glPolygonMode(eGL_FRONT_AND_BACK, PolygonMode);
+  if(!IsGLES)
+    m_Real->glPolygonMode(eGL_FRONT_AND_BACK, PolygonMode);
+
   if(HasExt[EXT_polygon_offset_clamp] && m_Real->glPolygonOffsetClampEXT)
     m_Real->glPolygonOffsetClampEXT(PolygonOffset[0], PolygonOffset[1], PolygonOffset[2]);
   else
@@ -1442,7 +1544,7 @@ void GLRenderState::Clear()
   for(GLuint i = 0; i < (GLuint)ARRAY_COUNT(Images); i++)
   {
     Images[i].access = eGL_READ_ONLY;
-    Images[i].format = eGL_R8;
+    Images[i].format = eGL_RGBA8;
   }
 
   RDCEraseEl(Program);
@@ -1824,6 +1926,7 @@ void GLRenderState::Serialise(LogState state, void *ctx, WrappedOpenGL *gl)
   m_pSerialiser->Serialise("GL_CULL_FACE_MODE", CullFace);
 
   m_pSerialiser->Serialise("GL_UNPACK_SWAP_BYTES", Unpack.swapBytes);
+  // TODO serialise GL_UNPACK_LSB_FIRST?
   m_pSerialiser->Serialise("GL_UNPACK_ROW_LENGTH", Unpack.rowlength);
   m_pSerialiser->Serialise("GL_UNPACK_IMAGE_HEIGHT", Unpack.imageheight);
   m_pSerialiser->Serialise("GL_UNPACK_SKIP_PIXELS", Unpack.skipPixels);

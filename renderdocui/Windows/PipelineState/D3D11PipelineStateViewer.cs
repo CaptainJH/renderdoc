@@ -339,7 +339,7 @@ namespace renderdocui.Windows.PipelineState
                     {
                         foreach (var bind in shaderDetails.ReadOnlyResources)
                         {
-                            if (bind.IsSRV && bind.bindPoint == i)
+                            if (!bind.IsSampler && bind.IsSRV && bind.bindPoint == i)
                             {
                                 shaderInput = bind;
                                 break;
@@ -505,7 +505,7 @@ namespace renderdocui.Windows.PipelineState
                         }
                     }
 
-                    bool filledSlot = (s.AddressU.Length > 0);
+                    bool filledSlot = (s.Samp != ResourceId.Null);
                     bool usedSlot = (shaderInput != null);
                     
                     // show if
@@ -532,7 +532,7 @@ namespace renderdocui.Windows.PipelineState
                         string addPrefix = "";
                         string addVal = "";
 
-                        string[] addr = { s.AddressU, s.AddressV, s.AddressW };
+                        string[] addr = { s.AddressU.ToString(), s.AddressV.ToString(), s.AddressW.ToString() };
 
                         // arrange like either UVW: WRAP or UV: WRAP, W: CLAMP
                         for (int a = 0; a < 3; a++)
@@ -554,16 +554,18 @@ namespace renderdocui.Windows.PipelineState
 
                         addressing += addPrefix + ": " + addVal;
 
-                        if(s.UseBorder)
+                        if(s.UseBorder())
                             addressing += String.Format("<{0}>", borderColor);
 
-                        string filter = s.Filter;
+                        string filter = s.Filter.ToString();
 
                         if (s.MaxAniso > 0)
                             filter += String.Format(" {0}x", s.MaxAniso);
 
-                        if (s.UseComparison)
+                        if (s.Filter.func == FilterFunc.Comparison)
                             filter += String.Format(" ({0})", s.Comparison);
+                        else if(s.Filter.func != FilterFunc.Normal)
+                            filter += String.Format(" ({0})", s.Filter.func);
 
                         var node = samplers.Nodes.Add(new object[] { slotname, addressing,
                                                             filter,
@@ -1450,14 +1452,22 @@ namespace renderdocui.Windows.PipelineState
                 {
                     ShaderResource shaderInput = null;
 
-                    if (state.m_PS.ShaderDetails != null)
+                    // any non-CS shader can use these. When that's not supported (Before feature level 11.1)
+                    // this search will just boil down to only PS.
+                    // When multiple stages use the UAV, we allow the last stage to 'win' and define its type,
+                    // although it would be very surprising if the types were actually different anyway.
+                    D3D11PipelineState.ShaderStage[] nonCS = { state.m_VS, state.m_DS, state.m_HS, state.m_GS, state.m_PS };
+                    foreach (var stage in nonCS)
                     {
-                        foreach (var bind in state.m_PS.ShaderDetails.ReadWriteResources)
+                        if (stage.ShaderDetails != null)
                         {
-                            if (bind.bindPoint == i + state.m_OM.UAVStartSlot)
+                            foreach (var bind in stage.ShaderDetails.ReadWriteResources)
                             {
-                                shaderInput = bind;
-                                break;
+                                if (bind.bindPoint == i + state.m_OM.UAVStartSlot)
+                                {
+                                    shaderInput = bind;
+                                    break;
+                                }
                             }
                         }
                     }
@@ -1685,7 +1695,7 @@ namespace renderdocui.Windows.PipelineState
                                                         blend.m_AlphaBlend.Destination,
                                                         blend.m_AlphaBlend.Operation,
 
-                                                        blend.LogicOp,
+                                                        blend.Logic,
 
                                                         ((blend.WriteMask & 0x1) == 0 ? "_" : "R") +
                                                         ((blend.WriteMask & 0x2) == 0 ? "_" : "G") +
@@ -1720,7 +1730,7 @@ namespace renderdocui.Windows.PipelineState
             sampleMask.Text = state.m_OM.m_BlendState.SampleMask.ToString("X8");
 
             depthEnable.Image = state.m_OM.m_State.DepthEnable ? tick : cross;
-            depthFunc.Text = state.m_OM.m_State.DepthFunc;
+            depthFunc.Text = state.m_OM.m_State.DepthFunc.ToString();
             depthWrite.Image = state.m_OM.m_State.DepthWrites ? tick : cross;
 
             stencilEnable.Image = state.m_OM.m_State.StencilEnable ? tick : cross;
@@ -1941,6 +1951,7 @@ namespace renderdocui.Windows.PipelineState
 
                 int bind = -1;
                 bool uav = false;
+                bool omuav = false;
 
                 if (view == null)
                 {
@@ -1997,7 +2008,35 @@ namespace renderdocui.Windows.PipelineState
                         {
                             bind = i + (int)m_Core.CurD3D11PipelineState.m_OM.UAVStartSlot;
                             uav = true;
+                            omuav = true;
                             break;
+                        }
+                    }
+                }
+
+                // for OM UAVs these can be bound to any non-CS stage, so make sure
+                // we have the right shader details for it.
+                // This search allows later stage bindings to override earlier stage bindings,
+                // which is a reasonable behaviour when the same resource can be referenced
+                // in multiple places. Most likely the bindings are equivalent anyway.
+                // The main point is that it allows us to pick up the binding if it's not
+                // bound in the PS but only in an earlier stage.
+                if (omuav)
+                {
+                    var state = m_Core.CurD3D11PipelineState;
+                    D3D11PipelineState.ShaderStage[] nonCS = { state.m_VS, state.m_DS, state.m_HS, state.m_GS, state.m_PS };
+                    foreach (var searchstage in nonCS)
+                    {
+                        if (searchstage.ShaderDetails != null)
+                        {
+                            foreach (var searchbind in searchstage.ShaderDetails.ReadWriteResources)
+                            {
+                                if (searchbind.bindPoint == bind)
+                                {
+                                    deets = searchstage.ShaderDetails;
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
@@ -2033,7 +2072,7 @@ namespace renderdocui.Windows.PipelineState
                     ShaderResource[] resources = uav ? deets.ReadWriteResources : deets.ReadOnlyResources;
                     foreach (var r in resources)
                     {
-                        if (r.IsTexture)
+                        if (r.IsTexture || r.IsSampler)
                             continue;
 
                         if (r.bindPoint == bind)
@@ -2042,10 +2081,17 @@ namespace renderdocui.Windows.PipelineState
                             {
                                 if (view != null)
                                 {
-                                    if (view.Format.special && view.Format.specialFormat == SpecialFormat.R10G10B10A2)
+                                    if (view.Format.special)
                                     {
-                                        if (view.Format.compType == FormatComponentType.UInt) format = "uintten";
-                                        if (view.Format.compType == FormatComponentType.UNorm) format = "unormten";
+                                        if (view.Format.specialFormat == SpecialFormat.R10G10B10A2)
+                                        {
+                                            if (view.Format.compType == FormatComponentType.UInt) format = "uintten";
+                                            if (view.Format.compType == FormatComponentType.UNorm) format = "unormten";
+                                        }
+                                        else if (view.Format.specialFormat == SpecialFormat.R11G11B10)
+                                        {
+                                            format = "floateleven";
+                                        }
                                     }
                                     else if (!view.Format.special)
                                     {
@@ -3374,7 +3420,7 @@ namespace renderdocui.Windows.PipelineState
                     string addPrefix = "";
                     string addVal = "";
 
-                    string[] addr = { s.AddressU, s.AddressV, s.AddressW };
+                    string[] addr = { s.AddressU.ToString(), s.AddressV.ToString(), s.AddressW.ToString() };
 
                     // arrange like either UVW: WRAP or UV: WRAP, W: CLAMP
                     for (int a = 0; a < 3; a++)
@@ -3622,7 +3668,7 @@ namespace renderdocui.Windows.PipelineState
                         b.Enabled ? "Yes" : "No", b.LogicEnabled ? "Yes" : "No",
                         b.m_Blend.Source, b.m_Blend.Destination, b.m_Blend.Operation,
                         b.m_AlphaBlend.Source, b.m_AlphaBlend.Destination, b.m_AlphaBlend.Operation,
-                        b.LogicOp,
+                        b.Logic,
                         ((b.WriteMask & 0x1) == 0 ? "_" : "R") +
                         ((b.WriteMask & 0x2) == 0 ? "_" : "G") +
                         ((b.WriteMask & 0x4) == 0 ? "_" : "B") +

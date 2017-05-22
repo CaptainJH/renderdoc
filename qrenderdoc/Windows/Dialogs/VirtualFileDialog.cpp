@@ -30,7 +30,7 @@
 #include <QRegExp>
 #include <QSortFilterProxyModel>
 #include "Code/CaptureContext.h"
-#include "Code/RenderManager.h"
+#include "Code/ReplayManager.h"
 #include "Code/Resources.h"
 #include "ui_VirtualFileDialog.h"
 
@@ -48,34 +48,34 @@ public:
     FileNameRole,
   };
 
-  RemoteFileModel(RenderManager &r, QObject *parent = NULL)
+  RemoteFileModel(IReplayManager &r, QObject *parent = NULL)
       : Renderer(r), QAbstractItemModel(parent)
   {
     makeIconStates(fileIcon, Pixmaps::page_white_database());
     makeIconStates(exeIcon, Pixmaps::page_white_code());
     makeIconStates(dirIcon, Pixmaps::folder_page());
 
-    Renderer.GetHomeFolder(true, [this](const char *path, const rdctype::array<DirectoryFile> &files) {
+    Renderer.GetHomeFolder(true, [this](const char *path, const rdctype::array<PathEntry> &files) {
       QString homeDir = QString::fromUtf8(path);
 
-      if(QChar(path[0]).isLetter() && path[1] == ':')
+      if(QChar(QLatin1Char(path[0])).isLetter() && path[1] == ':')
       {
         NTPaths = true;
 
         // NT paths
-        Renderer.ListFolder(
-            "/", true, [this, homeDir](const char *path, const rdctype::array<DirectoryFile> &files) {
-              for(int i = 0; i < files.count; i++)
-              {
-                FSNode *node = new FSNode();
-                node->parent = NULL;
-                node->parentIndex = i;
-                node->file = files[i];
-                roots.push_back(node);
+        Renderer.ListFolder(lit("/"), true, [this, homeDir](const char *path,
+                                                            const rdctype::array<PathEntry> &files) {
+          for(int i = 0; i < files.count; i++)
+          {
+            FSNode *node = new FSNode();
+            node->parent = NULL;
+            node->parentIndex = i;
+            node->file = files[i];
+            roots.push_back(node);
 
-                home = indexForPath(homeDir);
-              }
-            });
+            home = indexForPath(homeDir);
+          }
+        });
       }
       else
       {
@@ -85,7 +85,7 @@ public:
         node->parent = NULL;
         node->parentIndex = 0;
         node->file.filename = "/";
-        node->file.flags = eFileProp_Directory;
+        node->file.flags = PathProperty::Directory;
         roots.push_back(node);
 
         home = indexForPath(homeDir);
@@ -113,11 +113,11 @@ public:
     if(NTPaths)
     {
       // normalise to unix directory separators
-      normPath.replace(QChar('\\'), QChar('/'));
+      normPath.replace(QLatin1Char('\\'), QLatin1Char('/'));
 
       for(int i = 0; i < roots.count(); i++)
       {
-        if(normPath[0] == roots[i]->file.filename.front())
+        if(normPath[0] == QLatin1Char(roots[i]->file.filename.front()))
         {
           ret = index(i, 0);
           normPath.remove(0, 2);
@@ -131,7 +131,7 @@ public:
 
     while(!normPath.isEmpty())
     {
-      if(normPath[0] != '/')
+      if(normPath[0] != QLatin1Char('/'))
       {
         qCritical() << "Malformed/unexpected path" << path;
         return QModelIndex();
@@ -139,14 +139,14 @@ public:
 
       // ignore multiple /s adjacent
       int start = 1;
-      while(start < normPath.count() && normPath[start] == '/')
+      while(start < normPath.count() && normPath[start] == QLatin1Char('/'))
         start++;
 
       // if we've hit trailing slashes just stop
       if(start >= normPath.count())
         break;
 
-      int nextDirEnd = normPath.indexOf(QChar('/'), start);
+      int nextDirEnd = normPath.indexOf(QLatin1Char('/'), start);
 
       if(nextDirEnd == -1)
         nextDirEnd = normPath.count();
@@ -236,11 +236,11 @@ public:
       return ret;
 
     // if it's not a dir, there are no children
-    if(getNode(index)->file.flags & eFileProp_Directory)
+    if(getNode(index)->file.flags & PathProperty::Directory)
       ret &= ~Qt::ItemNeverHasChildren;
 
     // if we can't populate it, set it as disabled
-    if(getNode(index)->file.flags & eFileProp_ErrorAccessDenied)
+    if(getNode(index)->file.flags & PathProperty::ErrorAccessDenied)
       ret &= ~Qt::ItemIsEnabled;
 
     return ret;
@@ -306,15 +306,15 @@ public:
             }
             case 1:
             {
-              if(node->file.flags & eFileProp_Directory)
+              if(node->file.flags & PathProperty::Directory)
                 return QVariant();
               return qulonglong(node->file.size);
             }
             case 2:
             {
-              if(node->file.flags & eFileProp_Directory)
+              if(node->file.flags & PathProperty::Directory)
                 return tr("Directory");
-              else if(node->file.flags & eFileProp_Executable)
+              else if(node->file.flags & PathProperty::Executable)
                 return tr("Executable file");
               else
                 return tr("File");
@@ -332,11 +332,11 @@ public:
         case Qt::DecorationRole:
           if(index.column() == 0)
           {
-            int hideIndex = (node->file.flags & eFileProp_Hidden) ? 1 : 0;
+            int hideIndex = (node->file.flags & PathProperty::Hidden) ? 1 : 0;
 
-            if(node->file.flags & eFileProp_Directory)
+            if(node->file.flags & PathProperty::Directory)
               return dirIcon[hideIndex];
-            else if(node->file.flags & eFileProp_Executable)
+            else if(node->file.flags & PathProperty::Executable)
               return exeIcon[hideIndex];
             else
               return fileIcon[hideIndex];
@@ -345,11 +345,12 @@ public:
           if(index.column() == 1)
             return Qt::AlignRight;
           break;
-        case FileIsDirRole: return bool(node->file.flags & eFileProp_Directory);
-        case FileIsHiddenRole: return bool(node->file.flags & eFileProp_Hidden);
-        case FileIsExecutableRole: return bool(node->file.flags & eFileProp_Executable);
+        case FileIsDirRole: return bool(node->file.flags & PathProperty::Directory);
+        case FileIsHiddenRole: return bool(node->file.flags & PathProperty::Hidden);
+        case FileIsExecutableRole: return bool(node->file.flags & PathProperty::Executable);
         case FileIsRootRole: return roots.contains(node);
-        case FileIsAccessDeniedRole: return bool(node->file.flags & eFileProp_ErrorAccessDenied);
+        case FileIsAccessDeniedRole:
+          return bool(node->file.flags & PathProperty::ErrorAccessDenied);
         case FilePathRole: return makePath(node);
         case FileNameRole: return ToQStr(node->file.filename);
         default: break;
@@ -360,7 +361,7 @@ public:
   }
 
 private:
-  RenderManager &Renderer;
+  IReplayManager &Renderer;
 
   QIcon dirIcon[2];
   QIcon exeIcon[2];
@@ -399,7 +400,7 @@ private:
 
     bool populated = false;
 
-    DirectoryFile file;
+    PathEntry file;
 
     QList<FSNode *> children;
   };
@@ -416,7 +417,7 @@ private:
 
   QString makePath(FSNode *node) const
   {
-    QChar sep = NTPaths ? '\\' : '/';
+    QChar sep = NTPaths ? QLatin1Char('\\') : QLatin1Char('/');
     QString ret = ToQStr(node->file.filename);
     FSNode *parent = node->parent;
     // iterate through subdirs but stop before a root
@@ -431,7 +432,7 @@ private:
       // parent is now a root
       ret = ToQStr(parent->file.filename) + ret;
     }
-    ret.replace('/', sep);
+    ret.replace(QLatin1Char('/'), sep);
     return ret;
   }
 
@@ -443,32 +444,30 @@ private:
     node->populated = true;
 
     // nothing to do for non-directories
-    if(!(node->file.flags & eFileProp_Directory))
+    if(!(node->file.flags & PathProperty::Directory))
       return;
 
     Renderer.ListFolder(
-        makePath(node), true,
-        [this, node](const char *path, const rdctype::array<DirectoryFile> &files) {
+        makePath(node), true, [this, node](const char *path, const rdctype::array<PathEntry> &files) {
 
-          if(files.count == 1 && files[0].flags & eFileProp_ErrorAccessDenied)
+          if(files.count == 1 && (files[0].flags & PathProperty::ErrorAccessDenied))
           {
-            node->file.flags |= eFileProp_ErrorAccessDenied;
+            node->file.flags |= PathProperty::ErrorAccessDenied;
             return;
           }
 
-          QVector<DirectoryFile> sortedFiles;
+          QVector<PathEntry> sortedFiles;
           sortedFiles.reserve(files.count);
-          for(const DirectoryFile &f : files)
+          for(const PathEntry &f : files)
             sortedFiles.push_back(f);
 
-          qSort(sortedFiles.begin(), sortedFiles.end(),
-                [](const DirectoryFile &a, const DirectoryFile &b) {
-                  // sort greater than so that files with the flag are sorted before those without
-                  if((a.flags & eFileProp_Directory) != (b.flags & eFileProp_Directory))
-                    return (a.flags & eFileProp_Directory) > (b.flags & eFileProp_Directory);
+          qSort(sortedFiles.begin(), sortedFiles.end(), [](const PathEntry &a, const PathEntry &b) {
+            // sort greater than so that files with the flag are sorted before those without
+            if((a.flags & PathProperty::Directory) != (b.flags & PathProperty::Directory))
+              return (a.flags & PathProperty::Directory) > (b.flags & PathProperty::Directory);
 
-                  return strcmp(a.filename.c_str(), b.filename.c_str()) < 0;
-                });
+            return strcmp(a.filename.c_str(), b.filename.c_str()) < 0;
+          });
 
           for(int i = 0; i < sortedFiles.count(); i++)
           {
@@ -550,14 +549,14 @@ protected:
   }
 };
 
-VirtualFileDialog::VirtualFileDialog(CaptureContext &ctx, QWidget *parent)
+VirtualFileDialog::VirtualFileDialog(ICaptureContext &ctx, QWidget *parent)
     : QDialog(parent), ui(new Ui::VirtualFileDialog)
 {
   ui->setupUi(this);
 
   setWindowFlags(windowFlags() & ~Qt::WindowContextHelpButtonHint);
 
-  m_Model = new RemoteFileModel(ctx.Renderer(), this);
+  m_Model = new RemoteFileModel(ctx.Replay(), this);
 
   m_DirProxy = new RemoteFileProxy(this);
   m_DirProxy->setSourceModel(m_Model);
@@ -576,10 +575,10 @@ VirtualFileDialog::VirtualFileDialog(CaptureContext &ctx, QWidget *parent)
 
   ui->fileList->sortByColumn(0, Qt::AscendingOrder);
 
-  ui->fileList->header()->setSectionResizeMode(0, QHeaderView::Stretch);
-  ui->fileList->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-  ui->fileList->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-  ui->fileList->header()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
+  ui->fileList->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+  ui->fileList->header()->setSectionResizeMode(1, QHeaderView::Stretch);
+  ui->fileList->header()->setSectionResizeMode(2, QHeaderView::Stretch);
+  ui->fileList->header()->setSectionResizeMode(3, QHeaderView::Stretch);
 
   ui->filter->addItems({tr("Executables"), tr("All Files")});
 

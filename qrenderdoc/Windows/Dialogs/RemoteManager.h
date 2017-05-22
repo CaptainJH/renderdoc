@@ -32,8 +32,8 @@ namespace Ui
 class RemoteManager;
 }
 
-class QTreeWidgetItem;
-class CaptureContext;
+class RDTreeWidgetItem;
+struct ICaptureContext;
 class MainWindow;
 class RemoteHost;
 
@@ -42,13 +42,15 @@ class RemoteManager : public QDialog
   Q_OBJECT
 
 public:
-  explicit RemoteManager(CaptureContext &ctx, MainWindow *main);
+  explicit RemoteManager(ICaptureContext &ctx, MainWindow *main);
   ~RemoteManager();
+
+  void closeWhenFinished();
 
 private slots:
   // automatic slots
-  void on_hosts_itemClicked(QTreeWidgetItem *item, int column);
-  void on_hosts_itemActivated(QTreeWidgetItem *item, int column);
+  void on_hosts_itemClicked(RDTreeWidgetItem *item, int column);
+  void on_hosts_itemActivated(RDTreeWidgetItem *item, int column);
   void on_hostname_textEdited(const QString &text);
   void on_hosts_keyPress(QKeyEvent *event);
   void on_hostname_keyPress(QKeyEvent *event);
@@ -61,22 +63,27 @@ private slots:
 
 private:
   Ui::RemoteManager *ui;
-  CaptureContext &m_Ctx;
+  ICaptureContext &m_Ctx;
   MainWindow *m_Main;
   QWidget *lookupsProgressFlow;
 
+  // number of lookups going on. We can't close until there are no lookups remaining to process
   QSemaphore m_Lookups;
 
-  bool isRemoteServerLive(QTreeWidgetItem *node);
-  void setRemoteServerLive(QTreeWidgetItem *node, bool live, bool busy);
+  // handle that the external owner holds while the dialog is open. Once it's closed, we can
+  // delete ourselves once all lookups complete
+  QSemaphore m_ExternalRef;
+
+  bool isRemoteServerLive(RDTreeWidgetItem *node);
+  void setRemoteServerLive(RDTreeWidgetItem *node, bool live, bool busy);
 
   void addHost(RemoteHost *host);
   void updateLookupsStatus();
-  void runRemoteServer(QTreeWidgetItem *node);
+  void runRemoteServer(RDTreeWidgetItem *node);
 
-  void refreshHost(QTreeWidgetItem *node);
-  void lookupComplete();
-  void connectToApp(QTreeWidgetItem *node);
+  void refreshHost(RDTreeWidgetItem *node);
+  void updateStatus();
+  void connectToApp(RDTreeWidgetItem *node);
 
   void updateConnectButton();
   void addNewHost();

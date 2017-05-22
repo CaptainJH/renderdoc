@@ -276,6 +276,7 @@ private:
       *lpProcessInformation = dummy;
     }
 
+    bool resume = (dwCreationFlags & CREATE_SUSPENDED) == 0;
     dwCreationFlags |= CREATE_SUSPENDED;
 
     BOOL ret = realFunc(lpApplicationName, lpCommandLine, lpProcessAttributes, lpThreadAttributes,
@@ -317,16 +318,21 @@ private:
 
       if(inject)
       {
+        rdctype::array<EnvironmentModification> env;
+
         // inherit logfile and capture options
-        uint32_t ident = RENDERDOC_InjectIntoProcess(lpProcessInformation->dwProcessId, NULL,
+        uint32_t ident = RENDERDOC_InjectIntoProcess(lpProcessInformation->dwProcessId, env,
                                                      RenderDoc::Inst().GetLogFile(),
-                                                     &RenderDoc::Inst().GetCaptureOptions(), false);
+                                                     RenderDoc::Inst().GetCaptureOptions(), false);
 
         RenderDoc::Inst().AddChildProcess((uint32_t)lpProcessInformation->dwProcessId, ident);
       }
     }
 
-    ResumeThread(lpProcessInformation->hThread);
+    if(resume)
+    {
+      ResumeThread(lpProcessInformation->hThread);
+    }
 
     // ensure we clean up after ourselves
     if(dummy.dwProcessId != 0)
@@ -358,6 +364,7 @@ private:
       *lpProcessInformation = dummy;
     }
 
+    bool resume = (dwCreationFlags & CREATE_SUSPENDED) == 0;
     dwCreationFlags |= CREATE_SUSPENDED;
 
     BOOL ret = realFunc(lpApplicationName, lpCommandLine, lpProcessAttributes, lpThreadAttributes,
@@ -401,16 +408,21 @@ private:
 
       if(inject)
       {
+        rdctype::array<EnvironmentModification> env;
+
         // inherit logfile and capture options
-        uint32_t ident = RENDERDOC_InjectIntoProcess(lpProcessInformation->dwProcessId, NULL,
+        uint32_t ident = RENDERDOC_InjectIntoProcess(lpProcessInformation->dwProcessId, env,
                                                      RenderDoc::Inst().GetLogFile(),
-                                                     &RenderDoc::Inst().GetCaptureOptions(), false);
+                                                     RenderDoc::Inst().GetCaptureOptions(), false);
 
         RenderDoc::Inst().AddChildProcess((uint32_t)lpProcessInformation->dwProcessId, ident);
       }
     }
 
-    ResumeThread(lpProcessInformation->hThread);
+    if(resume)
+    {
+      ResumeThread(lpProcessInformation->hThread);
+    }
 
     // ensure we clean up after ourselves
     if(dummy.dwProcessId != 0)

@@ -32,7 +32,6 @@
 #include <QTimer>
 #include <QtMath>
 #include "Code/Resources.h"
-#include "Windows/ShaderViewer.h"
 #include "ui_BufferViewer.h"
 
 class CameraWrapper
@@ -399,13 +398,13 @@ public:
   {
     if(section < m_ColumnCount && orientation == Qt::Horizontal && role == Qt::DisplayRole)
     {
-      if(section == 0 && meshView)
+      if(section == 0)
       {
-        return "VTX";
+        return meshView ? lit("VTX") : lit("Element");
       }
       else if(section == 1 && meshView)
       {
-        return "IDX";
+        return lit("IDX");
       }
       else
       {
@@ -414,9 +413,9 @@ public:
         if(el.format.compCount == 1)
           return el.name;
 
-        QChar comps[] = {'x', 'y', 'z', 'w'};
+        QChar comps[] = {QLatin1Char('x'), QLatin1Char('y'), QLatin1Char('z'), QLatin1Char('w')};
 
-        return QString("%1.%2").arg(el.name).arg(comps[componentForIndex(section)]);
+        return QFormatStr("%1.%2").arg(el.name).arg(comps[componentForIndex(section)]);
       }
     }
 
@@ -433,10 +432,13 @@ public:
         opt.features |= QStyleOptionViewItem::HasDisplay;
 
         // pad these columns to allow for sufficiently wide data
-        if(index.column() < 2 && meshView)
-          opt.text = "999999";
+        if(index.column() < reservedColumnCount())
+          opt.text = lit("999999");
         else
           opt.text = data(index).toString();
+
+        opt.text.replace(QLatin1Char('\n'), QChar::LineSeparator);
+
         opt.styleObject = NULL;
 
         QStyle *style = opt.widget ? opt.widget->style() : QApplication::style();
@@ -448,37 +450,103 @@ public:
 
       if((role == Qt::BackgroundRole || role == Qt::ForegroundRole) && col >= reservedColumnCount())
       {
-        int elIdx = columnLookup[col - reservedColumnCount()];
-        int compIdx = componentForIndex(col);
-        if(elIdx == positionEl)
+        if(meshView)
         {
-          if(role == Qt::ForegroundRole)
-            return QBrush(Qt::black);
+          int elIdx = columnLookup[col - reservedColumnCount()];
+          int compIdx = componentForIndex(col);
 
-          if(compIdx != 3 || !meshInput)
+          if(elIdx == positionEl)
           {
-            // C# SkyBlue
-            return QBrush(QColor::fromRgb(135, 206, 235));
+            if(role == Qt::ForegroundRole)
+              return QBrush(Qt::black);
+
+            if(compIdx != 3 || !meshInput)
+            {
+              // C# SkyBlue
+              return QBrush(QColor::fromRgb(135, 206, 235));
+            }
+            else
+            {
+              // C# LightCyan
+              return QBrush(QColor::fromRgb(224, 255, 255));
+            }
           }
-          else
+          else if(secondaryEnabled && elIdx == secondaryEl)
           {
-            // C# LightCyan
-            return QBrush(QColor::fromRgb(224, 255, 255));
+            if(role == Qt::ForegroundRole)
+              return QBrush(Qt::black);
+
+            if((secondaryElAlpha && compIdx == 3) || (!secondaryElAlpha && compIdx != 3))
+            {
+              // C# LightGreen
+              return QBrush(QColor::fromRgb(144, 238, 144));
+            }
+            else
+            {
+              return QBrush(QColor::fromRgb(200, 238, 200));
+            }
           }
         }
-        else if(secondaryEnabled && elIdx == secondaryEl)
+        else
         {
-          if(role == Qt::ForegroundRole)
-            return QBrush(Qt::black);
+          const FormatElement &el = elementForColumn(col);
 
-          if((secondaryElAlpha && compIdx == 3) || (!secondaryElAlpha && compIdx != 3))
+          if(el.rgb && el.buffer < buffers.size())
           {
-            // C# LightGreen
-            return QBrush(QColor::fromRgb(144, 238, 144));
-          }
-          else
-          {
-            return QBrush(QColor::fromRgb(200, 238, 200));
+            const byte *data = buffers[el.buffer]->data;
+            const byte *end = buffers[el.buffer]->end;
+
+            data += buffers[el.buffer]->stride * row;
+            data += el.offset;
+
+            // only slightly wasteful, we need to fetch all variants together
+            // since some formats are packed and can't be read individually
+            QVariantList list = el.GetVariants(data, end);
+
+            if(!list.isEmpty())
+            {
+              QMetaType::Type vt = (QMetaType::Type)list[0].type();
+
+              QColor rgb;
+
+              if(vt == QMetaType::Double)
+              {
+                double r = qBound(0.0, list[0].toDouble(), 1.0);
+                double g = list.size() > 1 ? qBound(0.0, list[1].toDouble(), 1.0) : 0.0;
+                double b = list.size() > 2 ? qBound(0.0, list[2].toDouble(), 1.0) : 0.0;
+
+                rgb = QColor::fromRgbF(r, g, b);
+              }
+              else if(vt == QMetaType::Float)
+              {
+                float r = qBound(0.0f, list[0].toFloat(), 1.0f);
+                float g = list.size() > 1 ? qBound(0.0f, list[1].toFloat(), 1.0f) : 0.0;
+                float b = list.size() > 2 ? qBound(0.0f, list[2].toFloat(), 1.0f) : 0.0;
+
+                rgb = QColor::fromRgbF(r, g, b);
+              }
+              else if(vt == QMetaType::UInt || vt == QMetaType::UShort || vt == QMetaType::UChar)
+              {
+                uint r = qBound(0U, list[0].toUInt(), 255U);
+                uint g = list.size() > 1 ? qBound(0U, list[1].toUInt(), 255U) : 0.0;
+                uint b = list.size() > 2 ? qBound(0U, list[2].toUInt(), 255U) : 0.0;
+
+                rgb = QColor::fromRgb(r, g, b);
+              }
+              else if(vt == QMetaType::Int || vt == QMetaType::Short || vt == QMetaType::SChar)
+              {
+                int r = qBound(0, list[0].toInt(), 255);
+                int g = list.size() > 1 ? qBound(0, list[1].toInt(), 255) : 0.0;
+                int b = list.size() > 2 ? qBound(0, list[2].toInt(), 255) : 0.0;
+
+                rgb = QColor::fromRgb(r, g, b);
+              }
+
+              if(role == Qt::BackgroundRole)
+                return QBrush(rgb);
+              else if(role == Qt::ForegroundRole)
+                return QBrush(contrastingColor(rgb, QColor::fromRgb(0, 0, 0)));
+            }
           }
         }
       }
@@ -487,7 +555,7 @@ public:
       {
         if(col >= 0 && col < m_ColumnCount && row < numRows)
         {
-          if(col == 0 && meshView)
+          if(col == 0)
             return row;
 
           uint32_t idx = row;
@@ -496,12 +564,21 @@ public:
           {
             idx = CalcIndex(indices, row, baseVertex);
 
+            if(primRestart && idx == primRestart)
+              return col == 1 ? lit("--") : lit(" Restart");
+
             if(idx == ~0U)
               return QVariant();
           }
 
           if(col == 1 && meshView)
+          {
+            // if we have separate displayIndices, fetch that for display instead
+            if(displayIndices && displayIndices->data)
+              idx = CalcIndex(displayIndices, row, baseVertex);
+
             return idx;
+          }
 
           const FormatElement &el = elementForColumn(col);
 
@@ -529,54 +606,21 @@ public:
 
             if(comp < list.count())
             {
-              QVariant &v = list[comp];
-
               QString ret;
 
-              QMetaType::Type vt = (QMetaType::Type)v.type();
+              uint32_t rowdim = el.matrixdim;
+              uint32_t coldim = el.format.compCount;
 
-              if(vt == QMetaType::Double)
+              for(uint32_t r = 0; r < rowdim; r++)
               {
-                double d = v.toDouble();
-                // pad with space on left if sign is missing, to better align
-                if(d < 0.0)
-                  ret = Formatter::Format(d);
-                else if(d > 0.0)
-                  ret = " " + Formatter::Format(d);
-                else if(qIsNaN(d))
-                  ret = " NaN";
+                if(r > 0)
+                  ret += lit("\n");
+
+                if(el.rowmajor)
+                  ret += interpretVariant(list[comp + r * coldim], el);
                 else
-                  // force negative and positive 0 together
-                  ret = " " + Formatter::Format(0.0);
+                  ret += interpretVariant(list[r + comp * rowdim], el);
               }
-              else if(vt == QMetaType::Float)
-              {
-                float f = v.toFloat();
-                // pad with space on left if sign is missing, to better align
-                if(f < 0.0)
-                  ret = Formatter::Format(f);
-                else if(f > 0.0)
-                  ret = " " + Formatter::Format(f);
-                else if(qIsNaN(f))
-                  ret = " NaN";
-                else
-                  // force negative and positive 0 together
-                  ret = " " + Formatter::Format(0.0);
-              }
-              else if(vt == QMetaType::UInt || vt == QMetaType::UShort || vt == QMetaType::UChar)
-              {
-                ret = Formatter::Format(v.toUInt(), el.hex);
-              }
-              else if(vt == QMetaType::Int || vt == QMetaType::Short || vt == QMetaType::SChar)
-              {
-                int i = v.toInt();
-                if(i > 0)
-                  ret = " " + Formatter::Format(i);
-                else
-                  ret = Formatter::Format(i);
-              }
-              else
-                ret = v.toString();
 
               return ret;
             }
@@ -595,9 +639,16 @@ public:
   uint32_t numRows = 0;
   bool meshView = true;
   bool meshInput = false;
+
+  // we can have two index buffers for VSOut data:
+  // the original index buffer is used for the displayed value (in displayIndices), and the actual
+  // potentially remapped or permuated index buffer used for fetching data (in indices).
+  BufferData *displayIndices = NULL;
   BufferData *indices = NULL;
+
   QList<FormatElement> columns;
   QList<BufferData *> buffers;
+  uint32_t primRestart = 0;
 
   void setPosColumn(int pos)
   {
@@ -623,7 +674,7 @@ public:
     if(positionEl >= 0 && positionEl < columns.count())
       return columns[positionEl].name;
 
-    return "";
+    return QString();
   }
 
   void setSecondaryColumn(int sec, bool secEnabled, bool secAlpha)
@@ -653,7 +704,7 @@ public:
     if(secondaryEl >= 0 && secondaryEl < columns.count())
       return columns[secondaryEl].name;
 
-    return "";
+    return QString();
   }
   int elementIndexForColumn(int col) const
   {
@@ -684,7 +735,7 @@ private:
   bool secondaryElAlpha = false;
   bool secondaryEnabled = false;
 
-  int reservedColumnCount() const { return (meshView ? 2 : 0); }
+  int reservedColumnCount() const { return (meshView ? 2 : 1); }
   int componentForIndex(int col) const { return componentLookup[col - reservedColumnCount()]; }
   int firstColumnForElement(int el) const
   {
@@ -723,28 +774,28 @@ private:
 
       switch(fmt.format.specialFormat)
       {
-        case eSpecial_BC6:
-        case eSpecial_ETC2:
-        case eSpecial_R11G11B10:
-        case eSpecial_R5G6B5:
-        case eSpecial_R9G9B9E5: compCount = 3; break;
-        case eSpecial_BC1:
-        case eSpecial_BC7:
-        case eSpecial_BC3:
-        case eSpecial_BC2:
-        case eSpecial_R10G10B10A2:
-        case eSpecial_R5G5B5A1:
-        case eSpecial_R4G4B4A4:
-        case eSpecial_ASTC: compCount = 4; break;
-        case eSpecial_BC5:
-        case eSpecial_R4G4:
-        case eSpecial_D16S8:
-        case eSpecial_D24S8:
-        case eSpecial_D32S8: compCount = 2; break;
-        case eSpecial_BC4:
-        case eSpecial_S8: compCount = 1; break;
-        case eSpecial_YUV:
-        case eSpecial_EAC:
+        case SpecialFormat::BC6:
+        case SpecialFormat::ETC2:
+        case SpecialFormat::R11G11B10:
+        case SpecialFormat::R5G6B5:
+        case SpecialFormat::R9G9B9E5: compCount = 3; break;
+        case SpecialFormat::BC1:
+        case SpecialFormat::BC7:
+        case SpecialFormat::BC3:
+        case SpecialFormat::BC2:
+        case SpecialFormat::R10G10B10A2:
+        case SpecialFormat::R5G5B5A1:
+        case SpecialFormat::R4G4B4A4:
+        case SpecialFormat::ASTC: compCount = 4; break;
+        case SpecialFormat::BC5:
+        case SpecialFormat::R4G4:
+        case SpecialFormat::D16S8:
+        case SpecialFormat::D24S8:
+        case SpecialFormat::D32S8: compCount = 2; break;
+        case SpecialFormat::BC4:
+        case SpecialFormat::S8: compCount = 1; break;
+        case SpecialFormat::YUV:
+        case SpecialFormat::EAC:
         default: compCount = fmt.format.compCount;
       }
 
@@ -754,6 +805,64 @@ private:
         componentLookup.push_back((int)c);
       }
     }
+  }
+
+  QString interpretVariant(QVariant &v, const FormatElement &el) const
+  {
+    QString ret;
+
+    QMetaType::Type vt = (QMetaType::Type)v.type();
+
+    if(vt == QMetaType::Double)
+    {
+      double d = v.toDouble();
+      // pad with space on left if sign is missing, to better align
+      if(d < 0.0)
+        ret = Formatter::Format(d);
+      else if(d > 0.0)
+        ret = lit(" ") + Formatter::Format(d);
+      else if(qIsNaN(d))
+        ret = lit(" NaN");
+      else
+        // force negative and positive 0 together
+        ret = lit(" ") + Formatter::Format(0.0);
+    }
+    else if(vt == QMetaType::Float)
+    {
+      float f = v.toFloat();
+      // pad with space on left if sign is missing, to better align
+      if(f < 0.0)
+        ret = Formatter::Format(f);
+      else if(f > 0.0)
+        ret = lit(" ") + Formatter::Format(f);
+      else if(qIsNaN(f))
+        ret = lit(" NaN");
+      else
+        // force negative and positive 0 together
+        ret = lit(" ") + Formatter::Format(0.0);
+    }
+    else if(vt == QMetaType::UInt || vt == QMetaType::UShort || vt == QMetaType::UChar)
+    {
+      uint u = v.toUInt();
+      if(el.hex && el.format.specialFormat == SpecialFormat::Unknown)
+        ret = Formatter::HexFormat(u, el.format.compByteWidth);
+      else
+        ret = Formatter::Format(u, el.hex);
+    }
+    else if(vt == QMetaType::Int || vt == QMetaType::Short || vt == QMetaType::SChar)
+    {
+      int i = v.toInt();
+      if(i > 0)
+        ret = lit(" ") + Formatter::Format(i);
+      else
+        ret = Formatter::Format(i);
+    }
+    else
+    {
+      ret = v.toString();
+    }
+
+    return ret;
   }
 };
 
@@ -807,7 +916,7 @@ void CacheDataForIteration(QVector<CachedElData> &cache, const QList<FormatEleme
   }
 }
 
-BufferViewer::BufferViewer(CaptureContext &ctx, bool meshview, QWidget *parent)
+BufferViewer::BufferViewer(ICaptureContext &ctx, bool meshview, QWidget *parent)
     : QFrame(parent), ui(new Ui::BufferViewer), m_Ctx(ctx)
 {
   ui->setupUi(this);
@@ -823,15 +932,23 @@ BufferViewer::BufferViewer(CaptureContext &ctx, bool meshview, QWidget *parent)
   m_Output = NULL;
 
   memset(&m_Config, 0, sizeof(m_Config));
-  m_Config.type = eMeshDataStage_VSIn;
+  m_Config.type = MeshDataStage::VSIn;
   m_Config.wireframeDraw = true;
 
   ui->outputTabs->setCurrentIndex(0);
-  m_CurStage = eMeshDataStage_VSIn;
+  m_CurStage = MeshDataStage::VSIn;
 
   ui->vsinData->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
   ui->vsoutData->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
   ui->gsoutData->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+
+  ui->rowOffset->setFont(Formatter::PreferredFont());
+  ui->instance->setFont(Formatter::PreferredFont());
+  ui->camSpeed->setFont(Formatter::PreferredFont());
+  ui->fovGuess->setFont(Formatter::PreferredFont());
+  ui->aspectGuess->setFont(Formatter::PreferredFont());
+  ui->nearGuess->setFont(Formatter::PreferredFont());
+  ui->farGuess->setFont(Formatter::PreferredFont());
 
   m_ModelVSIn->meshView = m_ModelVSOut->meshView = m_ModelGSOut->meshView = m_MeshView = meshview;
 
@@ -873,19 +990,19 @@ BufferViewer::BufferViewer(CaptureContext &ctx, bool meshview, QWidget *parent)
   QMenu *menu = new QMenu(this);
 
   QObject::connect(ui->vsinData, &RDTableView::customContextMenuRequested,
-                   [this, menu](const QPoint &pos) { stageRowMenu(eMeshDataStage_VSIn, menu, pos); });
+                   [this, menu](const QPoint &pos) { stageRowMenu(MeshDataStage::VSIn, menu, pos); });
 
   menu = new QMenu(this);
 
   QObject::connect(
       ui->vsoutData, &RDTableView::customContextMenuRequested,
-      [this, menu](const QPoint &pos) { stageRowMenu(eMeshDataStage_VSOut, menu, pos); });
+      [this, menu](const QPoint &pos) { stageRowMenu(MeshDataStage::VSOut, menu, pos); });
 
   menu = new QMenu(this);
 
   QObject::connect(
       ui->gsoutData, &RDTableView::customContextMenuRequested,
-      [this, menu](const QPoint &pos) { stageRowMenu(eMeshDataStage_GSOut, menu, pos); });
+      [this, menu](const QPoint &pos) { stageRowMenu(MeshDataStage::GSOut, menu, pos); });
 
   ui->dockarea->setAllowFloatingWindow(false);
   ui->dockarea->setRubberBandLineWidth(50);
@@ -915,6 +1032,8 @@ BufferViewer::BufferViewer(CaptureContext &ctx, bool meshview, QWidget *parent)
                    &BufferViewer::data_selected);
   QObject::connect(ui->gsoutData->selectionModel(), &QItemSelectionModel::selectionChanged, this,
                    &BufferViewer::data_selected);
+
+  m_CurView = ui->vsinData;
 
   QObject::connect(ui->vsinData, &RDTableView::clicked, [this]() { m_CurView = ui->vsinData; });
   QObject::connect(ui->vsoutData, &RDTableView::clicked, [this]() { m_CurView = ui->vsoutData; });
@@ -952,11 +1071,8 @@ void BufferViewer::SetupRawView()
 
   // hide buttons we don't want in the toolbar
   ui->syncViews->setVisible(false);
-  ui->offsetLine->setVisible(false);
   ui->instanceLabel->setVisible(false);
   ui->instance->setVisible(false);
-  ui->rowOffsetLabel->setVisible(false);
-  ui->rowOffset->setVisible(false);
 
   ui->vsinData->setWindowTitle(tr("Buffer Contents"));
   ui->dockarea->addToolWindow(ui->vsinData, ToolWindowManager::EmptySpace);
@@ -983,6 +1099,13 @@ void BufferViewer::SetupRawView()
 void BufferViewer::SetupMeshView()
 {
   setWindowTitle(tr("Mesh Output"));
+
+  // hide buttons we don't want in the toolbar
+  ui->byteRangeLine->setVisible(false);
+  ui->byteRangeStartLabel->setVisible(false);
+  ui->byteRangeStart->setVisible(false);
+  ui->byteRangeLengthLabel->setVisible(false);
+  ui->byteRangeLength->setVisible(false);
 
   ui->formatSpecifier->setVisible(false);
   ui->cameraControlsGroup->setVisible(false);
@@ -1040,14 +1163,16 @@ void BufferViewer::SetupMeshView()
   QObject::connect(m_SelectSecondColumn, &QAction::triggered, [this]() {
     BufferItemModel *model = (BufferItemModel *)m_CurView->model();
 
-    model->setSecondaryColumn(m_ContextColumn, m_Config.solidShadeMode == eShade_Secondary, false);
+    model->setSecondaryColumn(m_ContextColumn, m_Config.solidShadeMode == SolidShade::Secondary,
+                              false);
     updatePreviewColumns();
     INVOKE_MEMFN(RT_UpdateAndDisplay);
   });
   QObject::connect(m_SelectSecondAlphaColumn, &QAction::triggered, [this]() {
     BufferItemModel *model = (BufferItemModel *)m_CurView->model();
 
-    model->setSecondaryColumn(m_ContextColumn, m_Config.solidShadeMode == eShade_Secondary, true);
+    model->setSecondaryColumn(m_ContextColumn, m_Config.solidShadeMode == SolidShade::Secondary,
+                              true);
     updatePreviewColumns();
     INVOKE_MEMFN(RT_UpdateAndDisplay);
   });
@@ -1057,11 +1182,11 @@ void BufferViewer::SetupMeshView()
   ui->gsoutData->horizontalHeader()->setContextMenuPolicy(Qt::CustomContextMenu);
 
   QObject::connect(ui->vsinData->horizontalHeader(), &QHeaderView::customContextMenuRequested,
-                   [this](const QPoint &pos) { meshHeaderMenu(eMeshDataStage_VSIn, pos); });
+                   [this](const QPoint &pos) { meshHeaderMenu(MeshDataStage::VSIn, pos); });
   QObject::connect(ui->vsoutData->horizontalHeader(), &QHeaderView::customContextMenuRequested,
-                   [this](const QPoint &pos) { meshHeaderMenu(eMeshDataStage_VSOut, pos); });
+                   [this](const QPoint &pos) { meshHeaderMenu(MeshDataStage::VSOut, pos); });
   QObject::connect(ui->gsoutData->horizontalHeader(), &QHeaderView::customContextMenuRequested,
-                   [this](const QPoint &pos) { meshHeaderMenu(eMeshDataStage_GSOut, pos); });
+                   [this](const QPoint &pos) { meshHeaderMenu(MeshDataStage::GSOut, pos); });
 
   QVBoxLayout *vertical = new QVBoxLayout(this);
 
@@ -1100,7 +1225,7 @@ void BufferViewer::stageRowMenu(MeshDataStage stage, QMenu *menu, const QPoint &
 
   menu->clear();
 
-  if(m_MeshView && stage != eMeshDataStage_GSOut)
+  if(m_MeshView && stage != MeshDataStage::GSOut)
   {
     menu->addAction(m_DebugVert);
     menu->addSeparator();
@@ -1123,6 +1248,10 @@ BufferViewer::~BufferViewer()
   if(m_ModelVSOut->indices)
     m_ModelVSOut->indices->deref();
 
+  // only VSOut has display indices - GSOut has no indices at all, and VSIn has no special case
+  if(m_ModelVSOut->displayIndices)
+    m_ModelVSOut->displayIndices->deref();
+
   for(auto vb : m_ModelVSOut->buffers)
     vb->deref();
 
@@ -1133,7 +1262,7 @@ BufferViewer::~BufferViewer()
   delete m_Flycam;
 
   if(m_MeshView)
-    m_Ctx.windowClosed(this);
+    m_Ctx.BuiltinWindowClosed(this);
 
   m_Ctx.RemoveLogViewer(this);
   delete ui;
@@ -1148,14 +1277,11 @@ void BufferViewer::OnLogfileLoaded()
 
   WId renderID = ui->render->winId();
 
-  m_Ctx.Renderer().BlockInvoke([renderID, this](IReplayRenderer *r) {
-    m_Output = r->CreateOutput(m_Ctx.m_CurWinSystem, m_Ctx.FillWindowingData(renderID),
-                               eOutputType_MeshDisplay);
+  m_Ctx.Replay().BlockInvoke([renderID, this](IReplayController *r) {
+    m_Output = r->CreateOutput(m_Ctx.CurWindowingSystem(), m_Ctx.FillWindowingData(renderID),
+                               ReplayOutputType::Mesh);
 
     ui->render->setOutput(m_Output);
-
-    OutputConfig c = {eOutputType_MeshDisplay};
-    m_Output->SetOutputConfig(c);
 
     RT_UpdateAndDisplay(r);
   });
@@ -1164,6 +1290,9 @@ void BufferViewer::OnLogfileLoaded()
 void BufferViewer::OnLogfileClosed()
 {
   Reset();
+
+  if(!m_MeshView)
+    ToolWindowManager::closeToolWindow(this);
 }
 
 void BufferViewer::OnEventChanged(uint32_t eventID)
@@ -1177,6 +1306,8 @@ void BufferViewer::OnEventChanged(uint32_t eventID)
       m_ModelVSOut->secondaryName(), m_ModelGSOut->posName(),      m_ModelGSOut->secondaryName(),
   };
 
+  const DrawcallDescription *draw = m_Ctx.CurDrawcall();
+
   if(m_MeshView)
   {
     ClearModels();
@@ -1184,6 +1315,23 @@ void BufferViewer::OnEventChanged(uint32_t eventID)
     CalcColumnWidth();
 
     ClearModels();
+
+    m_ModelVSIn->primRestart = 0;
+    m_ModelVSOut->primRestart = 0;
+    m_ModelGSOut->primRestart = 0;
+
+    if(m_Ctx.CurPipelineState().IsStripRestartEnabled() && draw &&
+       (draw->flags & DrawFlags::UseIBuffer) && IsStrip(draw->topology))
+    {
+      m_ModelVSIn->primRestart = m_Ctx.CurPipelineState().GetStripRestartIndex();
+
+      if(draw->indexByteWidth == 1)
+        m_ModelVSIn->primRestart &= 0xff;
+      else if(draw->indexByteWidth == 2)
+        m_ModelVSIn->primRestart &= 0xffff;
+
+      m_ModelVSOut->primRestart = m_ModelVSIn->primRestart;
+    }
   }
 
   EnableCameraGuessControls();
@@ -1195,8 +1343,6 @@ void BufferViewer::OnEventChanged(uint32_t eventID)
   m_ModelVSIn->beginReset();
   m_ModelVSOut->beginReset();
   m_ModelGSOut->beginReset();
-
-  const FetchDrawcall *draw = m_Ctx.CurDrawcall();
 
   m_ModelVSIn->baseVertex = draw ? draw->baseVertex : 0;
 
@@ -1225,7 +1371,7 @@ void BufferViewer::OnEventChanged(uint32_t eventID)
       guessSecondaryColumn(m_ModelGSOut);
   }
 
-  m_Ctx.Renderer().AsyncInvoke([this, vsinHoriz, vsoutHoriz, gsoutHoriz](IReplayRenderer *r) {
+  m_Ctx.Replay().AsyncInvoke([this, vsinHoriz, vsoutHoriz, gsoutHoriz](IReplayController *r) {
 
     if(m_MeshView)
     {
@@ -1241,11 +1387,11 @@ void BufferViewer::OnEventChanged(uint32_t eventID)
         if(len == UINT64_MAX)
           len = 0;
 
-        r->GetBufferData(m_BufferID, m_ByteOffset, len, &data);
+        data = r->GetBufferData(m_BufferID, m_ByteOffset, len);
       }
       else
       {
-        r->GetTextureData(m_BufferID, m_TexArrayIdx, m_TexMip, &data);
+        data = r->GetTextureData(m_BufferID, m_TexArrayIdx, m_TexMip);
       }
 
       buf->data = new byte[data.count];
@@ -1274,9 +1420,9 @@ void BufferViewer::OnEventChanged(uint32_t eventID)
       m_ModelVSOut->endReset();
       m_ModelGSOut->endReset();
 
-      ApplyColumnWidths(m_ModelVSIn->columnCount(), ui->vsinData);
-      ApplyColumnWidths(m_ModelVSOut->columnCount(), ui->vsoutData);
-      ApplyColumnWidths(m_ModelGSOut->columnCount(), ui->gsoutData);
+      ApplyRowAndColumnDims(m_ModelVSIn->columnCount(), ui->vsinData);
+      ApplyRowAndColumnDims(m_ModelVSOut->columnCount(), ui->vsoutData);
+      ApplyRowAndColumnDims(m_ModelGSOut->columnCount(), ui->gsoutData);
 
       int numRows = qMax(qMax(m_ModelVSIn->numRows, m_ModelVSOut->numRows), m_ModelGSOut->numRows);
 
@@ -1293,20 +1439,18 @@ void BufferViewer::OnEventChanged(uint32_t eventID)
   });
 }
 
-void BufferViewer::RT_FetchMeshData(IReplayRenderer *r)
+void BufferViewer::RT_FetchMeshData(IReplayController *r)
 {
-  const FetchDrawcall *draw = m_Ctx.CurDrawcall();
+  const DrawcallDescription *draw = m_Ctx.CurDrawcall();
 
-  ResourceId ib;
-  uint64_t ioffset = 0;
-  m_Ctx.CurPipelineState.GetIBuffer(ib, ioffset);
+  QPair<ResourceId, uint64_t> ib = m_Ctx.CurPipelineState().GetIBuffer();
 
-  QVector<BoundVBuffer> vbs = m_Ctx.CurPipelineState.GetVBuffers();
+  QVector<BoundVBuffer> vbs = m_Ctx.CurPipelineState().GetVBuffers();
 
   rdctype::array<byte> idata;
-  if(ib != ResourceId() && draw && (draw->flags & eDraw_UseIBuffer))
-    r->GetBufferData(ib, ioffset + draw->indexOffset * draw->indexByteWidth,
-                     draw->numIndices * draw->indexByteWidth, &idata);
+  if(ib.first != ResourceId() && draw && (draw->flags & DrawFlags::UseIBuffer))
+    idata = r->GetBufferData(ib.first, ib.second + draw->indexOffset * draw->indexByteWidth,
+                             draw->numIndices * draw->indexByteWidth);
 
   uint32_t *indices = NULL;
   if(m_ModelVSIn->indices)
@@ -1328,28 +1472,45 @@ void BufferViewer::RT_FetchMeshData(IReplayRenderer *r)
     maxIndex = 0;
     if(draw->indexByteWidth == 1)
     {
+      uint8_t primRestart = m_ModelVSIn->primRestart & 0xff;
+
       for(size_t i = 0; i < (size_t)idata.count && (uint32_t)i < draw->numIndices; i++)
       {
+        if(primRestart && idata.elems[i] == primRestart)
+          continue;
+
         indices[i] = (uint32_t)idata.elems[i];
         maxIndex = qMax(maxIndex, indices[i]);
       }
     }
     else if(draw->indexByteWidth == 2)
     {
+      uint16_t primRestart = m_ModelVSIn->primRestart & 0xffff;
+
       uint16_t *src = (uint16_t *)idata.elems;
       for(size_t i = 0;
           i < (size_t)idata.count / sizeof(uint16_t) && (uint32_t)i < draw->numIndices; i++)
       {
+        if(primRestart && idata.elems[i] == primRestart)
+          continue;
+
         indices[i] = (uint32_t)src[i];
         maxIndex = qMax(maxIndex, indices[i]);
       }
     }
     else if(draw->indexByteWidth == 4)
     {
+      uint16_t primRestart = m_ModelVSIn->primRestart;
+
       memcpy(indices, idata.elems, qMin((size_t)idata.count, draw->numIndices * sizeof(uint32_t)));
 
       for(uint32_t i = 0; i < draw->numIndices; i++)
+      {
+        if(primRestart && idata.elems[i] == primRestart)
+          continue;
+
         maxIndex = qMax(maxIndex, indices[i]);
+      }
     }
   }
 
@@ -1401,9 +1562,8 @@ void BufferViewer::RT_FetchMeshData(IReplayRenderer *r)
     BufferData *buf = new BufferData;
     if(used)
     {
-      rdctype::array<byte> bufdata;
-      r->GetBufferData(vb.Buffer, vb.ByteOffset + offset * vb.ByteStride,
-                       (maxIdx + 1) * vb.ByteStride, &bufdata);
+      rdctype::array<byte> bufdata = r->GetBufferData(
+          vb.Buffer, vb.ByteOffset + offset * vb.ByteStride, (maxIdx + 1) * vb.ByteStride);
 
       buf->data = new byte[bufdata.count];
       memcpy(buf->data, bufdata.elems, bufdata.count);
@@ -1414,50 +1574,55 @@ void BufferViewer::RT_FetchMeshData(IReplayRenderer *r)
     m_ModelVSIn->buffers.push_back(buf);
   }
 
-  r->GetPostVSData(m_Config.curInstance, eMeshDataStage_VSOut, &m_PostVS);
+  m_PostVS = r->GetPostVSData(m_Config.curInstance, MeshDataStage::VSOut);
 
   m_ModelVSOut->numRows = m_PostVS.numVerts;
 
-  if(draw && m_PostVS.idxbuf != ResourceId() && (draw->flags & eDraw_UseIBuffer))
-    r->GetBufferData(m_PostVS.idxbuf, ioffset + draw->indexOffset * draw->indexByteWidth,
-                     draw->numIndices * draw->indexByteWidth, &idata);
+  if(draw && m_PostVS.idxbuf != ResourceId() && (draw->flags & DrawFlags::UseIBuffer))
+    idata = r->GetBufferData(m_PostVS.idxbuf, 0, draw->numIndices * draw->indexByteWidth);
 
   indices = NULL;
   if(m_ModelVSOut->indices)
     m_ModelVSOut->indices->deref();
-  m_ModelVSOut->indices = new BufferData();
-  if(draw && draw->indexByteWidth != 0 && idata.count != 0)
-  {
-    indices = new uint32_t[draw->numIndices];
-    m_ModelVSOut->indices->data = (byte *)indices;
-    m_ModelVSOut->indices->end = (byte *)(indices + draw->numIndices);
-  }
+  if(m_ModelVSOut->displayIndices)
+    m_ModelVSOut->displayIndices->deref();
 
-  if(draw && idata.count > 0)
+  if(m_ModelVSIn->indices)
   {
-    if(draw->indexByteWidth == 1)
+    // display the same index values
+    m_ModelVSOut->displayIndices = m_ModelVSIn->indices;
+    m_ModelVSOut->displayIndices->ref();
+
+    m_ModelVSOut->indices = new BufferData();
+    if(draw && draw->indexByteWidth != 0 && idata.count != 0)
     {
-      for(size_t i = 0; i < (size_t)idata.count && (uint32_t)i < draw->numIndices; i++)
-        indices[i] = (uint32_t)idata.elems[i];
-    }
-    else if(draw->indexByteWidth == 2)
-    {
-      uint16_t *src = (uint16_t *)idata.elems;
-      for(size_t i = 0;
-          i < (size_t)idata.count / sizeof(uint16_t) && (uint32_t)i < draw->numIndices; i++)
-        indices[i] = (uint32_t)src[i];
-    }
-    else if(draw->indexByteWidth == 4)
-    {
-      memcpy(indices, idata.elems, qMin((size_t)idata.count, draw->numIndices * sizeof(uint32_t)));
+      indices = new uint32_t[draw->numIndices];
+      m_ModelVSOut->indices->data = (byte *)indices;
+      m_ModelVSOut->indices->end = (byte *)(indices + draw->numIndices);
+
+      if(draw->indexByteWidth == 1)
+      {
+        for(size_t i = 0; i < (size_t)idata.count && (uint32_t)i < draw->numIndices; i++)
+          indices[i] = (uint32_t)idata.elems[i];
+      }
+      else if(draw->indexByteWidth == 2)
+      {
+        uint16_t *src = (uint16_t *)idata.elems;
+        for(size_t i = 0;
+            i < (size_t)idata.count / sizeof(uint16_t) && (uint32_t)i < draw->numIndices; i++)
+          indices[i] = (uint32_t)src[i];
+      }
+      else if(draw->indexByteWidth == 4)
+      {
+        memcpy(indices, idata.elems, qMin((size_t)idata.count, draw->numIndices * sizeof(uint32_t)));
+      }
     }
   }
 
   if(m_PostVS.buf != ResourceId())
   {
     BufferData *postvs = new BufferData;
-    rdctype::array<byte> bufdata;
-    r->GetBufferData(m_PostVS.buf, m_PostVS.offset, 0, &bufdata);
+    rdctype::array<byte> bufdata = r->GetBufferData(m_PostVS.buf, m_PostVS.offset, 0);
 
     postvs->data = new byte[bufdata.count];
     memcpy(postvs->data, bufdata.elems, bufdata.count);
@@ -1468,7 +1633,7 @@ void BufferViewer::RT_FetchMeshData(IReplayRenderer *r)
     m_ModelVSOut->buffers.push_back(postvs);
   }
 
-  r->GetPostVSData(m_Config.curInstance, eMeshDataStage_GSOut, &m_PostGS);
+  m_PostGS = r->GetPostVSData(m_Config.curInstance, MeshDataStage::GSOut);
 
   m_ModelGSOut->numRows = m_PostGS.numVerts;
 
@@ -1478,8 +1643,7 @@ void BufferViewer::RT_FetchMeshData(IReplayRenderer *r)
   if(m_PostGS.buf != ResourceId())
   {
     BufferData *postgs = new BufferData;
-    rdctype::array<byte> bufdata;
-    r->GetBufferData(m_PostGS.buf, m_PostGS.offset, 0, &bufdata);
+    rdctype::array<byte> bufdata = r->GetBufferData(m_PostGS.buf, m_PostGS.offset, 0);
 
     postgs->data = new byte[bufdata.count];
     memcpy(postgs->data, bufdata.elems, bufdata.count);
@@ -1712,7 +1876,7 @@ void BufferViewer::guessPositionColumn(BufferItemModel *model)
     {
       const FormatElement &el = model->columns[i];
 
-      if(el.systemValue == eAttr_Position)
+      if(el.systemValue == ShaderBuiltin::Position)
       {
         posEl = i;
         break;
@@ -1724,10 +1888,10 @@ void BufferViewer::guessPositionColumn(BufferItemModel *model)
     {
       const FormatElement &el = model->columns[i];
 
-      if(el.name.compare("POSITION", Qt::CaseInsensitive) == 0 ||
-         el.name.compare("POSITION0", Qt::CaseInsensitive) == 0 ||
-         el.name.compare("POS", Qt::CaseInsensitive) == 0 ||
-         el.name.compare("POS0", Qt::CaseInsensitive) == 0)
+      if(el.name.compare(lit("POSITION"), Qt::CaseInsensitive) == 0 ||
+         el.name.compare(lit("POSITION0"), Qt::CaseInsensitive) == 0 ||
+         el.name.compare(lit("POS"), Qt::CaseInsensitive) == 0 ||
+         el.name.compare(lit("POS0"), Qt::CaseInsensitive) == 0)
       {
         posEl = i;
         break;
@@ -1739,7 +1903,7 @@ void BufferViewer::guessPositionColumn(BufferItemModel *model)
     {
       const FormatElement &el = model->columns[i];
 
-      if(el.name.contains("POSITION", Qt::CaseInsensitive))
+      if(el.name.contains(lit("POSITION"), Qt::CaseInsensitive))
       {
         posEl = i;
         break;
@@ -1751,7 +1915,7 @@ void BufferViewer::guessPositionColumn(BufferItemModel *model)
     {
       const FormatElement &el = model->columns[i];
 
-      if(el.name.contains("POS", Qt::CaseInsensitive))
+      if(el.name.contains(lit("POS"), Qt::CaseInsensitive))
       {
         posEl = i;
         break;
@@ -1779,12 +1943,12 @@ void BufferViewer::guessSecondaryColumn(BufferItemModel *model)
     {
       const FormatElement &el = model->columns[i];
 
-      if(el.name.compare("TEXCOORD", Qt::CaseInsensitive) == 0 ||
-         el.name.compare("TEXCOORD0", Qt::CaseInsensitive) == 0 ||
-         el.name.compare("TEX", Qt::CaseInsensitive) == 0 ||
-         el.name.compare("TEX0", Qt::CaseInsensitive) == 0 ||
-         el.name.compare("UV", Qt::CaseInsensitive) == 0 ||
-         el.name.compare("UV0", Qt::CaseInsensitive) == 0)
+      if(el.name.compare(lit("TEXCOORD"), Qt::CaseInsensitive) == 0 ||
+         el.name.compare(lit("TEXCOORD0"), Qt::CaseInsensitive) == 0 ||
+         el.name.compare(lit("TEX"), Qt::CaseInsensitive) == 0 ||
+         el.name.compare(lit("TEX0"), Qt::CaseInsensitive) == 0 ||
+         el.name.compare(lit("UV"), Qt::CaseInsensitive) == 0 ||
+         el.name.compare(lit("UV0"), Qt::CaseInsensitive) == 0)
       {
         secondEl = i;
         break;
@@ -1795,10 +1959,10 @@ void BufferViewer::guessSecondaryColumn(BufferItemModel *model)
     {
       const FormatElement &el = model->columns[i];
 
-      if(el.name.compare("COLOR", Qt::CaseInsensitive) == 0 ||
-         el.name.compare("COLOR0", Qt::CaseInsensitive) == 0 ||
-         el.name.compare("COL", Qt::CaseInsensitive) == 0 ||
-         el.name.compare("COL0", Qt::CaseInsensitive) == 0)
+      if(el.name.compare(lit("COLOR"), Qt::CaseInsensitive) == 0 ||
+         el.name.compare(lit("COLOR0"), Qt::CaseInsensitive) == 0 ||
+         el.name.compare(lit("COL"), Qt::CaseInsensitive) == 0 ||
+         el.name.compare(lit("COL0"), Qt::CaseInsensitive) == 0)
       {
         secondEl = i;
         break;
@@ -1806,13 +1970,16 @@ void BufferViewer::guessSecondaryColumn(BufferItemModel *model)
     }
   }
 
-  model->setSecondaryColumn(secondEl, m_Config.solidShadeMode == eShade_Secondary, false);
+  model->setSecondaryColumn(secondEl, m_Config.solidShadeMode == SolidShade::Secondary, false);
 }
 
 void BufferViewer::updatePreviewColumns()
 {
-  QVector<BoundVBuffer> vbs = m_Ctx.CurPipelineState.GetVBuffers();
-  const FetchDrawcall *draw = m_Ctx.CurDrawcall();
+  if(!m_MeshView)
+    return;
+
+  QVector<BoundVBuffer> vbs = m_Ctx.CurPipelineState().GetVBuffers();
+  const DrawcallDescription *draw = m_Ctx.CurDrawcall();
 
   if(draw)
   {
@@ -1829,7 +1996,9 @@ void BufferViewer::updatePreviewColumns()
       m_VSInPosition.topo = draw->topology;
       m_VSInPosition.idxByteWidth = draw->indexByteWidth;
       m_VSInPosition.baseVertex = draw->baseVertex;
-      m_Ctx.CurPipelineState.GetIBuffer(m_VSInPosition.idxbuf, m_VSInPosition.idxoffs);
+      QPair<ResourceId, uint64_t> ib = m_Ctx.CurPipelineState().GetIBuffer();
+      m_VSInPosition.idxbuf = ib.first;
+      m_VSInPosition.idxoffs = ib.second + draw->indexOffset * draw->indexByteWidth;
 
       {
         const FormatElement &el = m_ModelVSIn->columns[elIdx];
@@ -1843,7 +2012,8 @@ void BufferViewer::updatePreviewColumns()
         m_VSInPosition.compByteWidth = el.format.compByteWidth;
         m_VSInPosition.compType = el.format.compType;
         m_VSInPosition.bgraOrder = el.format.bgraOrder;
-        m_VSInPosition.specialFormat = el.format.special ? el.format.specialFormat : eSpecial_Unknown;
+        m_VSInPosition.specialFormat =
+            el.format.special ? el.format.specialFormat : SpecialFormat::Unknown;
       }
 
       elIdx = m_ModelVSIn->secondaryColumn();
@@ -1862,7 +2032,7 @@ void BufferViewer::updatePreviewColumns()
         m_VSInSecondary.compType = el.format.compType;
         m_VSInSecondary.bgraOrder = el.format.bgraOrder;
         m_VSInSecondary.specialFormat =
-            el.format.special ? el.format.specialFormat : eSpecial_Unknown;
+            el.format.special ? el.format.specialFormat : SpecialFormat::Unknown;
         m_VSInSecondary.showAlpha = m_ModelVSIn->secondaryAlpha();
       }
     }
@@ -1913,11 +2083,11 @@ void BufferViewer::updatePreviewColumns()
 
     m_PostGSPosition.idxByteWidth = 0;
 
-    if(!(draw->flags & eDraw_UseIBuffer))
+    if(!(draw->flags & DrawFlags::UseIBuffer))
       m_PostVSPosition.idxByteWidth = m_VSInPosition.idxByteWidth = 0;
 
     m_PostGSPosition.unproject = true;
-    m_PostVSPosition.unproject = !m_Ctx.CurPipelineState.IsTessellationEnabled();
+    m_PostVSPosition.unproject = !m_Ctx.CurPipelineState().IsTessellationEnabled();
   }
   else
   {
@@ -1936,9 +2106,9 @@ void BufferViewer::updatePreviewColumns()
 
 void BufferViewer::configureMeshColumns()
 {
-  const FetchDrawcall *draw = m_Ctx.CurDrawcall();
+  const DrawcallDescription *draw = m_Ctx.CurDrawcall();
 
-  QVector<VertexInputAttribute> vinputs = m_Ctx.CurPipelineState.GetVertexInputs();
+  QVector<VertexInputAttribute> vinputs = m_Ctx.CurPipelineState().GetVertexInputs();
 
   m_ModelVSIn->columns.reserve(vinputs.count());
 
@@ -1950,7 +2120,7 @@ void BufferViewer::configureMeshColumns()
     FormatElement f(a.Name, a.VertexBuffer, a.RelativeByteOffset, a.PerInstance, a.InstanceRate,
                     false,    // row major matrix
                     1,        // matrix dimension
-                    a.Format, false);
+                    a.Format, false, false);
 
     m_ModelVSIn->columns.push_back(f);
   }
@@ -1960,9 +2130,9 @@ void BufferViewer::configureMeshColumns()
   else
     m_ModelVSIn->numRows = draw->numIndices;
 
-  QVector<BoundVBuffer> vbs = m_Ctx.CurPipelineState.GetVBuffers();
+  QVector<BoundVBuffer> vbs = m_Ctx.CurPipelineState().GetVBuffers();
 
-  Viewport vp = m_Ctx.CurPipelineState.GetViewport(0);
+  Viewport vp = m_Ctx.CurPipelineState().GetViewport(0);
 
   m_Config.fov = ui->fovGuess->value();
   m_Config.aspect = vp.width / vp.height;
@@ -1977,7 +2147,7 @@ void BufferViewer::configureMeshColumns()
   if(ui->farGuess->value() > 0.0)
     m_PostVS.farPlane = m_PostGS.farPlane = ui->farGuess->value();
 
-  const ShaderReflection *vs = m_Ctx.CurPipelineState.GetShaderReflection(eShaderStage_Vertex);
+  const ShaderReflection *vs = m_Ctx.CurPipelineState().GetShaderReflection(ShaderStage::Vertex);
 
   m_ModelVSOut->columns.clear();
 
@@ -1996,14 +2166,13 @@ void BufferViewer::configureMeshColumns()
       f.format.compCount = sig.compCount;
       f.format.compType = sig.compType;
       f.format.special = false;
-      f.format.rawType = 0;
       f.perinstance = false;
       f.instancerate = 1;
       f.rowmajor = false;
       f.matrixdim = 1;
       f.systemValue = sig.systemValue;
 
-      if(f.systemValue == eAttr_Position)
+      if(f.systemValue == ShaderBuiltin::Position)
         posidx = i;
 
       m_ModelVSOut->columns.push_back(f);
@@ -2024,9 +2193,9 @@ void BufferViewer::configureMeshColumns()
     for(const FormatElement &sig : m_ModelVSOut->columns)
     {
       uint numComps = sig.format.compCount;
-      uint elemSize = sig.format.compType == eCompType_Double ? 8U : 4U;
+      uint elemSize = sig.format.compType == CompType::Double ? 8U : 4U;
 
-      if(m_Ctx.CurPipelineState.HasAlignedPostVSData())
+      if(m_Ctx.CurPipelineState().HasAlignedPostVSData())
       {
         if(numComps == 2)
           offset = AlignUp(offset, 2U * elemSize);
@@ -2044,9 +2213,10 @@ void BufferViewer::configureMeshColumns()
 
   if(draw)
   {
-    const ShaderReflection *last = m_Ctx.CurPipelineState.GetShaderReflection(eShaderStage_Geometry);
+    const ShaderReflection *last =
+        m_Ctx.CurPipelineState().GetShaderReflection(ShaderStage::Geometry);
     if(last == NULL)
-      last = m_Ctx.CurPipelineState.GetShaderReflection(eShaderStage_Domain);
+      last = m_Ctx.CurPipelineState().GetShaderReflection(ShaderStage::Domain);
 
     if(last)
     {
@@ -2063,14 +2233,13 @@ void BufferViewer::configureMeshColumns()
         f.format.compCount = sig.compCount;
         f.format.compType = sig.compType;
         f.format.special = false;
-        f.format.rawType = 0;
         f.perinstance = false;
         f.instancerate = 1;
         f.rowmajor = false;
         f.matrixdim = 1;
         f.systemValue = sig.systemValue;
 
-        if(f.systemValue == eAttr_Position)
+        if(f.systemValue == ShaderBuiltin::Position)
           posidx = i;
 
         m_ModelGSOut->columns.push_back(f);
@@ -2091,9 +2260,9 @@ void BufferViewer::configureMeshColumns()
       for(const FormatElement &sig : m_ModelGSOut->columns)
       {
         uint numComps = sig.format.compCount;
-        uint elemSize = sig.format.compType == eCompType_Double ? 8U : 4U;
+        uint elemSize = sig.format.compType == CompType::Double ? 8U : 4U;
 
-        if(m_Ctx.CurPipelineState.HasAlignedPostVSData())
+        if(m_Ctx.CurPipelineState().HasAlignedPostVSData())
         {
           if(numComps == 2)
             offset = AlignUp(offset, 2U * elemSize);
@@ -2109,19 +2278,21 @@ void BufferViewer::configureMeshColumns()
   }
 }
 
-void BufferViewer::ApplyColumnWidths(int numColumns, RDTableView *view)
+void BufferViewer::ApplyRowAndColumnDims(int numColumns, RDTableView *view)
 {
   int start = 0;
 
+  // vertex/element
+  view->setColumnWidth(start++, m_IdxColWidth);
+
+  // mesh view only - index
   if(m_MeshView)
-  {
-    view->setColumnWidth(0, m_IdxColWidth);
-    view->setColumnWidth(1, m_IdxColWidth);
-    start = 2;
-  }
+    view->setColumnWidth(start++, m_IdxColWidth);
 
   for(int i = start; i < numColumns; i++)
     view->setColumnWidth(i, m_DataColWidth);
+
+  view->verticalHeader()->setDefaultSectionSize(m_DataRowHeight);
 }
 
 void BufferViewer::UpdateMeshConfig()
@@ -2139,15 +2310,15 @@ void BufferViewer::UpdateMeshConfig()
   m_Config.type = m_CurStage;
   switch(m_CurStage)
   {
-    case eMeshDataStage_VSIn:
+    case MeshDataStage::VSIn:
       m_Config.position = m_VSInPosition;
       m_Config.second = m_VSInSecondary;
       break;
-    case eMeshDataStage_VSOut:
+    case MeshDataStage::VSOut:
       m_Config.position = m_PostVSPosition;
       m_Config.second = m_PostVSSecondary;
       break;
-    case eMeshDataStage_GSOut:
+    case MeshDataStage::GSOut:
       m_Config.position = m_PostGSPosition;
       m_Config.second = m_PostGSSecondary;
       break;
@@ -2194,10 +2365,12 @@ void BufferViewer::render_clicked(QMouseEvent *e)
 
   if((e->buttons() & Qt::RightButton) && m_Output)
   {
-    m_Ctx.Renderer().AsyncInvoke("PickVertex", [this, curpos](IReplayRenderer *r) {
+    m_Ctx.Replay().AsyncInvoke(lit("PickVertex"), [this, curpos](IReplayController *r) {
       uint32_t instanceSelected = 0;
-      uint32_t vertSelected = m_Output->PickVertex(m_Ctx.CurEvent(), (uint32_t)curpos.x(),
-                                                   (uint32_t)curpos.y(), &instanceSelected);
+      uint32_t vertSelected = 0;
+
+      std::tie(vertSelected, instanceSelected) =
+          m_Output->PickVertex(m_Ctx.CurEvent(), (uint32_t)curpos.x(), (uint32_t)curpos.y());
 
       if(vertSelected != ~0U)
       {
@@ -2244,9 +2417,12 @@ void BufferViewer::ViewBuffer(uint64_t byteOffset, uint64_t byteSize, ResourceId
   m_ByteSize = byteSize;
   m_BufferID = id;
 
-  FetchBuffer *buf = m_Ctx.GetBuffer(id);
+  BufferDescription *buf = m_Ctx.GetBuffer(id);
   if(buf)
-    setWindowTitle(ToQStr(buf->name) + " - Contents");
+  {
+    setWindowTitle(ToQStr(buf->name) + lit(" - Contents"));
+    m_ObjectByteSize = buf->length;
+  }
 
   processFormat(format);
 }
@@ -2261,9 +2437,12 @@ void BufferViewer::ViewTexture(uint32_t arrayIdx, uint32_t mip, ResourceId id, c
   m_TexMip = mip;
   m_BufferID = id;
 
-  FetchTexture *tex = m_Ctx.GetTexture(id);
+  TextureDescription *tex = m_Ctx.GetTexture(id);
   if(tex)
-    setWindowTitle(ToQStr(tex->name) + " - Contents");
+  {
+    setWindowTitle(ToQStr(tex->name) + lit(" - Contents"));
+    m_ObjectByteSize = tex->byteSize;
+  }
 
   processFormat(format);
 }
@@ -2292,7 +2471,7 @@ void BufferViewer::render_timer()
     INVOKE_MEMFN(RT_UpdateAndDisplay);
 }
 
-void BufferViewer::RT_UpdateAndDisplay(IReplayRenderer *)
+void BufferViewer::RT_UpdateAndDisplay(IReplayController *)
 {
   if(m_Output)
   {
@@ -2304,11 +2483,11 @@ void BufferViewer::RT_UpdateAndDisplay(IReplayRenderer *)
 
 RDTableView *BufferViewer::tableForStage(MeshDataStage stage)
 {
-  if(stage == eMeshDataStage_VSIn)
+  if(stage == MeshDataStage::VSIn)
     return ui->vsinData;
-  else if(stage == eMeshDataStage_VSOut)
+  else if(stage == MeshDataStage::VSOut)
     return ui->vsoutData;
-  else if(stage == eMeshDataStage_GSOut)
+  else if(stage == MeshDataStage::GSOut)
     return ui->gsoutData;
 
   return NULL;
@@ -2316,11 +2495,11 @@ RDTableView *BufferViewer::tableForStage(MeshDataStage stage)
 
 BufferItemModel *BufferViewer::modelForStage(MeshDataStage stage)
 {
-  if(stage == eMeshDataStage_VSIn)
+  if(stage == MeshDataStage::VSIn)
     return m_ModelVSIn;
-  else if(stage == eMeshDataStage_VSOut)
+  else if(stage == MeshDataStage::VSOut)
     return m_ModelVSOut;
-  else if(stage == eMeshDataStage_GSOut)
+  else if(stage == MeshDataStage::GSOut)
     return m_ModelGSOut;
 
   return NULL;
@@ -2328,18 +2507,18 @@ BufferItemModel *BufferViewer::modelForStage(MeshDataStage stage)
 
 bool BufferViewer::isCurrentRasterOut()
 {
-  if(m_CurStage == eMeshDataStage_VSIn)
+  if(m_CurStage == MeshDataStage::VSIn)
   {
     return false;
   }
-  else if(m_CurStage == eMeshDataStage_VSOut)
+  else if(m_CurStage == MeshDataStage::VSOut)
   {
-    if(m_Ctx.LogLoaded() && m_Ctx.CurPipelineState.IsTessellationEnabled())
+    if(m_Ctx.LogLoaded() && m_Ctx.CurPipelineState().IsTessellationEnabled())
       return false;
 
     return true;
   }
-  else if(m_CurStage == eMeshDataStage_GSOut)
+  else if(m_CurStage == MeshDataStage::GSOut)
   {
     return true;
   }
@@ -2349,11 +2528,11 @@ bool BufferViewer::isCurrentRasterOut()
 
 int BufferViewer::currentStageIndex()
 {
-  if(m_CurStage == eMeshDataStage_VSIn)
+  if(m_CurStage == MeshDataStage::VSIn)
     return 0;
-  else if(m_CurStage == eMeshDataStage_VSOut)
+  else if(m_CurStage == MeshDataStage::VSOut)
     return 1;
-  else if(m_CurStage == eMeshDataStage_GSOut)
+  else if(m_CurStage == MeshDataStage::GSOut)
     return 2;
 
   return 0;
@@ -2367,7 +2546,7 @@ void BufferViewer::Reset()
 
   m_BBoxes.clear();
 
-  CaptureContext *ctx = &m_Ctx;
+  ICaptureContext *ctx = &m_Ctx;
 
   // while a log is loaded, pass NULL into the widget
   if(!m_Ctx.LogLoaded())
@@ -2420,35 +2599,33 @@ void BufferViewer::ClearModels()
   }
 }
 
-void BufferViewer::CalcColumnWidth()
+void BufferViewer::CalcColumnWidth(int maxNumRows)
 {
   m_ModelVSIn->beginReset();
 
   ResourceFormat floatFmt;
   floatFmt.compByteWidth = 4;
-  floatFmt.compType = eCompType_Float;
+  floatFmt.compType = CompType::Float;
   floatFmt.compCount = 1;
 
   ResourceFormat intFmt;
-  floatFmt.compByteWidth = 4;
-  floatFmt.compType = eCompType_UInt;
-  floatFmt.compCount = 1;
+  intFmt.compByteWidth = 4;
+  intFmt.compType = CompType::UInt;
+  intFmt.compCount = 1;
 
-  FormatElement("ColumnSizeTest", 0, 0, false, 1, false, 1, floatFmt, false);
-  FormatElement("ColumnSizeTest", 0, 0, false, 1, false, 1, intFmt, true);
-  FormatElement("ColumnSizeTest", 0, 0, false, 1, false, 1, intFmt, false);
+  QString headerText = lit("ColumnSizeTest");
 
   m_ModelVSIn->columns.clear();
   m_ModelVSIn->columns.push_back(
-      FormatElement("ColumnSizeTest", 0, 0, false, 1, false, 1, floatFmt, false));
+      FormatElement(headerText, 0, 0, false, 1, false, maxNumRows, floatFmt, false, false));
   m_ModelVSIn->columns.push_back(
-      FormatElement("ColumnSizeTest", 0, 4, false, 1, false, 1, floatFmt, false));
+      FormatElement(headerText, 0, 4, false, 1, false, 1, floatFmt, false, false));
   m_ModelVSIn->columns.push_back(
-      FormatElement("ColumnSizeTest", 0, 8, false, 1, false, 1, floatFmt, false));
+      FormatElement(headerText, 0, 8, false, 1, false, 1, floatFmt, false, false));
   m_ModelVSIn->columns.push_back(
-      FormatElement("ColumnSizeTest", 0, 12, false, 1, false, 1, intFmt, true));
+      FormatElement(headerText, 0, 12, false, 1, false, 1, intFmt, true, false));
   m_ModelVSIn->columns.push_back(
-      FormatElement("ColumnSizeTest", 0, 16, false, 1, false, 1, intFmt, false));
+      FormatElement(headerText, 0, 16, false, 1, false, 1, intFmt, false, false));
 
   m_ModelVSIn->numRows = 2;
 
@@ -2468,7 +2645,7 @@ void BufferViewer::CalcColumnWidth()
 
   struct TestData
   {
-    float f[3];
+    float f[4];
     uint32_t ui[3];
   };
 
@@ -2483,6 +2660,7 @@ void BufferViewer::CalcColumnWidth()
   test->f[0] = 1.0f;
   test->f[1] = 1.2345e-20f;
   test->f[2] = 123456.7890123456789f;
+  test->f[3] = -1.0f;
 
   test->ui[1] = 0x12345678;
   test->ui[2] = 0xffffffff;
@@ -2492,13 +2670,12 @@ void BufferViewer::CalcColumnWidth()
   // measure this data so we can use this as column widths
   ui->vsinData->resizeColumnsToContents();
 
-  // index column
-  int col = 0;
+  // index/element column
+  m_IdxColWidth = ui->vsinData->columnWidth(0);
+
+  int col = 1;
   if(m_MeshView)
-  {
-    m_IdxColWidth = ui->vsinData->columnWidth(1);
     col = 2;
-  }
 
   m_DataColWidth = 10;
   for(int c = 0; c < 5; c++)
@@ -2506,6 +2683,10 @@ void BufferViewer::CalcColumnWidth()
     int colWidth = ui->vsinData->columnWidth(col + c);
     m_DataColWidth = qMax(m_DataColWidth, colWidth);
   }
+
+  ui->vsinData->resizeRowsToContents();
+
+  m_DataRowHeight = ui->vsinData->rowHeight(0);
 }
 
 void BufferViewer::data_selected(const QItemSelection &selected, const QItemSelection &deselected)
@@ -2536,7 +2717,7 @@ void BufferViewer::camGuess_changed(double value)
   m_Config.aspect = 1.0f;
 
   // take a guess for the aspect ratio, for if the user hasn't overridden it
-  Viewport vp = m_Ctx.CurPipelineState.GetViewport(0);
+  Viewport vp = m_Ctx.CurPipelineState().GetViewport(0);
   m_Config.aspect = vp.width / vp.height;
 
   if(ui->aspectGuess->value() > 0.0)
@@ -2546,9 +2727,9 @@ void BufferViewer::camGuess_changed(double value)
   // hasn't overridden the values
   m_Config.position.nearPlane = 0.1f;
 
-  if(m_CurStage == eMeshDataStage_VSOut)
+  if(m_CurStage == MeshDataStage::VSOut)
     m_Config.position.nearPlane = m_PostVS.nearPlane;
-  else if(m_CurStage == eMeshDataStage_GSOut)
+  else if(m_CurStage == MeshDataStage::GSOut)
     m_Config.position.nearPlane = m_PostGS.nearPlane;
 
   if(ui->nearGuess->value() > 0.0)
@@ -2556,9 +2737,9 @@ void BufferViewer::camGuess_changed(double value)
 
   m_Config.position.farPlane = 100.0f;
 
-  if(m_CurStage == eMeshDataStage_VSOut)
+  if(m_CurStage == MeshDataStage::VSOut)
     m_Config.position.farPlane = m_PostVS.farPlane;
-  else if(m_CurStage == eMeshDataStage_GSOut)
+  else if(m_CurStage == MeshDataStage::GSOut)
     m_Config.position.farPlane = m_PostGS.farPlane;
 
   if(ui->nearGuess->value() > 0.0)
@@ -2576,15 +2757,55 @@ void BufferViewer::processFormat(const QString &format)
 
   Reset();
 
-  CalcColumnWidth();
+  QList<FormatElement> cols = FormatElement::ParseFormatString(format, 0, true, errors);
+
+  int maxNumRows = 1;
+
+  for(const FormatElement &c : cols)
+    maxNumRows = qMax(maxNumRows, (int)c.matrixdim);
+
+  CalcColumnWidth(maxNumRows);
 
   ClearModels();
 
-  m_ModelVSIn->columns = FormatElement::ParseFormatString(format, 0, true, errors);
+  m_Format = format;
+
+  ui->formatSpecifier->setFormat(format);
+
+  m_ModelVSIn->columns = cols;
+
+  uint32_t stride = 0;
+  for(const FormatElement &el : m_ModelVSIn->columns)
+    stride += el.byteSize();
+
+  stride = qMax(1U, stride);
+
+  ui->byteRangeStart->setSingleStep((int)stride);
+  ui->byteRangeLength->setSingleStep((int)stride);
+
+  ui->byteRangeStart->setMaximum((int)m_ObjectByteSize);
+  ui->byteRangeLength->setMaximum((int)m_ObjectByteSize);
+
+  ui->byteRangeStart->setValue((int)m_ByteOffset);
+  ui->byteRangeLength->setValue((int)m_ByteSize);
 
   ui->formatSpecifier->setErrors(errors);
 
   OnEventChanged(m_Ctx.CurEvent());
+}
+
+void BufferViewer::on_byteRangeStart_valueChanged(int value)
+{
+  m_ByteOffset = value;
+
+  processFormat(m_Format);
+}
+
+void BufferViewer::on_byteRangeLength_valueChanged(int value)
+{
+  m_ByteSize = value;
+
+  processFormat(m_Format);
 }
 
 void BufferViewer::exportData(const BufferExport &params)
@@ -2600,12 +2821,12 @@ void BufferViewer::exportData(const BufferExport &params)
 
   QString filter;
   if(params.format == BufferExport::CSV)
-    filter = "CSV Files (*.csv)";
+    filter = tr("CSV Files (*.csv)");
   else if(params.format == BufferExport::RawBytes)
-    filter = "Binary Files (*.bin)";
+    filter = tr("Binary Files (*.bin)");
 
   QString filename = RDDialog::getSaveFileName(this, tr("Export buffer to bytes"), QString(),
-                                               QString("%1;;All files (*.*)").arg(filter));
+                                               tr("%1;;All files (*.*)").arg(filter));
 
   if(filename.isEmpty())
     return;
@@ -2737,18 +2958,15 @@ void BufferViewer::debugVertex()
   uint32_t index =
       m_CurView->model()->data(m_CurView->model()->index(idx.row(), 1), Qt::DisplayRole).toUInt();
 
-  m_Ctx.Renderer().AsyncInvoke([this, vertid, index](IReplayRenderer *r) {
-    ShaderDebugTrace *trace = new ShaderDebugTrace;
-
-    bool success =
+  m_Ctx.Replay().AsyncInvoke([this, vertid, index](IReplayController *r) {
+    ShaderDebugTrace *trace =
         r->DebugVertex(vertid, m_Config.curInstance, index, m_Ctx.CurDrawcall()->instanceOffset,
-                       m_Ctx.CurDrawcall()->vertexOffset, trace);
+                       m_Ctx.CurDrawcall()->vertexOffset);
 
-    if(!success || trace->states.count == 0)
+    if(trace->states.count == 0)
     {
-      delete trace;
+      r->FreeTrace(trace);
 
-      // if we couldn't debug the pixel on this event, open up a pixel history
       GUIInvoke::call([this]() {
         RDDialog::critical(this, tr("Error debugging"),
                            tr("Error debugging vertex - make sure a valid vertex is selected"));
@@ -2763,20 +2981,15 @@ void BufferViewer::debugVertex()
         debugContext += tr(", Instance %1").arg(m_Config.curInstance);
 
       const ShaderReflection *shaderDetails =
-          m_Ctx.CurPipelineState.GetShaderReflection(eShaderStage_Pixel);
+          m_Ctx.CurPipelineState().GetShaderReflection(ShaderStage::Pixel);
       const ShaderBindpointMapping &bindMapping =
-          m_Ctx.CurPipelineState.GetBindpointMapping(eShaderStage_Pixel);
+          m_Ctx.CurPipelineState().GetBindpointMapping(ShaderStage::Pixel);
 
       // viewer takes ownership of the trace
-      ShaderViewer *s = ShaderViewer::debugShader(m_Ctx, &bindMapping, shaderDetails,
-                                                  eShaderStage_Pixel, trace, debugContext, this);
+      IShaderViewer *s =
+          m_Ctx.DebugShader(&bindMapping, shaderDetails, ShaderStage::Pixel, trace, debugContext);
 
-      m_Ctx.setupDockWindow(s);
-
-      ToolWindowManager *manager = ToolWindowManager::managerOf(this);
-
-      ToolWindowManager::AreaReference ref(ToolWindowManager::AddTo, manager->areaOf(this));
-      manager->addToolWindow(s, ref);
+      m_Ctx.AddDockWindow(s->Widget(), DockReference::AddTo, this);
     });
   });
 }
@@ -2853,11 +3066,11 @@ void BufferViewer::on_outputTabs_currentChanged(int index)
   ui->outputTabs->widget(index)->layout()->addWidget(ui->renderContainer);
 
   if(index == 0)
-    m_CurStage = eMeshDataStage_VSIn;
+    m_CurStage = MeshDataStage::VSIn;
   else if(index == 1)
-    m_CurStage = eMeshDataStage_VSOut;
+    m_CurStage = MeshDataStage::VSOut;
   else if(index == 2)
-    m_CurStage = eMeshDataStage_GSOut;
+    m_CurStage = MeshDataStage::GSOut;
 
   ui->drawRange->setEnabled(index > 0);
 
@@ -2907,16 +3120,16 @@ void BufferViewer::on_solidShading_currentIndexChanged(int index)
     m_Config.wireframeDraw = true;
   }
 
-  m_Config.solidShadeMode = (SolidShadeMode)index;
+  m_Config.solidShadeMode = (SolidShade)index;
 
   m_ModelVSIn->setSecondaryColumn(m_ModelVSIn->secondaryColumn(),
-                                  m_Config.solidShadeMode == eShade_Secondary,
+                                  m_Config.solidShadeMode == SolidShade::Secondary,
                                   m_ModelVSIn->secondaryAlpha());
   m_ModelVSOut->setSecondaryColumn(m_ModelVSOut->secondaryColumn(),
-                                   m_Config.solidShadeMode == eShade_Secondary,
+                                   m_Config.solidShadeMode == SolidShade::Secondary,
                                    m_ModelVSOut->secondaryAlpha());
   m_ModelGSOut->setSecondaryColumn(m_ModelGSOut->secondaryColumn(),
-                                   m_Config.solidShadeMode == eShade_Secondary,
+                                   m_Config.solidShadeMode == SolidShade::Secondary,
                                    m_ModelGSOut->secondaryAlpha());
 
   INVOKE_MEMFN(RT_UpdateAndDisplay);
@@ -2991,7 +3204,7 @@ void BufferViewer::on_rowOffset_valueChanged(int value)
 
 void BufferViewer::on_autofitCamera_clicked()
 {
-  if(m_CurStage != eMeshDataStage_VSIn)
+  if(m_CurStage != MeshDataStage::VSIn)
     return;
 
   ui->controlType->setCurrentIndex(1);
@@ -3008,15 +3221,15 @@ void BufferViewer::on_autofitCamera_clicked()
 
   switch(m_CurStage)
   {
-    case eMeshDataStage_VSIn:
+    case MeshDataStage::VSIn:
       model = m_ModelVSIn;
       stage = 0;
       break;
-    case eMeshDataStage_VSOut:
+    case MeshDataStage::VSOut:
       model = m_ModelVSOut;
       stage = 1;
       break;
-    case eMeshDataStage_GSOut:
+    case MeshDataStage::GSOut:
       model = m_ModelGSOut;
       stage = 2;
       break;

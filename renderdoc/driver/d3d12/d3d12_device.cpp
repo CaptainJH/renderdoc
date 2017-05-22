@@ -54,7 +54,7 @@ D3D12InitParams::D3D12InitParams()
   MinimumFeatureLevel = D3D_FEATURE_LEVEL_11_0;
 }
 
-ReplayCreateStatus D3D12InitParams::Serialise()
+ReplayStatus D3D12InitParams::Serialise()
 {
   Serialiser *localSerialiser = GetSerialiser();
 
@@ -64,12 +64,12 @@ ReplayCreateStatus D3D12InitParams::Serialise()
   if(ver != D3D12_SERIALISE_VERSION)
   {
     RDCERR("Incompatible D3D12 serialise version, expected %d got %d", D3D12_SERIALISE_VERSION, ver);
-    return eReplayCreate_APIIncompatibleVersion;
+    return ReplayStatus::APIIncompatibleVersion;
   }
 
   localSerialiser->Serialise("MinimumFeatureLevel", MinimumFeatureLevel);
 
-  return eReplayCreate_Success;
+  return ReplayStatus::Succeeded;
 }
 
 const char *WrappedID3D12Device::GetChunkName(uint32_t idx)
@@ -648,7 +648,13 @@ void WrappedID3D12Device::ReleaseSwapchainResources(WrappedIDXGISwapChain4 *swap
 
   for(int i = 0; i < swap->GetNumBackbuffers(); i++)
   {
-    WrappedID3D12Resource *wrapped = (WrappedID3D12Resource *)swap->GetBackbuffers()[i];
+    ID3D12Resource *res = (ID3D12Resource *)swap->GetBackbuffers()[i];
+
+    if(!res)
+      continue;
+
+    WrappedID3D12Resource *wrapped = (WrappedID3D12Resource *)res;
+    wrapped->ReleaseInternalRef();
     SAFE_RELEASE(wrapped);
   }
 
@@ -668,6 +674,17 @@ void WrappedID3D12Device::ReleaseSwapchainResources(WrappedIDXGISwapChain4 *swap
       GetDebugManager()->FreeRTV(it->second.rtvs[i]);
 
     m_SwapChains.erase(it);
+  }
+}
+
+void WrappedID3D12Device::NewSwapchainBuffer(IUnknown *backbuffer)
+{
+  ID3D12Resource *pRes = (ID3D12Resource *)backbuffer;
+
+  if(pRes)
+  {
+    WrappedID3D12Resource *wrapped = (WrappedID3D12Resource *)pRes;
+    wrapped->AddInternalRef();
   }
 }
 
@@ -1188,7 +1205,6 @@ void WrappedID3D12Device::Serialise_CaptureScope(uint64_t offset)
   else
   {
     m_FrameRecord.frameInfo.fileOffset = offset;
-    m_FrameRecord.frameInfo.firstEvent = 1;
     m_FrameRecord.frameInfo.frameNumber = FrameNumber;
     RDCEraseEl(m_FrameRecord.frameInfo.stats);
 
@@ -1267,7 +1283,7 @@ void WrappedID3D12Device::StartFrameCapture(void *dev, void *wnd)
 
   m_FrameCounter = RDCMAX(1 + (uint32_t)m_CapturedFrames.size(), m_FrameCounter);
 
-  FetchFrameInfo frame;
+  FrameDescription frame;
   frame.frameNumber = m_FrameCounter + 1;
   frame.captureTime = Timing::GetUnixTimestamp();
   RDCEraseEl(frame.stats);
@@ -1484,7 +1500,7 @@ bool WrappedID3D12Device::EndFrameCapture(void *dev, void *wnd)
           bool buf1010102 = false;
           bool bufBGRA = (fmt.bgraOrder != false);
 
-          if(fmt.special && fmt.specialFormat == eSpecial_R10G10B10A2)
+          if(fmt.special && fmt.specialFormat == SpecialFormat::R10G10B10A2)
           {
             stride = 4;
             buf1010102 = true;
@@ -1722,8 +1738,8 @@ void WrappedID3D12Device::ReleaseResource(ID3D12DeviceChild *res)
   }
 }
 
-void WrappedID3D12Device::AddDebugMessage(DebugMessageCategory c, DebugMessageSeverity sv,
-                                          DebugMessageSource src, std::string d)
+void WrappedID3D12Device::AddDebugMessage(MessageCategory c, MessageSeverity sv, MessageSource src,
+                                          std::string d)
 {
   D3D12CommandData &cmd = *m_Queue->GetCommandData();
 
@@ -1780,37 +1796,47 @@ vector<DebugMessage> WrappedID3D12Device::GetDebugMessages()
 
     DebugMessage msg;
     msg.eventID = 0;
-    msg.source = eDbgSource_API;
-    msg.category = eDbgCategory_Miscellaneous;
-    msg.severity = eDbgSeverity_Medium;
+    msg.source = MessageSource::API;
+    msg.category = MessageCategory::Miscellaneous;
+    msg.severity = MessageSeverity::Medium;
 
     switch(message->Category)
     {
       case D3D12_MESSAGE_CATEGORY_APPLICATION_DEFINED:
-        msg.category = eDbgCategory_Application_Defined;
+        msg.category = MessageCategory::Application_Defined;
         break;
-      case D3D12_MESSAGE_CATEGORY_MISCELLANEOUS: msg.category = eDbgCategory_Miscellaneous; break;
-      case D3D12_MESSAGE_CATEGORY_INITIALIZATION: msg.category = eDbgCategory_Initialization; break;
-      case D3D12_MESSAGE_CATEGORY_CLEANUP: msg.category = eDbgCategory_Cleanup; break;
-      case D3D12_MESSAGE_CATEGORY_COMPILATION: msg.category = eDbgCategory_Compilation; break;
-      case D3D12_MESSAGE_CATEGORY_STATE_CREATION: msg.category = eDbgCategory_State_Creation; break;
-      case D3D12_MESSAGE_CATEGORY_STATE_SETTING: msg.category = eDbgCategory_State_Setting; break;
-      case D3D12_MESSAGE_CATEGORY_STATE_GETTING: msg.category = eDbgCategory_State_Getting; break;
+      case D3D12_MESSAGE_CATEGORY_MISCELLANEOUS:
+        msg.category = MessageCategory::Miscellaneous;
+        break;
+      case D3D12_MESSAGE_CATEGORY_INITIALIZATION:
+        msg.category = MessageCategory::Initialization;
+        break;
+      case D3D12_MESSAGE_CATEGORY_CLEANUP: msg.category = MessageCategory::Cleanup; break;
+      case D3D12_MESSAGE_CATEGORY_COMPILATION: msg.category = MessageCategory::Compilation; break;
+      case D3D12_MESSAGE_CATEGORY_STATE_CREATION:
+        msg.category = MessageCategory::State_Creation;
+        break;
+      case D3D12_MESSAGE_CATEGORY_STATE_SETTING:
+        msg.category = MessageCategory::State_Setting;
+        break;
+      case D3D12_MESSAGE_CATEGORY_STATE_GETTING:
+        msg.category = MessageCategory::State_Getting;
+        break;
       case D3D12_MESSAGE_CATEGORY_RESOURCE_MANIPULATION:
-        msg.category = eDbgCategory_Resource_Manipulation;
+        msg.category = MessageCategory::Resource_Manipulation;
         break;
-      case D3D12_MESSAGE_CATEGORY_EXECUTION: msg.category = eDbgCategory_Execution; break;
-      case D3D12_MESSAGE_CATEGORY_SHADER: msg.category = eDbgCategory_Shaders; break;
+      case D3D12_MESSAGE_CATEGORY_EXECUTION: msg.category = MessageCategory::Execution; break;
+      case D3D12_MESSAGE_CATEGORY_SHADER: msg.category = MessageCategory::Shaders; break;
       default: RDCWARN("Unexpected message category: %d", message->Category); break;
     }
 
     switch(message->Severity)
     {
-      case D3D12_MESSAGE_SEVERITY_CORRUPTION: msg.severity = eDbgSeverity_High; break;
-      case D3D12_MESSAGE_SEVERITY_ERROR: msg.severity = eDbgSeverity_Medium; break;
-      case D3D12_MESSAGE_SEVERITY_WARNING: msg.severity = eDbgSeverity_Low; break;
-      case D3D12_MESSAGE_SEVERITY_INFO: msg.severity = eDbgSeverity_Info; break;
-      case D3D12_MESSAGE_SEVERITY_MESSAGE: msg.severity = eDbgSeverity_Info; break;
+      case D3D12_MESSAGE_SEVERITY_CORRUPTION: msg.severity = MessageSeverity::High; break;
+      case D3D12_MESSAGE_SEVERITY_ERROR: msg.severity = MessageSeverity::Medium; break;
+      case D3D12_MESSAGE_SEVERITY_WARNING: msg.severity = MessageSeverity::Low; break;
+      case D3D12_MESSAGE_SEVERITY_INFO: msg.severity = MessageSeverity::Info; break;
+      case D3D12_MESSAGE_SEVERITY_MESSAGE: msg.severity = MessageSeverity::Info; break;
       default: RDCWARN("Unexpected message severity: %d", message->Severity); break;
     }
 
@@ -2195,7 +2221,7 @@ void WrappedID3D12Device::SetLogFile(const char *logfile)
   m_pSerialiser->SetUserData(m_ResourceManager);
 }
 
-const FetchDrawcall *WrappedID3D12Device::GetDrawcall(uint32_t eventID)
+const DrawcallDescription *WrappedID3D12Device::GetDrawcall(uint32_t eventID)
 {
   if(eventID >= m_Drawcalls.size())
     return NULL;
@@ -2242,6 +2268,10 @@ void WrappedID3D12Device::ProcessChunk(uint64_t offset, D3D12ChunkType context)
     case CREATE_PLACED_RESOURCE:
       Serialise_CreatePlacedResource(GetMainSerialiser(), NULL, 0, NULL,
                                      D3D12_RESOURCE_STATE_COMMON, NULL, IID(), NULL);
+      break;
+    case CREATE_RESERVED_RESOURCE:
+      Serialise_CreateReservedResource(GetMainSerialiser(), NULL, D3D12_RESOURCE_STATE_COMMON, NULL,
+                                       IID(), NULL);
       break;
 
     case CREATE_QUERY_HEAP:
@@ -2395,7 +2425,7 @@ void WrappedID3D12Device::ReplayLog(uint32_t startEventID, uint32_t endEventID,
 
   if(startEventID == 0 && (replayType == eReplay_WithoutDraw || replayType == eReplay_Full))
   {
-    startEventID = m_FrameRecord.frameInfo.firstEvent;
+    startEventID = 1;
     partial = false;
 
     m_GPUSyncCounter++;

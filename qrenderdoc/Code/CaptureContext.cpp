@@ -31,23 +31,26 @@
 #include <QMessageBox>
 #include <QMetaObject>
 #include <QProgressDialog>
-#include <QStandardPaths>
 #include <QTimer>
 #include "Windows/APIInspector.h"
 #include "Windows/BufferViewer.h"
+#include "Windows/ConstantBufferPreviewer.h"
 #include "Windows/DebugMessageView.h"
 #include "Windows/Dialogs/CaptureDialog.h"
 #include "Windows/Dialogs/LiveCapture.h"
 #include "Windows/EventBrowser.h"
 #include "Windows/MainWindow.h"
 #include "Windows/PipelineState/PipelineStateViewer.h"
+#include "Windows/PixelHistoryView.h"
+#include "Windows/PythonShell.h"
+#include "Windows/ShaderViewer.h"
 #include "Windows/StatisticsViewer.h"
 #include "Windows/TextureViewer.h"
 #include "QRDUtils.h"
 
 CaptureContext::CaptureContext(QString paramFilename, QString remoteHost, uint32_t remoteIdent,
                                bool temp, PersistantConfig &cfg)
-    : Config(cfg)
+    : m_Config(cfg)
 {
   m_LogLoaded = false;
   m_LoadInProgress = false;
@@ -56,7 +59,7 @@ CaptureContext::CaptureContext(QString paramFilename, QString remoteHost, uint32
 
   memset(&m_APIProps, 0, sizeof(m_APIProps));
 
-  qApp->setApplicationVersion(RENDERDOC_GetVersionString());
+  qApp->setApplicationVersion(QString::fromLatin1(RENDERDOC_GetVersionString()));
 
   m_Icon = new QIcon();
   m_Icon->addFile(QStringLiteral(":/icon.ico"), QSize(), QIcon::Normal, QIcon::Off);
@@ -90,34 +93,25 @@ bool CaptureContext::isRunning()
   return m_MainWindow && m_MainWindow->isVisible();
 }
 
-QString CaptureContext::ConfigFile(const QString &filename)
-{
-  QString path = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-
-  QDir dir(path);
-  if(!dir.exists())
-    dir.mkdir(".");
-
-  return QDir::cleanPath(dir.absoluteFilePath(filename));
-}
-
 QString CaptureContext::TempLogFilename(QString appname)
 {
-  QString folder = Config.TemporaryCaptureDirectory;
+  QString folder = Config().TemporaryCaptureDirectory;
 
   QDir dir(folder);
 
-  if(folder == "" || !dir.exists())
+  if(folder.isEmpty() || !dir.exists())
   {
     dir = QDir(QDir::tempPath());
 
-    dir.mkdir("RenderDoc");
+    dir.mkdir(lit("RenderDoc"));
 
-    dir = QDir(dir.absoluteFilePath("RenderDoc"));
+    dir = QDir(dir.absoluteFilePath(lit("RenderDoc")));
   }
 
   return dir.absoluteFilePath(
-      appname + "_" + QDateTime::currentDateTimeUtc().toString("yyyy.MM.dd_HH.mm.ss") + ".rdc");
+      QFormatStr("%1_%2.rdc")
+          .arg(appname)
+          .arg(QDateTime::currentDateTimeUtc().toString(lit("yyyy.MM.dd_HH.mm.ss"))));
 }
 
 void CaptureContext::LoadLogfile(const QString &logFile, const QString &origFilename,
@@ -131,18 +125,18 @@ void CaptureContext::LoadLogfile(const QString &logFile, const QString &origFile
   thread->selfDelete(true);
   thread->start();
 
-  ShowProgressDialog(
-      m_MainWindow, QApplication::translate("CaptureContext", "Loading Log: %1").arg(origFilename),
-      [this]() { return !m_LoadInProgress; }, [this]() { return UpdateLoadProgress(); });
+  ShowProgressDialog(m_MainWindow, tr("Loading Log: %1").arg(origFilename),
+                     [this]() { return !m_LoadInProgress; },
+                     [this]() { return UpdateLoadProgress(); });
 
   m_MainWindow->setProgress(-1.0f);
 
   if(m_LogLoaded)
   {
-    QVector<ILogViewerForm *> logviewers(m_LogViewers);
+    QVector<ILogViewer *> logviewers(m_LogViewers);
 
     // make sure we're on a consistent event before invoking log viewer forms
-    const FetchDrawcall *draw = &m_Drawcalls.back();
+    const DrawcallDescription *draw = &m_Drawcalls.back();
     while(!draw->children.empty())
       draw = &draw->children.back();
 
@@ -150,7 +144,7 @@ void CaptureContext::LoadLogfile(const QString &logFile, const QString &origFile
 
     GUIInvoke::blockcall([&logviewers]() {
       // notify all the registers log viewers that a log has been loaded
-      for(ILogViewerForm *logviewer : logviewers)
+      for(ILogViewer *logviewer : logviewers)
       {
         if(logviewer)
           logviewer->OnLogfileLoaded();
@@ -175,7 +169,7 @@ void CaptureContext::LoadLogfileThreaded(const QString &logFile, const QString &
 
   m_LogLocal = local;
 
-  Config.Save();
+  Config().Save();
 
   m_LoadProgress = 0.0f;
   m_PostloadProgress = 0.0f;
@@ -186,14 +180,14 @@ void CaptureContext::LoadLogfileThreaded(const QString &logFile, const QString &
   // if the renderer isn't running, we hit a failure case so display an error message
   if(!m_Renderer.IsRunning())
   {
-    QString errmsg = "Unknown error message";
-    errmsg = ToQStr(m_Renderer.GetCreateStatus());
+    QString errmsg = ToQStr(m_Renderer.GetCreateStatus());
 
-    RDDialog::critical(NULL, "Error opening log",
-                       QString("%1\nFailed to open logfile for replay: %2.\n\n"
-                               "Check diagnostic log in Help menu for more details.")
-                           .arg(logFile)
-                           .arg(errmsg));
+    QString messageText = tr("%1\nFailed to open logfile for replay: %2.\n\n"
+                             "Check diagnostic log in Help menu for more details.")
+                              .arg(logFile)
+                              .arg(errmsg);
+
+    RDDialog::critical(NULL, tr("Error opening log"), messageText);
 
     m_LoadInProgress = false;
     return;
@@ -201,70 +195,70 @@ void CaptureContext::LoadLogfileThreaded(const QString &logFile, const QString &
 
   if(!temporary)
   {
-    PersistantConfig::AddRecentFile(Config.RecentLogFiles, origFilename, 10);
+    AddRecentFile(Config().RecentLogFiles, origFilename, 10);
 
-    Config.Save();
+    Config().Save();
   }
 
   m_EventID = 0;
 
   // fetch initial data like drawcalls, textures and buffers
-  m_Renderer.BlockInvoke([this](IReplayRenderer *r) {
-    r->GetFrameInfo(&m_FrameInfo);
+  m_Renderer.BlockInvoke([this](IReplayController *r) {
+    m_FrameInfo = r->GetFrameInfo();
 
     m_APIProps = r->GetAPIProperties();
 
     m_PostloadProgress = 0.2f;
 
-    r->GetDrawcalls(&m_Drawcalls);
+    m_Drawcalls = r->GetDrawcalls();
 
     AddFakeProfileMarkers();
 
     m_PostloadProgress = 0.4f;
 
-    r->GetSupportedWindowSystems(&m_WinSystems);
+    m_WinSystems = r->GetSupportedWindowSystems();
 
 #if defined(RENDERDOC_PLATFORM_WIN32)
-    m_CurWinSystem = eWindowingSystem_Win32;
+    m_CurWinSystem = WindowingSystem::Win32;
 #elif defined(RENDERDOC_PLATFORM_LINUX)
-    m_CurWinSystem = eWindowingSystem_Xlib;
+    m_CurWinSystem = WindowingSystem::Xlib;
 
     // prefer XCB, if supported
     for(WindowingSystem sys : m_WinSystems)
     {
-      if(sys == eWindowingSystem_XCB)
+      if(sys == WindowingSystem::XCB)
       {
-        m_CurWinSystem = eWindowingSystem_XCB;
+        m_CurWinSystem = WindowingSystem::XCB;
         break;
       }
     }
 
-    if(m_CurWinSystem == eWindowingSystem_XCB)
+    if(m_CurWinSystem == WindowingSystem::XCB)
       m_XCBConnection = QX11Info::connection();
     else
       m_X11Display = QX11Info::display();
 #endif
 
-    r->GetBuffers(&m_BufferList);
-    for(FetchBuffer &b : m_BufferList)
+    m_BufferList = r->GetBuffers();
+    for(BufferDescription &b : m_BufferList)
       m_Buffers[b.ID] = &b;
 
     m_PostloadProgress = 0.8f;
 
-    r->GetTextures(&m_TextureList);
-    for(FetchTexture &t : m_TextureList)
+    m_TextureList = r->GetTextures();
+    for(TextureDescription &t : m_TextureList)
       m_Textures[t.ID] = &t;
 
     m_PostloadProgress = 0.9f;
 
-    r->GetD3D11PipelineState(&CurD3D11PipelineState);
-    r->GetD3D12PipelineState(&CurD3D12PipelineState);
-    r->GetGLPipelineState(&CurGLPipelineState);
-    r->GetVulkanPipelineState(&CurVulkanPipelineState);
-    CurPipelineState.SetStates(m_APIProps, &CurD3D11PipelineState, &CurD3D12PipelineState,
-                               &CurGLPipelineState, &CurVulkanPipelineState);
+    m_CurD3D11PipelineState = r->GetD3D11PipelineState();
+    m_CurD3D12PipelineState = r->GetD3D12PipelineState();
+    m_CurGLPipelineState = r->GetGLPipelineState();
+    m_CurVulkanPipelineState = r->GetVulkanPipelineState();
+    m_CurPipelineState.SetStates(m_APIProps, &m_CurD3D11PipelineState, &m_CurD3D12PipelineState,
+                                 &m_CurGLPipelineState, &m_CurVulkanPipelineState);
 
-    UnreadMessageCount = 0;
+    m_UnreadMessageCount = 0;
     AddMessages(m_FrameInfo.debugMessages);
 
     m_PostloadProgress = 1.0f;
@@ -275,17 +269,16 @@ void CaptureContext::LoadLogfileThreaded(const QString &logFile, const QString &
   QDateTime today = QDateTime::currentDateTimeUtc();
   QDateTime compare = today.addDays(-21);
 
-  if(compare > Config.DegradedLog_LastUpdate && m_APIProps.degraded)
+  if(compare > Config().DegradedLog_LastUpdate && m_APIProps.degraded)
   {
-    Config.DegradedLog_LastUpdate = today;
+    Config().DegradedLog_LastUpdate = today;
 
     RDDialog::critical(
-        NULL, "Degraded support of log",
-        QString(
-            "%1\nThis log opened with degraded support - "
-            "this could mean missing hardware support caused a fallback to software rendering.\n\n"
-            "This warning will not appear every time this happens, "
-            "check debug errors/warnings window for more details.")
+        NULL, tr("Degraded support of log"),
+        tr("%1\nThis log opened with degraded support - "
+           "this could mean missing hardware support caused a fallback to software rendering.\n\n"
+           "This warning will not appear every time this happens, "
+           "check debug errors/warnings window for more details.")
             .arg(origFilename));
   }
 
@@ -293,18 +286,18 @@ void CaptureContext::LoadLogfileThreaded(const QString &logFile, const QString &
   m_LogLoaded = true;
 }
 
-bool CaptureContext::PassEquivalent(const FetchDrawcall &a, const FetchDrawcall &b)
+bool CaptureContext::PassEquivalent(const DrawcallDescription &a, const DrawcallDescription &b)
 {
   // executing command lists can have children
   if(!a.children.empty() || !b.children.empty())
     return false;
 
   // don't group draws and compute executes
-  if((a.flags & eDraw_Dispatch) != (b.flags & eDraw_Dispatch))
+  if((a.flags & DrawFlags::Dispatch) != (b.flags & DrawFlags::Dispatch))
     return false;
 
   // don't group present with anything
-  if((a.flags & eDraw_Present) != (b.flags & eDraw_Present))
+  if((a.flags & DrawFlags::Present) != (b.flags & DrawFlags::Present))
     return false;
 
   // don't group things with different depth outputs
@@ -367,13 +360,14 @@ bool CaptureContext::PassEquivalent(const FetchDrawcall &a, const FetchDrawcall 
   return false;
 }
 
-bool CaptureContext::ContainsMarker(const rdctype::array<FetchDrawcall> &draws)
+bool CaptureContext::ContainsMarker(const rdctype::array<DrawcallDescription> &draws)
 {
   bool ret = false;
 
-  for(const FetchDrawcall &d : draws)
+  for(const DrawcallDescription &d : draws)
   {
-    ret |= (d.flags & eDraw_PushMarker) && !(d.flags & eDraw_CmdList) && !d.children.empty();
+    ret |=
+        (d.flags & DrawFlags::PushMarker) && !(d.flags & DrawFlags::CmdList) && !d.children.empty();
     ret |= ContainsMarker(d.children);
 
     if(ret)
@@ -385,12 +379,15 @@ bool CaptureContext::ContainsMarker(const rdctype::array<FetchDrawcall> &draws)
 
 void CaptureContext::AddFakeProfileMarkers()
 {
-  rdctype::array<FetchDrawcall> &draws = m_Drawcalls;
+  rdctype::array<DrawcallDescription> &draws = m_Drawcalls;
+
+  if(!Config().EventBrowser_AddFake)
+    return;
 
   if(ContainsMarker(draws))
     return;
 
-  QList<FetchDrawcall> ret;
+  QList<DrawcallDescription> ret;
 
   int depthpassID = 1;
   int copypassID = 1;
@@ -400,7 +397,8 @@ void CaptureContext::AddFakeProfileMarkers()
   int start = 0;
   int refdraw = 0;
 
-  uint32_t drawFlags = eDraw_Copy | eDraw_Resolve | eDraw_SetMarker | eDraw_CmdList;
+  DrawFlags drawFlags =
+      DrawFlags::Copy | DrawFlags::Resolve | DrawFlags::SetMarker | DrawFlags::CmdList;
 
   for(int i = 1; i < draws.count; i++)
   {
@@ -436,7 +434,7 @@ void CaptureContext::AddFakeProfileMarkers()
     {
       int outCount = 0;
 
-      if(!(draws[j].flags & (eDraw_Copy | eDraw_Resolve | eDraw_Clear)))
+      if(!(draws[j].flags & (DrawFlags::Copy | DrawFlags::Resolve | DrawFlags::Clear)))
         copyOnly = false;
 
       for(ResourceId o : draws[j].outputs)
@@ -446,12 +444,12 @@ void CaptureContext::AddFakeProfileMarkers()
       maxOutCount = qMax(maxOutCount, outCount);
     }
 
-    FetchDrawcall mark;
+    DrawcallDescription mark;
 
     mark.eventID = draws[start].eventID;
     mark.drawcallID = draws[start].drawcallID;
 
-    mark.flags = eDraw_PushMarker;
+    mark.flags = DrawFlags::PushMarker;
     memcpy(mark.outputs, draws[end].outputs, sizeof(mark.outputs));
     mark.depthOut = draws[end].depthOut;
 
@@ -459,34 +457,23 @@ void CaptureContext::AddFakeProfileMarkers()
 
     minOutCount = qMax(1, minOutCount);
 
+    QString targets = draws[end].depthOut == ResourceId() ? tr("Targets") : tr("Targets + Depth");
+
     if(copyOnly)
-      mark.name = QApplication::translate("CaptureContext", "Copy/Clear Pass #%1")
-                      .arg(copypassID++)
-                      .toUtf8()
-                      .data();
-    else if(draws[refdraw].flags & eDraw_Dispatch)
-      mark.name = QApplication::translate("CaptureContext", "Compute Pass #%1")
-                      .arg(computepassID++)
-                      .toUtf8()
-                      .data();
+      mark.name = tr("Copy/Clear Pass #%1").arg(copypassID++).toUtf8().data();
+    else if(draws[refdraw].flags & DrawFlags::Dispatch)
+      mark.name = tr("Compute Pass #%1").arg(computepassID++).toUtf8().data();
     else if(maxOutCount == 0)
-      mark.name = QApplication::translate("CaptureContext", "Depth-only Pass #%1")
-                      .arg(depthpassID++)
-                      .toUtf8()
-                      .data();
+      mark.name = tr("Depth-only Pass #%1").arg(depthpassID++).toUtf8().data();
     else if(minOutCount == maxOutCount)
-      mark.name = QApplication::translate("CaptureContext", "Colour Pass #%1 (%2 Targets%3)")
-                      .arg(passID++)
-                      .arg(minOutCount)
-                      .arg(draws[end].depthOut == ResourceId() ? "" : " + Depth")
-                      .toUtf8()
-                      .data();
+      mark.name =
+          tr("Colour Pass #%1 (%2 %3)").arg(passID++).arg(minOutCount).arg(targets).toUtf8().data();
     else
-      mark.name = QApplication::translate("CaptureContext", "Colour Pass #%1 (%2-%3 Targets%4)")
+      mark.name = tr("Colour Pass #%1 (%2-%3 %4)")
                       .arg(passID++)
                       .arg(minOutCount)
                       .arg(maxOutCount)
-                      .arg(draws[end].depthOut == ResourceId() ? "" : " + Depth")
+                      .arg(targets)
                       .toUtf8()
                       .data();
 
@@ -521,7 +508,7 @@ void CaptureContext::CloseLogfile()
   if(!m_LogLoaded)
     return;
 
-  m_LogFile = "";
+  m_LogFile = QString();
 
   m_Renderer.CloseThread();
 
@@ -532,27 +519,27 @@ void CaptureContext::CloseLogfile()
   m_Textures.clear();
   m_TextureList.clear();
 
-  CurD3D11PipelineState = D3D11PipelineState();
-  CurD3D12PipelineState = D3D12PipelineState();
-  CurGLPipelineState = GLPipelineState();
-  CurVulkanPipelineState = VulkanPipelineState();
-  CurPipelineState.SetStates(m_APIProps, NULL, NULL, NULL, NULL);
+  m_CurD3D11PipelineState = D3D11Pipe::State();
+  m_CurD3D12PipelineState = D3D12Pipe::State();
+  m_CurGLPipelineState = GLPipe::State();
+  m_CurVulkanPipelineState = VKPipe::State();
+  m_CurPipelineState.SetStates(m_APIProps, NULL, NULL, NULL, NULL);
 
-  DebugMessages.clear();
-  UnreadMessageCount = 0;
+  m_DebugMessages.clear();
+  m_UnreadMessageCount = 0;
 
   m_LogLoaded = false;
 
-  QVector<ILogViewerForm *> logviewers(m_LogViewers);
+  QVector<ILogViewer *> logviewers(m_LogViewers);
 
-  for(ILogViewerForm *logviewer : logviewers)
+  for(ILogViewer *logviewer : logviewers)
   {
     if(logviewer)
       logviewer->OnLogfileClosed();
   }
 }
 
-void CaptureContext::SetEventID(const QVector<ILogViewerForm *> &exclude, uint32_t selectedEventID,
+void CaptureContext::SetEventID(const QVector<ILogViewer *> &exclude, uint32_t selectedEventID,
                                 uint32_t eventID, bool force)
 {
   uint32_t prevSelectedEventID = m_SelectedEventID;
@@ -560,17 +547,17 @@ void CaptureContext::SetEventID(const QVector<ILogViewerForm *> &exclude, uint32
   uint32_t prevEventID = m_EventID;
   m_EventID = eventID;
 
-  m_Renderer.BlockInvoke([this, eventID, force](IReplayRenderer *r) {
+  m_Renderer.BlockInvoke([this, eventID, force](IReplayController *r) {
     r->SetFrameEvent(eventID, force);
-    r->GetD3D11PipelineState(&CurD3D11PipelineState);
-    r->GetD3D12PipelineState(&CurD3D12PipelineState);
-    r->GetGLPipelineState(&CurGLPipelineState);
-    r->GetVulkanPipelineState(&CurVulkanPipelineState);
-    CurPipelineState.SetStates(m_APIProps, &CurD3D11PipelineState, &CurD3D12PipelineState,
-                               &CurGLPipelineState, &CurVulkanPipelineState);
+    m_CurD3D11PipelineState = r->GetD3D11PipelineState();
+    m_CurD3D12PipelineState = r->GetD3D12PipelineState();
+    m_CurGLPipelineState = r->GetGLPipelineState();
+    m_CurVulkanPipelineState = r->GetVulkanPipelineState();
+    m_CurPipelineState.SetStates(m_APIProps, &m_CurD3D11PipelineState, &m_CurD3D12PipelineState,
+                                 &m_CurGLPipelineState, &m_CurVulkanPipelineState);
   });
 
-  for(ILogViewerForm *logviewer : m_LogViewers)
+  for(ILogViewer *logviewer : m_LogViewers)
   {
     if(exclude.contains(logviewer))
       continue;
@@ -582,7 +569,17 @@ void CaptureContext::SetEventID(const QVector<ILogViewerForm *> &exclude, uint32
   }
 }
 
-void *CaptureContext::FillWindowingData(WId widget)
+void CaptureContext::AddMessages(const rdctype::array<DebugMessage> &msgs)
+{
+  m_UnreadMessageCount += msgs.count;
+  for(const DebugMessage &msg : msgs)
+    m_DebugMessages.push_back(msg);
+
+  if(m_DebugMessageView)
+    m_DebugMessageView->RefreshMessageList();
+}
+
+void *CaptureContext::FillWindowingData(uintptr_t widget)
 {
 #if defined(WIN32)
 
@@ -593,7 +590,7 @@ void *CaptureContext::FillWindowingData(WId widget)
   static XCBWindowData xcb;
   static XlibWindowData xlib;
 
-  if(m_CurWinSystem == eWindowingSystem_XCB)
+  if(m_CurWinSystem == WindowingSystem::XCB)
   {
     xcb.connection = m_XCBConnection;
     xcb.window = (xcb_window_t)widget;
@@ -617,67 +614,72 @@ void *CaptureContext::FillWindowingData(WId widget)
 #endif
 }
 
-EventBrowser *CaptureContext::eventBrowser()
+IMainWindow *CaptureContext::GetMainWindow()
+{
+  return m_MainWindow;
+}
+
+IEventBrowser *CaptureContext::GetEventBrowser()
 {
   if(m_EventBrowser)
     return m_EventBrowser;
 
   m_EventBrowser = new EventBrowser(*this, m_MainWindow);
-  m_EventBrowser->setObjectName("eventBrowser");
+  m_EventBrowser->setObjectName(lit("eventBrowser"));
   setupDockWindow(m_EventBrowser);
 
   return m_EventBrowser;
 }
 
-APIInspector *CaptureContext::apiInspector()
+IAPIInspector *CaptureContext::GetAPIInspector()
 {
   if(m_APIInspector)
     return m_APIInspector;
 
   m_APIInspector = new APIInspector(*this, m_MainWindow);
-  m_APIInspector->setObjectName("apiInspector");
+  m_APIInspector->setObjectName(lit("apiInspector"));
   setupDockWindow(m_APIInspector);
 
   return m_APIInspector;
 }
 
-TextureViewer *CaptureContext::textureViewer()
+ITextureViewer *CaptureContext::GetTextureViewer()
 {
   if(m_TextureViewer)
     return m_TextureViewer;
 
   m_TextureViewer = new TextureViewer(*this, m_MainWindow);
-  m_TextureViewer->setObjectName("textureViewer");
+  m_TextureViewer->setObjectName(lit("textureViewer"));
   setupDockWindow(m_TextureViewer);
 
   return m_TextureViewer;
 }
 
-BufferViewer *CaptureContext::meshPreview()
+IBufferViewer *CaptureContext::GetMeshPreview()
 {
   if(m_MeshPreview)
     return m_MeshPreview;
 
   m_MeshPreview = new BufferViewer(*this, true, m_MainWindow);
-  m_MeshPreview->setObjectName("meshPreview");
+  m_MeshPreview->setObjectName(lit("meshPreview"));
   setupDockWindow(m_MeshPreview);
 
   return m_MeshPreview;
 }
 
-PipelineStateViewer *CaptureContext::pipelineViewer()
+IPipelineStateViewer *CaptureContext::GetPipelineViewer()
 {
   if(m_PipelineViewer)
     return m_PipelineViewer;
 
   m_PipelineViewer = new PipelineStateViewer(*this, m_MainWindow);
-  m_PipelineViewer->setObjectName("pipelineViewer");
+  m_PipelineViewer->setObjectName(lit("pipelineViewer"));
   setupDockWindow(m_PipelineViewer);
 
   return m_PipelineViewer;
 }
 
-CaptureDialog *CaptureContext::captureDialog()
+ICaptureDialog *CaptureContext::GetCaptureDialog()
 {
   if(m_CaptureDialog)
     return m_CaptureDialog;
@@ -685,138 +687,223 @@ CaptureDialog *CaptureContext::captureDialog()
   m_CaptureDialog = new CaptureDialog(
       *this,
       [this](const QString &exe, const QString &workingDir, const QString &cmdLine,
-             const QList<EnvironmentModification> &env, CaptureOptions opts) {
-        return m_MainWindow->OnCaptureTrigger(exe, workingDir, cmdLine, env, opts);
+             const QList<EnvironmentModification> &env, CaptureOptions opts,
+             std::function<void(LiveCapture *)> callback) {
+        return m_MainWindow->OnCaptureTrigger(exe, workingDir, cmdLine, env, opts, callback);
       },
       [this](uint32_t PID, const QList<EnvironmentModification> &env, const QString &name,
-             CaptureOptions opts) { return m_MainWindow->OnInjectTrigger(PID, env, name, opts); },
+             CaptureOptions opts, std::function<void(LiveCapture *)> callback) {
+        return m_MainWindow->OnInjectTrigger(PID, env, name, opts, callback);
+      },
       m_MainWindow);
-  m_CaptureDialog->setObjectName("capDialog");
+  m_CaptureDialog->setObjectName(lit("capDialog"));
   m_CaptureDialog->setWindowIcon(*m_Icon);
 
   return m_CaptureDialog;
 }
 
-DebugMessageView *CaptureContext::debugMessageView()
+IDebugMessageView *CaptureContext::GetDebugMessageView()
 {
   if(m_DebugMessageView)
     return m_DebugMessageView;
 
   m_DebugMessageView = new DebugMessageView(*this, m_MainWindow);
-  m_DebugMessageView->setObjectName("debugMessageView");
+  m_DebugMessageView->setObjectName(lit("debugMessageView"));
   setupDockWindow(m_DebugMessageView);
 
   return m_DebugMessageView;
 }
 
-StatisticsViewer *CaptureContext::statisticsViewer()
+IStatisticsViewer *CaptureContext::GetStatisticsViewer()
 {
   if(m_StatisticsViewer)
     return m_StatisticsViewer;
 
   m_StatisticsViewer = new StatisticsViewer(*this, m_MainWindow);
-  m_StatisticsViewer->setObjectName("statisticsViewer");
+  m_StatisticsViewer->setObjectName(lit("statisticsViewer"));
   setupDockWindow(m_StatisticsViewer);
 
   return m_StatisticsViewer;
 }
 
-void CaptureContext::showEventBrowser()
+IPythonShell *CaptureContext::GetPythonShell()
+{
+  if(m_PythonShell)
+    return m_PythonShell;
+
+  m_PythonShell = new PythonShell(*this, m_MainWindow);
+  m_PythonShell->setObjectName(lit("pythonShell"));
+  setupDockWindow(m_PythonShell);
+
+  return m_PythonShell;
+}
+
+void CaptureContext::ShowEventBrowser()
 {
   m_MainWindow->showEventBrowser();
 }
 
-void CaptureContext::showAPIInspector()
+void CaptureContext::ShowAPIInspector()
 {
   m_MainWindow->showAPIInspector();
 }
 
-void CaptureContext::showTextureViewer()
+void CaptureContext::ShowTextureViewer()
 {
   m_MainWindow->showTextureViewer();
 }
 
-void CaptureContext::showMeshPreview()
+void CaptureContext::ShowMeshPreview()
 {
   m_MainWindow->showMeshPreview();
 }
 
-void CaptureContext::showPipelineViewer()
+void CaptureContext::ShowPipelineViewer()
 {
   m_MainWindow->showPipelineViewer();
 }
 
-void CaptureContext::showCaptureDialog()
+void CaptureContext::ShowCaptureDialog()
 {
   m_MainWindow->showCaptureDialog();
 }
 
-void CaptureContext::showDebugMessageView()
+void CaptureContext::ShowDebugMessageView()
 {
   m_MainWindow->showDebugMessageView();
 }
 
-void CaptureContext::showStatisticsViewer()
+void CaptureContext::ShowStatisticsViewer()
 {
   m_MainWindow->showStatisticsViewer();
 }
 
-QWidget *CaptureContext::createToolWindow(const QString &objectName)
+void CaptureContext::ShowPythonShell()
 {
-  if(objectName == "textureViewer")
+  m_MainWindow->showPythonShell();
+}
+
+IShaderViewer *CaptureContext::EditShader(bool customShader, const QString &entryPoint,
+                                          const QStringMap &files,
+                                          IShaderViewer::SaveCallback saveCallback,
+                                          IShaderViewer::CloseCallback closeCallback)
+{
+  return ShaderViewer::EditShader(*this, customShader, entryPoint, files, saveCallback,
+                                  closeCallback, m_MainWindow->Widget());
+}
+
+IShaderViewer *CaptureContext::DebugShader(const ShaderBindpointMapping *bind,
+                                           const ShaderReflection *shader, ShaderStage stage,
+                                           ShaderDebugTrace *trace, const QString &debugContext)
+{
+  return ShaderViewer::DebugShader(*this, bind, shader, stage, trace, debugContext,
+                                   m_MainWindow->Widget());
+}
+
+IShaderViewer *CaptureContext::ViewShader(const ShaderBindpointMapping *bind,
+                                          const ShaderReflection *shader, ShaderStage stage)
+{
+  return ShaderViewer::ViewShader(*this, bind, shader, stage, m_MainWindow->Widget());
+}
+
+IBufferViewer *CaptureContext::ViewBuffer(uint64_t byteOffset, uint64_t byteSize, ResourceId id,
+                                          const QString &format)
+{
+  BufferViewer *viewer = new BufferViewer(*this, false, m_MainWindow);
+
+  viewer->ViewBuffer(byteOffset, byteSize, id, format);
+
+  return viewer;
+}
+
+IBufferViewer *CaptureContext::ViewTextureAsBuffer(uint32_t arrayIdx, uint32_t mip, ResourceId id,
+                                                   const QString &format)
+{
+  BufferViewer *viewer = new BufferViewer(*this, false, m_MainWindow);
+
+  viewer->ViewTexture(arrayIdx, mip, id, format);
+
+  return viewer;
+}
+
+IConstantBufferPreviewer *CaptureContext::ViewConstantBuffer(ShaderStage stage, uint32_t slot,
+                                                             uint32_t idx)
+{
+  ConstantBufferPreviewer *existing = ConstantBufferPreviewer::has(stage, slot, idx);
+  if(existing != NULL)
+    return existing;
+
+  return new ConstantBufferPreviewer(*this, stage, slot, idx, m_MainWindow);
+}
+
+IPixelHistoryView *CaptureContext::ViewPixelHistory(ResourceId texID, int x, int y,
+                                                    const TextureDisplay &display)
+{
+  return new PixelHistoryView(*this, texID, QPoint(x, y), display, m_MainWindow);
+}
+
+QWidget *CaptureContext::CreateBuiltinWindow(const QString &objectName)
+{
+  if(objectName == lit("textureViewer"))
   {
-    return textureViewer();
+    return GetTextureViewer()->Widget();
   }
-  else if(objectName == "eventBrowser")
+  else if(objectName == lit("eventBrowser"))
   {
-    return eventBrowser();
+    return GetEventBrowser()->Widget();
   }
-  else if(objectName == "pipelineViewer")
+  else if(objectName == lit("pipelineViewer"))
   {
-    return pipelineViewer();
+    return GetPipelineViewer()->Widget();
   }
-  else if(objectName == "meshPreview")
+  else if(objectName == lit("meshPreview"))
   {
-    return meshPreview();
+    return GetMeshPreview()->Widget();
   }
-  else if(objectName == "apiInspector")
+  else if(objectName == lit("apiInspector"))
   {
-    return apiInspector();
+    return GetAPIInspector()->Widget();
   }
-  else if(objectName == "capDialog")
+  else if(objectName == lit("capDialog"))
   {
-    return captureDialog();
+    return GetCaptureDialog()->Widget();
   }
-  else if(objectName == "debugMessageView")
+  else if(objectName == lit("debugMessageView"))
   {
-    return debugMessageView();
+    return GetDebugMessageView()->Widget();
   }
-  else if(objectName == "statisticsViewer")
+  else if(objectName == lit("statisticsViewer"))
   {
-    return statisticsViewer();
+    return GetStatisticsViewer()->Widget();
+  }
+  else if(objectName == lit("pythonShell"))
+  {
+    return GetPythonShell()->Widget();
   }
 
   return NULL;
 }
 
-void CaptureContext::windowClosed(QWidget *window)
+void CaptureContext::BuiltinWindowClosed(QWidget *window)
 {
-  if((QWidget *)m_EventBrowser == window)
+  if(m_EventBrowser && m_EventBrowser->Widget() == window)
     m_EventBrowser = NULL;
-  else if((QWidget *)m_TextureViewer == window)
+  else if(m_TextureViewer && m_TextureViewer->Widget() == window)
     m_TextureViewer = NULL;
-  else if((QWidget *)m_CaptureDialog == window)
+  else if(m_CaptureDialog && m_CaptureDialog->Widget() == window)
     m_CaptureDialog = NULL;
-  else if((QWidget *)m_APIInspector == window)
+  else if(m_APIInspector && m_APIInspector->Widget() == window)
     m_APIInspector = NULL;
-  else if((QWidget *)m_PipelineViewer == window)
+  else if(m_PipelineViewer && m_PipelineViewer->Widget() == window)
     m_PipelineViewer = NULL;
-  else if((QWidget *)m_MeshPreview == window)
+  else if(m_MeshPreview && m_MeshPreview->Widget() == window)
     m_MeshPreview = NULL;
-  else if((QWidget *)m_DebugMessageView == window)
+  else if(m_DebugMessageView && m_DebugMessageView->Widget() == window)
     m_DebugMessageView = NULL;
-  else if((QWidget *)m_StatisticsViewer == window)
+  else if(m_StatisticsViewer && m_StatisticsViewer->Widget() == window)
     m_StatisticsViewer = NULL;
+  else if(m_PythonShell && m_PythonShell->Widget() == window)
+    m_PythonShell = NULL;
   else
     qCritical() << "Unrecognised window being closed: " << window;
 }
@@ -824,4 +911,46 @@ void CaptureContext::windowClosed(QWidget *window)
 void CaptureContext::setupDockWindow(QWidget *shad)
 {
   shad->setWindowIcon(*m_Icon);
+}
+
+void CaptureContext::RaiseDockWindow(QWidget *dockWindow)
+{
+  ToolWindowManager::raiseToolWindow(dockWindow);
+}
+
+void CaptureContext::AddDockWindow(QWidget *newWindow, DockReference ref, QWidget *refWindow,
+                                   float percentage)
+{
+  setupDockWindow(newWindow);
+
+  if(ref == DockReference::MainToolArea)
+  {
+    m_MainWindow->mainToolManager()->addToolWindow(newWindow, m_MainWindow->mainToolArea());
+    return;
+  }
+  if(ref == DockReference::LeftToolArea)
+  {
+    m_MainWindow->mainToolManager()->addToolWindow(newWindow, m_MainWindow->leftToolArea());
+    return;
+  }
+  if(ref == DockReference::ConstantBufferArea)
+  {
+    if(ConstantBufferPreviewer::getOne())
+    {
+      ToolWindowManager *manager = ToolWindowManager::managerOf(refWindow);
+
+      manager->addToolWindow(newWindow, ToolWindowManager::AreaReference(
+                                            ToolWindowManager::AddTo,
+                                            manager->areaOf(ConstantBufferPreviewer::getOne())));
+      return;
+    }
+
+    ref = DockReference::RightOf;
+  }
+
+  ToolWindowManager *manager = ToolWindowManager::managerOf(refWindow);
+
+  ToolWindowManager::AreaReference areaRef((ToolWindowManager::AreaReferenceType)ref,
+                                           manager->areaOf(refWindow), percentage);
+  manager->addToolWindow(newWindow, areaRef);
 }

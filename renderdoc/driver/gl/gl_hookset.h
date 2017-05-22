@@ -135,7 +135,7 @@ struct GLHookSet
   PFNGLGETINTERNALFORMATI64VPROC glGetInternalformati64v;
   PFNGLGETBUFFERPARAMETERIVPROC glGetBufferParameteriv;    // aliases glGetBufferParameterivARB
   PFNGLGETBUFFERPARAMETERI64VPROC glGetBufferParameteri64v;
-  PFNGLGETBUFFERPOINTERVPROC glGetBufferPointerv;    // aliases glGetBufferPointervARB
+  PFNGLGETBUFFERPOINTERVPROC glGetBufferPointerv;    // aliases glGetBufferPointervARB, glGetBufferPointervOES
   PFNGLGETFRAGDATAINDEXPROC glGetFragDataIndex;
   PFNGLGETFRAGDATALOCATIONPROC glGetFragDataLocation;    // aliases glGetFragDataLocationEXT
   PFNGLGETSTRINGIPROC glGetStringi;
@@ -163,10 +163,10 @@ struct GLHookSet
   PFNGLGETPROGRAMRESOURCELOCATIONINDEXPROC glGetProgramResourceLocationIndex;
   PFNGLGETPROGRAMSTAGEIVPROC glGetProgramStageiv;
   PFNGLGETGRAPHICSRESETSTATUSPROC glGetGraphicsResetStatus;    // aliases glGetGraphicsResetStatusARB
-  PFNGLGETOBJECTLABELPROC glGetObjectLabel;
+  PFNGLGETOBJECTLABELPROC glGetObjectLabel;            // aliases glGetObjectLabelKHR
   PFNGLGETOBJECTLABELEXTPROC glGetObjectLabelEXT;
-  PFNGLGETOBJECTPTRLABELPROC glGetObjectPtrLabel;
-  PFNGLGETDEBUGMESSAGELOGPROC glGetDebugMessageLog;    // aliases glGetDebugMessageLogARB
+  PFNGLGETOBJECTPTRLABELPROC glGetObjectPtrLabel;      // aliases glGetObjectPtrLabelKHR
+  PFNGLGETDEBUGMESSAGELOGPROC glGetDebugMessageLog;    // aliases glGetDebugMessageLogARB, glGetDebugMessageLogKHR
   PFNGLGETFRAMEBUFFERATTACHMENTPARAMETERIVPROC glGetFramebufferAttachmentParameteriv;    // aliases glGetFramebufferAttachmentParameterivEXT
   PFNGLGETFRAMEBUFFERPARAMETERIVPROC glGetFramebufferParameteriv;
   PFNGLGETRENDERBUFFERPARAMETERIVPROC glGetRenderbufferParameteriv;    // aliases glGetRenderbufferParameterivEXT
@@ -268,14 +268,14 @@ struct GLHookSet
   PFNGLACTIVESHADERPROGRAMPROC glActiveShaderProgram;
   PFNGLDELETEPROGRAMPIPELINESPROC glDeleteProgramPipelines;
   PFNGLVALIDATEPROGRAMPIPELINEPROC glValidateProgramPipeline;
-  PFNGLDEBUGMESSAGECALLBACKPROC glDebugMessageCallback;    // aliases glDebugMessageCallbackARB
-  PFNGLDEBUGMESSAGECONTROLPROC glDebugMessageControl;      // aliases glDebugMessageControlARB
-  PFNGLDEBUGMESSAGEINSERTPROC glDebugMessageInsert;        // aliases glDebugMessageInsertARB
-  PFNGLPUSHDEBUGGROUPPROC glPushDebugGroup;
-  PFNGLPOPDEBUGGROUPPROC glPopDebugGroup;
-  PFNGLOBJECTLABELPROC glObjectLabel;
+  PFNGLDEBUGMESSAGECALLBACKPROC glDebugMessageCallback;    // aliases glDebugMessageCallbackARB, glDebugMessageCallbackKHR
+  PFNGLDEBUGMESSAGECONTROLPROC glDebugMessageControl;      // aliases glDebugMessageControlARB, glDebugMessageControlKHR
+  PFNGLDEBUGMESSAGEINSERTPROC glDebugMessageInsert;        // aliases glDebugMessageInsertARB, glDebugMessageInsertKHR
+  PFNGLPUSHDEBUGGROUPPROC glPushDebugGroup;                // aliases glPushDebugGroupKHR
+  PFNGLPOPDEBUGGROUPPROC glPopDebugGroup;                  // aliases glPopDebugGroupKHR
+  PFNGLOBJECTLABELPROC glObjectLabel;                      // aliases glObjectLabelKHR
   PFNGLLABELOBJECTEXTPROC glLabelObjectEXT;
-  PFNGLOBJECTPTRLABELPROC glObjectPtrLabel;
+  PFNGLOBJECTPTRLABELPROC glObjectPtrLabel;                // aliases glObjectPtrLabelKHR
   PFNGLENABLEIPROC glEnablei;                // aliases glEnableIndexedEXT
   PFNGLDISABLEIPROC glDisablei;              // aliases glDisableIndexedEXT
   PFNGLISENABLEDIPROC glIsEnabledi;          // aliases glIsEnabledIndexedEXT
@@ -329,10 +329,10 @@ struct GLHookSet
   PFNGLBINDBUFFERRANGEPROC glBindBufferRange;    // aliases glBindBufferRangeEXT
   PFNGLBINDBUFFERSBASEPROC glBindBuffersBase;
   PFNGLBINDBUFFERSRANGEPROC glBindBuffersRange;
-  PFNGLMAPBUFFERPROC glMapBuffer;    // aliases glMapBufferARB
+  PFNGLMAPBUFFERPROC glMapBuffer;    // aliases glMapBufferARB, glMapBufferOES
   PFNGLMAPBUFFERRANGEPROC glMapBufferRange;
   PFNGLFLUSHMAPPEDBUFFERRANGEPROC glFlushMappedBufferRange;
-  PFNGLUNMAPBUFFERPROC glUnmapBuffer;    // aliases glUnmapBufferARB
+  PFNGLUNMAPBUFFERPROC glUnmapBuffer;    // aliases glUnmapBufferARB, glUnmapBufferOES
   PFNGLTRANSFORMFEEDBACKVARYINGSPROC glTransformFeedbackVaryings;    // aliases glTransformFeedbackVaryingsEXT
   PFNGLGENTRANSFORMFEEDBACKSPROC glGenTransformFeedbacks;
   PFNGLDELETETRANSFORMFEEDBACKSPROC glDeleteTransformFeedbacks;

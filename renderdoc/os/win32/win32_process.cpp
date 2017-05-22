@@ -44,9 +44,9 @@ static wstring lowercase(wstring in)
   return ret;
 }
 
-static vector<Process::EnvironmentModification> &GetEnvModifications()
+static vector<EnvironmentModification> &GetEnvModifications()
 {
-  static vector<Process::EnvironmentModification> envCallbacks;
+  static vector<EnvironmentModification> envCallbacks;
   return envCallbacks;
 }
 
@@ -78,7 +78,7 @@ static map<wstring, string> EnvStringToEnvMap(const wchar_t *envstring)
   return ret;
 }
 
-void Process::RegisterEnvironmentModification(Process::EnvironmentModification modif)
+void Process::RegisterEnvironmentModification(EnvironmentModification modif)
 {
   GetEnvModifications().push_back(modif);
 }
@@ -102,7 +102,7 @@ void Process::ApplyEnvironmentModification()
 
     // set all names to lower case so we can do case-insensitive lookups, but
     // preserve the original name so that added variables maintain the same case
-    wstring name = StringFormat::UTF82Wide(m.name);
+    wstring name = StringFormat::UTF82Wide(m.name.c_str());
     wstring lowername = lowercase(name);
 
     string value;
@@ -114,36 +114,36 @@ void Process::ApplyEnvironmentModification()
       name = lowername;
     }
 
-    switch(m.type)
+    switch(m.mod)
     {
-      case eEnvModification_Replace: value = m.value; break;
-      case eEnvModification_Append: value += m.value; break;
-      case eEnvModification_AppendColon:
+      case EnvMod::Set: value = m.value.c_str(); break;
+      case EnvMod::Append:
+      {
         if(!value.empty())
-          value += ":";
-        value += m.value;
+        {
+          if(m.sep == EnvSep::Platform || m.sep == EnvSep::SemiColon)
+            value += ";";
+          else if(m.sep == EnvSep::Colon)
+            value += ":";
+        }
+        value += m.value.c_str();
         break;
-      case eEnvModification_AppendPlatform:
-      case eEnvModification_AppendSemiColon:
+      }
+      case EnvMod::Prepend:
+      {
         if(!value.empty())
-          value += ";";
-        value += m.value;
-        break;
-      case eEnvModification_Prepend: value = m.value + value; break;
-      case eEnvModification_PrependColon:
-        if(!value.empty())
-          value = m.value + ":" + value;
+        {
+          if(m.sep == EnvSep::Platform || m.sep == EnvSep::SemiColon)
+            value += ";";
+          else if(m.sep == EnvSep::Colon)
+            value += ":";
+        }
         else
-          value = m.value;
+        {
+          value = m.value.c_str();
+        }
         break;
-      case eEnvModification_PrependPlatform:
-      case eEnvModification_PrependSemiColon:
-        if(!value.empty())
-          value = m.value + ";" + value;
-        else
-          value = m.value;
-        break;
-      default: RDCERR("Unexpected environment modification type");
+      }
     }
 
     SetEnvironmentVariableW(name.c_str(), StringFormat::UTF82Wide(value).c_str());
@@ -172,7 +172,7 @@ extern "C" __declspec(dllexport) void __cdecl INTERNAL_SetLogFile(const char *lo
     RenderDoc::Inst().SetLogFile(log);
 }
 
-static Process::EnvironmentModification tempEnvMod;
+static EnvironmentModification tempEnvMod;
 
 extern "C" __declspec(dllexport) void __cdecl INTERNAL_EnvModName(const char *name)
 {
@@ -186,11 +186,17 @@ extern "C" __declspec(dllexport) void __cdecl INTERNAL_EnvModValue(const char *v
     tempEnvMod.value = value;
 }
 
-extern "C" __declspec(dllexport) void __cdecl INTERNAL_EnvMod(Process::ModificationType *type)
+extern "C" __declspec(dllexport) void __cdecl INTERNAL_EnvSep(EnvSep *sep)
 {
-  if(type)
+  if(sep)
+    tempEnvMod.sep = *sep;
+}
+
+extern "C" __declspec(dllexport) void __cdecl INTERNAL_EnvMod(EnvMod *mod)
+{
+  if(mod)
   {
-    tempEnvMod.type = *type;
+    tempEnvMod.mod = *mod;
     Process::RegisterEnvironmentModification(tempEnvMod);
   }
 }
@@ -474,13 +480,9 @@ static PROCESS_INFORMATION RunProcess(const char *app, const char *workingDir, c
   return pi;
 }
 
-uint32_t Process::InjectIntoProcess(uint32_t pid, EnvironmentModification *env, const char *logfile,
-                                    const CaptureOptions *opts, bool waitForExit)
+uint32_t Process::InjectIntoProcess(uint32_t pid, const rdctype::array<EnvironmentModification> &env,
+                                    const char *logfile, const CaptureOptions &opts, bool waitForExit)
 {
-  CaptureOptions options;
-  if(opts)
-    options = *opts;
-
   wstring wlogfile = logfile == NULL ? L"" : StringFormat::UTF82Wide(logfile);
 
   HANDLE hProcess =
@@ -488,7 +490,7 @@ uint32_t Process::InjectIntoProcess(uint32_t pid, EnvironmentModification *env, 
                       PROCESS_VM_WRITE | PROCESS_VM_READ | SYNCHRONIZE,
                   FALSE, pid);
 
-  if(options.DelayForDebugger > 0)
+  if(opts.DelayForDebugger > 0)
   {
     RDCDEBUG("Waiting for debugger attach to %lu", pid);
     uint32_t timeout = 0;
@@ -502,14 +504,14 @@ uint32_t Process::InjectIntoProcess(uint32_t pid, EnvironmentModification *env, 
       Sleep(10);
       timeout += 10;
 
-      if(timeout > options.DelayForDebugger * 1000)
+      if(timeout > opts.DelayForDebugger * 1000)
         break;
     }
 
     if(debuggerAttached)
       RDCDEBUG("Debugger attach detected after %.2f s", float(timeout) / 1000.0f);
     else
-      RDCDEBUG("Timed out waiting for debugger, gave up after %u s", options.DelayForDebugger);
+      RDCDEBUG("Timed out waiting for debugger, gave up after %u s", opts.DelayForDebugger);
   }
 
   RDCLOG("Injecting renderdoc into process %lu", pid);
@@ -726,7 +728,7 @@ uint32_t Process::InjectIntoProcess(uint32_t pid, EnvironmentModification *env, 
     string optstr;
     {
       optstr.reserve(sizeof(CaptureOptions) * 2 + 1);
-      byte *b = (byte *)opts;
+      byte *b = (byte *)&opts;
       for(size_t i = 0; i < sizeof(CaptureOptions); i++)
       {
         optstr.push_back(char('a' + ((b[i] >> 4) & 0xf)));
@@ -751,36 +753,37 @@ uint32_t Process::InjectIntoProcess(uint32_t pid, EnvironmentModification *env, 
 
     wstring cmdWithEnv;
 
-    if(env)
+    if(!env.empty())
     {
       cmdWithEnv = paramsAlloc;
 
-      for(;;)
+      for(const EnvironmentModification &e : env)
       {
-        string name = trim(env->name);
-        string value = env->value;
-        ModificationType type = env->type;
+        string name = trim(e.name.c_str());
+        string value = e.value.c_str();
 
         if(name == "")
           break;
 
         cmdWithEnv += L" +env-";
-        switch(type)
+        switch(e.mod)
         {
-          case eEnvModification_Replace: cmdWithEnv += L"replace "; break;
-
-          case eEnvModification_AppendPlatform: cmdWithEnv += L"append-platform "; break;
-
-          case eEnvModification_AppendSemiColon: cmdWithEnv += L"append-semicolon "; break;
-          case eEnvModification_AppendColon: cmdWithEnv += L"append-colon "; break;
-          case eEnvModification_Append: cmdWithEnv += L"append "; break;
-
-          case eEnvModification_PrependPlatform: cmdWithEnv += L"prepend-platform "; break;
-
-          case eEnvModification_PrependSemiColon: cmdWithEnv += L"prepend-semicolon "; break;
-          case eEnvModification_PrependColon: cmdWithEnv += L"prepend-colon "; break;
-          case eEnvModification_Prepend: cmdWithEnv += L"prepend "; break;
+          case EnvMod::Set: cmdWithEnv += L"replace"; break;
+          case EnvMod::Append: cmdWithEnv += L"append"; break;
+          case EnvMod::Prepend: cmdWithEnv += L"prepend"; break;
         }
+
+        if(e.mod != EnvMod::Set)
+        {
+          switch(e.sep)
+          {
+            case EnvSep::Platform: cmdWithEnv += L"-platform"; break;
+            case EnvSep::SemiColon: cmdWithEnv += L"-semicolon"; break;
+            case EnvSep::Colon: cmdWithEnv += L"-colon"; break;
+          }
+        }
+
+        cmdWithEnv += L" ";
 
         // escape the parameters
         for(auto it = name.begin(); it != name.end(); ++it)
@@ -803,8 +806,6 @@ uint32_t Process::InjectIntoProcess(uint32_t pid, EnvironmentModification *env, 
 
         cmdWithEnv += L"\"" + StringFormat::UTF82Wide(name) + L"\" ";
         cmdWithEnv += L"\"" + StringFormat::UTF82Wide(value) + L"\" ";
-
-        env++;
       }
 
       commandLine = (wchar_t *)cmdWithEnv.c_str();
@@ -861,20 +862,20 @@ uint32_t Process::InjectIntoProcess(uint32_t pid, EnvironmentModification *env, 
     InjectFunctionCall(hProcess, loc, "RENDERDOC_SetDebugLogFile", (void *)debugLogfile.c_str(),
                        debugLogfile.size() + 1);
 
-    if(opts != NULL)
-      InjectFunctionCall(hProcess, loc, "INTERNAL_SetCaptureOptions", (CaptureOptions *)opts,
-                         sizeof(CaptureOptions));
+    InjectFunctionCall(hProcess, loc, "INTERNAL_SetCaptureOptions", (CaptureOptions *)&opts,
+                       sizeof(CaptureOptions));
 
     InjectFunctionCall(hProcess, loc, "INTERNAL_GetTargetControlIdent", &controlident,
                        sizeof(controlident));
 
-    if(env)
+    if(!env.empty())
     {
-      for(;;)
+      for(const EnvironmentModification &e : env)
       {
-        string name = trim(env->name);
-        string value = env->value;
-        ModificationType type = env->type;
+        string name = trim(e.name.c_str());
+        string value = e.value.c_str();
+        EnvMod mod = e.mod;
+        EnvSep sep = e.sep;
 
         if(name == "")
           break;
@@ -883,14 +884,13 @@ uint32_t Process::InjectIntoProcess(uint32_t pid, EnvironmentModification *env, 
                            name.size() + 1);
         InjectFunctionCall(hProcess, loc, "INTERNAL_EnvModValue", (void *)value.c_str(),
                            value.size() + 1);
-        InjectFunctionCall(hProcess, loc, "INTERNAL_EnvMod", &type, sizeof(type));
-
-        env++;
+        InjectFunctionCall(hProcess, loc, "INTERNAL_EnvSep", &sep, sizeof(sep));
+        InjectFunctionCall(hProcess, loc, "INTERNAL_EnvMod", &mod, sizeof(mod));
       }
 
       // parameter is unused
-      InjectFunctionCall(hProcess, loc, "INTERNAL_ApplyEnvMods", env,
-                         sizeof(EnvironmentModification));
+      void *dummy = NULL;
+      InjectFunctionCall(hProcess, loc, "INTERNAL_ApplyEnvMods", &dummy, sizeof(dummy));
     }
   }
 
@@ -955,8 +955,9 @@ uint32_t Process::LaunchProcess(const char *app, const char *workingDir, const c
 }
 
 uint32_t Process::LaunchAndInjectIntoProcess(const char *app, const char *workingDir,
-                                             const char *cmdLine, EnvironmentModification *env,
-                                             const char *logfile, const CaptureOptions *opts,
+                                             const char *cmdLine,
+                                             const rdctype::array<EnvironmentModification> &env,
+                                             const char *logfile, const CaptureOptions &opts,
                                              bool waitForExit)
 {
   void *func =
@@ -994,7 +995,7 @@ uint32_t Process::LaunchAndInjectIntoProcess(const char *app, const char *workin
   return ret;
 }
 
-void Process::StartGlobalHook(const char *pathmatch, const char *logfile, const CaptureOptions *opts)
+void Process::StartGlobalHook(const char *pathmatch, const char *logfile, const CaptureOptions &opts)
 {
   if(pathmatch == NULL)
     return;
@@ -1025,7 +1026,7 @@ void Process::StartGlobalHook(const char *pathmatch, const char *logfile, const 
   string optstr;
   {
     optstr.reserve(sizeof(CaptureOptions) * 2 + 1);
-    byte *b = (byte *)opts;
+    byte *b = (byte *)&opts;
     for(size_t i = 0; i < sizeof(CaptureOptions); i++)
     {
       optstr.push_back(char('a' + ((b[i] >> 4) & 0xf)));

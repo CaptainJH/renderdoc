@@ -35,6 +35,8 @@ OrderedListEditor::OrderedListEditor(const QString &windowName, const QString &i
 {
   ui->setupUi(this);
 
+  ui->list->setFont(Formatter::PreferredFont());
+
   setWindowFlags(windowFlags() & ~Qt::WindowContextHelpButtonHint);
 
   m_BrowseMode = browse;
@@ -109,13 +111,13 @@ void OrderedListEditor::addNewItemRow()
 {
   ui->list->insertRow(ui->list->rowCount());
 
-  QTableWidgetItem *item = new QTableWidgetItem("");
+  QTableWidgetItem *item = new QTableWidgetItem(QString());
   item->setFlags(item->flags() & ~(Qt::ItemIsDragEnabled | Qt::ItemIsDropEnabled));
   ui->list->setItem(ui->list->rowCount() - 1, 0, item);
 
   if(m_BrowseMode != BrowseMode::None)
   {
-    item = new QTableWidgetItem("");
+    item = new QTableWidgetItem(QString());
     item->setFlags(item->flags() & ~(Qt::ItemIsDragEnabled | Qt::ItemIsDropEnabled));
     ui->list->setItem(ui->list->rowCount() - 1, 1, item);
 
@@ -185,7 +187,7 @@ void OrderedListEditor::browse_clicked()
         else
           sel = RDDialog::getOpenFileName(this, tr("Browse for a file"));
 
-        if(sel != "")
+        if(!sel.isEmpty())
           ui->list->item(i, 0)->setText(sel);
       }
     }

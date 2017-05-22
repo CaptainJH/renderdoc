@@ -29,6 +29,20 @@
 #include "Code/QRDUtils.h"
 #include "ui_EnvironmentEditor.h"
 
+static QString GetTypeString(const EnvironmentModification &env)
+{
+  QString ret;
+
+  if(env.mod == EnvMod::Append)
+    ret = QApplication::translate("EnvironmentModification", "Append, %1").arg(ToQStr(env.sep));
+  else if(env.mod == EnvMod::Prepend)
+    ret = QApplication::translate("EnvironmentModification", "Prepend, %1").arg(ToQStr(env.sep));
+  else
+    ret = QApplication::translate("EnvironmentModification", "Set");
+
+  return ret;
+}
+
 Q_DECLARE_METATYPE(EnvironmentModification);
 
 EnvironmentEditor::EnvironmentEditor(QWidget *parent)
@@ -51,7 +65,8 @@ EnvironmentEditor::EnvironmentEditor(QWidget *parent)
   QObject::connect(ui->appendValue, &QRadioButton::toggled, separatorLambda);
 
   ui->separator->addItems({
-      ToQStr(eEnvSep_Platform), ToQStr(eEnvSep_SemiColon), ToQStr(eEnvSep_Colon), ToQStr(eEnvSep_None),
+      ToQStr(EnvSep::Platform), ToQStr(EnvSep::SemiColon), ToQStr(EnvSep::Colon),
+      ToQStr(EnvSep::NoSep),
   });
 
   ui->separator->setCurrentIndex(0);
@@ -63,10 +78,11 @@ EnvironmentEditor::EnvironmentEditor(QWidget *parent)
 
   ui->name->setCompleter(m_Completer);
 
+  ui->variables->setColumns({tr("Name"), tr("Modification"), tr("Value")});
+
   ui->variables->header()->setSectionResizeMode(0, QHeaderView::Interactive);
   ui->variables->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
 
-  ui->variables->setClearSelectionOnFocusLoss(false);
   ui->variables->sortByColumn(0, Qt::DescendingOrder);
 
   ui->variables->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
@@ -86,8 +102,7 @@ void EnvironmentEditor::on_name_textChanged(const QString &text)
     ui->addUpdate->setText(tr("Update"));
     ui->deleteButton->setEnabled(true);
 
-    ui->variables->clearSelection();
-    ui->variables->topLevelItem(idx)->setSelected(true);
+    ui->variables->setSelectedItem(ui->variables->topLevelItem(idx));
   }
   else
   {
@@ -104,27 +119,27 @@ void EnvironmentEditor::on_variables_keyPress(QKeyEvent *event)
     on_deleteButton_clicked();
 }
 
-void EnvironmentEditor::on_variables_currentItemChanged(QTreeWidgetItem *current,
-                                                        QTreeWidgetItem *previous)
+void EnvironmentEditor::on_variables_currentItemChanged(RDTreeWidgetItem *current,
+                                                        RDTreeWidgetItem *previous)
 {
-  QList<QTreeWidgetItem *> sel = ui->variables->selectedItems();
+  RDTreeWidgetItem *sel = ui->variables->selectedItem();
 
-  if(sel.isEmpty())
+  if(!sel)
     return;
 
-  EnvironmentModification mod = sel[0]->data(0, Qt::UserRole).value<EnvironmentModification>();
+  EnvironmentModification mod = sel->tag().value<EnvironmentModification>();
 
-  if(!mod.variable.isEmpty())
+  if(!mod.value.empty())
   {
-    ui->name->setText(mod.variable);
-    ui->value->setText(mod.value);
-    ui->separator->setCurrentIndex((int)mod.separator);
+    ui->name->setText(ToQStr(mod.name));
+    ui->value->setText(ToQStr(mod.value));
+    ui->separator->setCurrentIndex((int)mod.sep);
 
-    if(mod.type == eEnvMod_Set)
+    if(mod.mod == EnvMod::Set)
       ui->setValue->setChecked(true);
-    else if(mod.type == eEnvMod_Append)
+    else if(mod.mod == EnvMod::Append)
       ui->appendValue->setChecked(true);
-    else if(mod.type == eEnvMod_Prepend)
+    else if(mod.mod == EnvMod::Prepend)
       ui->prependValue->setChecked(true);
   }
 }
@@ -132,16 +147,16 @@ void EnvironmentEditor::on_variables_currentItemChanged(QTreeWidgetItem *current
 void EnvironmentEditor::on_addUpdate_clicked()
 {
   EnvironmentModification mod;
-  mod.variable = ui->name->text();
-  mod.value = ui->value->text();
-  mod.separator = (EnvironmentSeparator)ui->separator->currentIndex();
+  mod.name = ui->name->text().toUtf8().data();
+  mod.value = ui->value->text().toUtf8().data();
+  mod.sep = (EnvSep)ui->separator->currentIndex();
 
   if(ui->appendValue->isChecked())
-    mod.type = eEnvMod_Append;
+    mod.mod = EnvMod::Append;
   else if(ui->prependValue->isChecked())
-    mod.type = eEnvMod_Prepend;
+    mod.mod = EnvMod::Prepend;
   else
-    mod.type = eEnvMod_Set;
+    mod.mod = EnvMod::Set;
 
   addModification(mod, false);
 
@@ -150,12 +165,12 @@ void EnvironmentEditor::on_addUpdate_clicked()
 
 void EnvironmentEditor::on_deleteButton_clicked()
 {
-  QList<QTreeWidgetItem *> sel = ui->variables->selectedItems();
+  RDTreeWidgetItem *sel = ui->variables->selectedItem();
 
-  if(sel.isEmpty())
+  if(!sel)
     return;
 
-  delete ui->variables->takeTopLevelItem(ui->variables->indexOfTopLevelItem(sel[0]));
+  delete ui->variables->takeTopLevelItem(ui->variables->indexOfTopLevelItem(sel));
 
   on_name_textChanged(ui->name->text());
 }
@@ -173,7 +188,7 @@ int EnvironmentEditor::existingIndex()
 
 void EnvironmentEditor::addModification(EnvironmentModification mod, bool silent)
 {
-  if(mod.variable.trimmed() == "")
+  if(mod.name.empty())
   {
     if(!silent)
       RDDialog::critical(this, tr("Invalid variable"),
@@ -182,27 +197,26 @@ void EnvironmentEditor::addModification(EnvironmentModification mod, bool silent
     return;
   }
 
-  QTreeWidgetItem *node = NULL;
+  RDTreeWidgetItem *node = NULL;
 
   int idx = existingIndex();
 
   if(idx < 0)
   {
-    node = makeTreeNode({mod.variable, mod.GetTypeString(), mod.value});
+    node = new RDTreeWidgetItem({ToQStr(mod.name), GetTypeString(mod), ToQStr(mod.value)});
     ui->variables->addTopLevelItem(node);
   }
   else
   {
     node = ui->variables->topLevelItem(idx);
-    node->setText(0, mod.variable);
-    node->setText(1, mod.GetTypeString());
-    node->setText(2, mod.value);
+    node->setText(0, ToQStr(mod.name));
+    node->setText(1, GetTypeString(mod));
+    node->setText(2, ToQStr(mod.value));
   }
 
-  node->setData(0, Qt::UserRole, QVariant::fromValue(mod));
+  node->setTag(QVariant::fromValue(mod));
 
-  ui->variables->clearSelection();
-  node->setSelected(true);
+  ui->variables->setSelectedItem(node);
 
   delete m_Completer;
 
@@ -222,9 +236,9 @@ QList<EnvironmentModification> EnvironmentEditor::modifications()
   for(int i = 0; i < ui->variables->topLevelItemCount(); i++)
   {
     EnvironmentModification mod =
-        ui->variables->topLevelItem(i)->data(0, Qt::UserRole).value<EnvironmentModification>();
+        ui->variables->topLevelItem(i)->tag().value<EnvironmentModification>();
 
-    if(!mod.variable.isEmpty())
+    if(!mod.name.empty())
       ret.push_back(mod);
   }
 

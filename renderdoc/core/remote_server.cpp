@@ -28,7 +28,7 @@
 #include "api/replay/renderdoc_replay.h"
 #include "core/core.h"
 #include "os/os_specific.h"
-#include "replay/replay_renderer.h"
+#include "replay/replay_controller.h"
 #include "serialise/serialiser.h"
 #include "serialise/string_utils.h"
 #include "replay_proxy.h"
@@ -37,13 +37,19 @@
 using std::pair;
 
 template <>
+string ToStrHelper<false, PathProperty>::Get(const PathProperty &el)
+{
+  return "<...>";
+}
+
+template <>
 string ToStrHelper<false, CaptureOptions>::Get(const CaptureOptions &el)
 {
   return "<...>";
 }
 
 template <>
-void Serialiser::Serialise(const char *name, DirectoryFile &el)
+void Serialiser::Serialise(const char *name, PathEntry &el)
 {
   ScopedContext scope(this, name, "DirectoryFile", 0, true);
 
@@ -54,17 +60,24 @@ void Serialiser::Serialise(const char *name, DirectoryFile &el)
 }
 
 template <>
-string ToStrHelper<false, Process::ModificationType>::Get(const Process::ModificationType &el)
+string ToStrHelper<false, EnvMod>::Get(const EnvMod &el)
 {
   return "<...>";
 }
 
 template <>
-void Serialiser::Serialise(const char *name, Process::EnvironmentModification &el)
+string ToStrHelper<false, EnvSep>::Get(const EnvSep &el)
 {
-  ScopedContext scope(this, name, "Process::EnvironmentModification", 0, true);
+  return "<...>";
+}
 
-  Serialise("type", el.type);
+template <>
+void Serialiser::Serialise(const char *name, EnvironmentModification &el)
+{
+  ScopedContext scope(this, name, "EnvironmentModification", 0, true);
+
+  Serialise("mod", el.mod);
+  Serialise("sep", el.sep);
   Serialise("name", el.name);
   Serialise("value", el.value);
 }
@@ -283,20 +296,9 @@ static void ActiveRemoteClientThread(void *data)
 
         sendType = eRemoteServer_ListDir;
 
-        vector<FileIO::FoundFile> files = FileIO::GetFilesInDirectory(path.c_str());
+        std::vector<PathEntry> files = FileIO::GetFilesInDirectory(path.c_str());
 
-        uint32_t count = (uint32_t)files.size();
-        sendSer.Serialise("", count);
-
-        for(uint32_t i = 0; i < count; i++)
-        {
-          DirectoryFile df;
-          df.filename = files[i].filename;
-          df.lastmod = files[i].lastmod;
-          df.size = files[i].size;
-          df.flags = files[i].flags;
-          sendSer.Serialise("", df);
-        }
+        sendSer.Serialise("", files);
       }
       else if(type == eRemoteServer_CopyCaptureFromRemote)
       {
@@ -370,10 +372,10 @@ static void ActiveRemoteClientThread(void *data)
         RDCDriver driverType = RDC_Unknown;
         string driverName = "";
         uint64_t fileMachineIdent = 0;
-        ReplayCreateStatus status = RenderDoc::Inst().FillInitParams(
-            cap_file.c_str(), driverType, driverName, fileMachineIdent, NULL);
+        ReplayStatus status = RenderDoc::Inst().FillInitParams(cap_file.c_str(), driverType,
+                                                               driverName, fileMachineIdent, NULL);
 
-        if(status != eReplayCreate_Success)
+        if(status != ReplayStatus::Succeeded)
         {
           RDCERR("Failed to open %s", cap_file.c_str());
         }
@@ -391,7 +393,7 @@ static void ActiveRemoteClientThread(void *data)
 
           status = RenderDoc::Inst().CreateRemoteDriver(driverType, cap_file.c_str(), &driver);
 
-          if(status != eReplayCreate_Success || driver == NULL)
+          if(status != ReplayStatus::Succeeded || driver == NULL)
           {
             RDCERR("Failed to create remote driver for driver type %d name %s", driverType,
                    driverName.c_str());
@@ -413,7 +415,7 @@ static void ActiveRemoteClientThread(void *data)
         {
           RDCERR("File needs driver for %s which isn't supported!", driverName.c_str());
 
-          status = eReplayCreate_APIUnsupported;
+          status = ReplayStatus::APIUnsupported;
         }
 
         sendType = eRemoteServer_LogOpened;
@@ -436,26 +438,20 @@ static void ActiveRemoteClientThread(void *data)
         recvser->Serialise("cmdLine", cmdLine);
         recvser->Serialise("opts", opts);
 
-        uint64_t envListSize = 0;
-        Process::EnvironmentModification *env = NULL;
-        recvser->Serialise("envListSize", envListSize);
+        rdctype::array<EnvironmentModification> env;
+        recvser->Serialise("env", env);
 
-        if(envListSize > 0)
-          recvser->SerialiseComplexArray("env", env, envListSize);
-
-        uint32_t ident = eReplayCreate_NetworkIOFailed;
+        uint32_t ident = uint32_t(ReplayStatus::NetworkIOFailed);
 
         if(threadData->allowExecution)
         {
           ident = Process::LaunchAndInjectIntoProcess(app.c_str(), workingDir.c_str(),
-                                                      cmdLine.c_str(), env, "", &opts, false);
+                                                      cmdLine.c_str(), env, "", opts, false);
         }
         else
         {
           RDCWARN("Requested to execute program - disallowing based on configuration");
         }
-
-        SAFE_DELETE_ARRAY(env);
 
         sendType = eRemoteServer_ExecuteAndInject;
         sendSer.Serialise("ident", ident);
@@ -749,24 +745,22 @@ public:
     return type == eRemoteServer_Ping;
   }
 
-  bool LocalProxies(rdctype::array<rdctype::str> *out)
+  rdctype::array<rdctype::str> LocalProxies()
   {
-    if(out == NULL)
-      return false;
+    rdctype::array<rdctype::str> out;
 
-    create_array_uninit(*out, m_Proxies.size());
+    create_array_uninit(out, m_Proxies.size());
 
     size_t i = 0;
     for(auto it = m_Proxies.begin(); it != m_Proxies.end(); ++it, ++i)
-      out->elems[i] = it->second;
+      out[i] = it->second;
 
-    return true;
+    return out;
   }
 
-  bool RemoteSupportedReplays(rdctype::array<rdctype::str> *out)
+  rdctype::array<rdctype::str> RemoteSupportedReplays()
   {
-    if(out == NULL)
-      return false;
+    rdctype::array<rdctype::str> out;
 
     {
       Serialiser sendData("", Serialiser::WRITING, false);
@@ -782,7 +776,7 @@ public:
         uint32_t count = 0;
         ser->Serialise("", count);
 
-        create_array_uninit(*out, count);
+        create_array_uninit(out, count);
 
         for(uint32_t i = 0; i < count; i++)
         {
@@ -791,14 +785,14 @@ public:
           ser->Serialise("", driver);
           ser->Serialise("", name);
 
-          out->elems[i] = name;
+          out[i] = name;
         }
 
         delete ser;
       }
     }
 
-    return true;
+    return out;
   }
 
   rdctype::str GetHomeFolder()
@@ -829,9 +823,9 @@ public:
     return ret;
   }
 
-  rdctype::array<DirectoryFile> ListFolder(const char *path)
+  rdctype::array<PathEntry> ListFolder(const char *path)
   {
-    rdctype::array<DirectoryFile> ret;
+    rdctype::array<PathEntry> ret;
 
     if(Android::IsHostADB(m_hostname.c_str()))
     {
@@ -839,18 +833,18 @@ public:
       using namespace std;
       istringstream stdoutStream(adbStdout);
       string line;
-      vector<DirectoryFile> packages;
+      vector<PathEntry> packages;
       while(getline(stdoutStream, line))
       {
         vector<string> tokens;
         split(line, tokens, ':');
         if(tokens.size() == 2 && tokens[0] == "package")
         {
-          DirectoryFile package;
+          PathEntry package;
           package.filename = trim(tokens[1]);
           package.size = 0;
           package.lastmod = 0;
-          package.flags = eFileProp_Executable;
+          package.flags = PathProperty::Executable;
           packages.push_back(package);
         }
       }
@@ -875,12 +869,11 @@ public:
 
     if(ser)
     {
-      uint32_t count = 0;
-      ser->Serialise("", count);
+      std::vector<PathEntry> paths;
 
-      create_array_uninit(ret, count);
-      for(uint32_t i = 0; i < count; i++)
-        ser->Serialise("", ret[i]);
+      ser->Serialise("", paths);
+
+      ret = paths;
 
       delete ser;
     }
@@ -888,49 +881,30 @@ public:
     {
       create_array_uninit(ret, 1);
       ret.elems[0].filename = path;
-      ret.elems[0].flags = eFileProp_ErrorUnknown;
+      ret.elems[0].flags = PathProperty::ErrorUnknown;
     }
 
     return ret;
   }
 
-  uint32_t ExecuteAndInject(const char *app, const char *workingDir, const char *cmdLine, void *env,
-                            const CaptureOptions *opts)
+  uint32_t ExecuteAndInject(const char *app, const char *workingDir, const char *cmdLine,
+                            const rdctype::array<EnvironmentModification> &env,
+                            const CaptureOptions &opts)
   {
-    CaptureOptions capopts = opts ? *opts : CaptureOptions();
+    const char *host = hostname().c_str();
+    if(Android::IsHostADB(host))
+      return Android::StartAndroidPackageForCapture(host, app);
 
     string appstr = app && app[0] ? app : "";
     string workstr = workingDir && workingDir[0] ? workingDir : "";
     string cmdstr = cmdLine && cmdLine[0] ? cmdLine : "";
 
-    Process::EnvironmentModification *envList = (Process::EnvironmentModification *)env;
-
     Serialiser sendData("", Serialiser::WRITING, false);
     sendData.Serialise("app", appstr);
     sendData.Serialise("workingDir", workstr);
     sendData.Serialise("cmdLine", cmdstr);
-    sendData.Serialise("opts", capopts);
-
-    uint64_t envListSize = 0;
-    if(envList)
-    {
-      Process::EnvironmentModification *it = envList;
-      for(;;)
-      {
-        if(it->name == "")
-          break;
-        envListSize++;
-        it++;
-      }
-
-      // include terminator
-      envListSize++;
-    }
-
-    sendData.Serialise("envListSize", envListSize);
-
-    if(envListSize > 0)
-      sendData.SerialiseComplexArray("env", envList, envListSize);
+    sendData.Serialise("opts", (CaptureOptions &)opts);
+    sendData.Serialise("env", (rdctype::array<EnvironmentModification> &)env);
 
     Send(eRemoteServer_ExecuteAndInject, sendData);
 
@@ -1011,18 +985,20 @@ public:
     Send(eRemoteServer_TakeOwnershipCapture, sendData);
   }
 
-  ReplayCreateStatus OpenCapture(uint32_t proxyid, const char *filename, float *progress,
-                                 ReplayRenderer **rend)
+  rdctype::pair<ReplayStatus, IReplayController *> OpenCapture(uint32_t proxyid,
+                                                               const char *filename, float *progress)
   {
-    if(rend == NULL)
-      return eReplayCreate_InternalError;
+    rdctype::pair<ReplayStatus, IReplayController *> ret;
+    ret.first = ReplayStatus::InternalError;
+    ret.second = NULL;
 
     string logfile = filename;
 
     if(proxyid != ~0U && proxyid >= m_Proxies.size())
     {
       RDCERR("Invalid proxy driver id %d specified for remote renderer", proxyid);
-      return eReplayCreate_InternalError;
+      ret.first = ReplayStatus::InternalError;
+      return ret;
     }
 
     float dummy = 0.0f;
@@ -1054,50 +1030,58 @@ public:
     }
 
     if(!m_Socket || progressSer == NULL || type != eRemoteServer_LogOpened)
-      return eReplayCreate_NetworkIOFailed;
+    {
+      ret.first = ReplayStatus::NetworkIOFailed;
+      return ret;
+    }
 
-    ReplayCreateStatus status = eReplayCreate_Success;
+    ReplayStatus status = ReplayStatus::Succeeded;
     progressSer->Serialise("status", status);
 
     SAFE_DELETE(progressSer);
 
     *progress = 1.0f;
 
-    if(status != eReplayCreate_Success)
-      return status;
+    if(status != ReplayStatus::Succeeded)
+    {
+      ret.first = status;
+      return ret;
+    }
 
     RDCLOG("Log ready on replay host");
 
     IReplayDriver *proxyDriver = NULL;
     status = RenderDoc::Inst().CreateReplayDriver(proxydrivertype, NULL, &proxyDriver);
 
-    if(status != eReplayCreate_Success || !proxyDriver)
+    if(status != ReplayStatus::Succeeded || !proxyDriver)
     {
       if(proxyDriver)
         proxyDriver->Shutdown();
-      return status;
+      ret.first = status;
+      return ret;
     }
 
-    ReplayRenderer *ret = new ReplayRenderer();
+    ReplayController *rend = new ReplayController();
 
     ReplayProxy *proxy = new ReplayProxy(m_Socket, proxyDriver);
-    status = ret->SetDevice(proxy);
+    status = rend->SetDevice(proxy);
 
-    if(status != eReplayCreate_Success)
+    if(status != ReplayStatus::Succeeded)
     {
-      SAFE_DELETE(ret);
-      return status;
+      SAFE_DELETE(rend);
+      ret.first = status;
+      return ret;
     }
 
-    // ReplayRenderer takes ownership of the ProxySerialiser (as IReplayDriver)
+    // ReplayController takes ownership of the ProxySerialiser (as IReplayDriver)
     // and it cleans itself up in Shutdown.
 
-    *rend = ret;
-
-    return eReplayCreate_Success;
+    ret.first = ReplayStatus::Succeeded;
+    ret.second = rend;
+    return ret;
   }
 
-  void CloseCapture(ReplayRenderer *rend)
+  void CloseCapture(IReplayController *rend)
   {
     Serialiser sendData("", Serialiser::WRITING, false);
     Send(eRemoteServer_CloseLog, sendData);
@@ -1129,28 +1113,28 @@ private:
   vector<pair<RDCDriver, string> > m_Proxies;
 };
 
-extern "C" RENDERDOC_API void RENDERDOC_CC RemoteServer_ShutdownConnection(RemoteServer *remote)
+extern "C" RENDERDOC_API void RENDERDOC_CC RemoteServer_ShutdownConnection(IRemoteServer *remote)
 {
   remote->ShutdownConnection();
 }
 
-extern "C" RENDERDOC_API void RENDERDOC_CC RemoteServer_ShutdownServerAndConnection(RemoteServer *remote)
+extern "C" RENDERDOC_API void RENDERDOC_CC RemoteServer_ShutdownServerAndConnection(IRemoteServer *remote)
 {
   remote->ShutdownServerAndConnection();
 }
 
-extern "C" RENDERDOC_API bool32 RENDERDOC_CC RemoteServer_Ping(RemoteServer *remote)
+extern "C" RENDERDOC_API bool32 RENDERDOC_CC RemoteServer_Ping(IRemoteServer *remote)
 {
   return remote->Ping();
 }
 
-extern "C" RENDERDOC_API bool32 RENDERDOC_CC
-RemoteServer_LocalProxies(RemoteServer *remote, rdctype::array<rdctype::str> *out)
+extern "C" RENDERDOC_API void RENDERDOC_CC RemoteServer_LocalProxies(IRemoteServer *remote,
+                                                                     rdctype::array<rdctype::str> *out)
 {
-  return remote->LocalProxies(out);
+  *out = remote->LocalProxies();
 }
 
-extern "C" RENDERDOC_API void RENDERDOC_CC RemoteServer_GetHomeFolder(RemoteServer *remote,
+extern "C" RENDERDOC_API void RENDERDOC_CC RemoteServer_GetHomeFolder(IRemoteServer *remote,
                                                                       rdctype::str *home)
 {
   rdctype::str path = remote->GetHomeFolder();
@@ -1158,38 +1142,35 @@ extern "C" RENDERDOC_API void RENDERDOC_CC RemoteServer_GetHomeFolder(RemoteServ
     *home = path;
 }
 
-extern "C" RENDERDOC_API void RENDERDOC_CC RemoteServer_ListFolder(
-    RemoteServer *remote, const char *path, rdctype::array<DirectoryFile> *dirlist)
+extern "C" RENDERDOC_API void RENDERDOC_CC RemoteServer_ListFolder(IRemoteServer *remote,
+                                                                   const char *path,
+                                                                   rdctype::array<PathEntry> *dirlist)
 {
-  rdctype::array<DirectoryFile> files = remote->ListFolder(path);
+  rdctype::array<PathEntry> files = remote->ListFolder(path);
   if(dirlist)
     *dirlist = files;
 }
 
-extern "C" RENDERDOC_API bool32 RENDERDOC_CC
-RemoteServer_RemoteSupportedReplays(RemoteServer *remote, rdctype::array<rdctype::str> *out)
+extern "C" RENDERDOC_API void RENDERDOC_CC
+RemoteServer_RemoteSupportedReplays(IRemoteServer *remote, rdctype::array<rdctype::str> *out)
 {
-  return remote->RemoteSupportedReplays(out);
+  *out = remote->RemoteSupportedReplays();
 }
 
-extern "C" RENDERDOC_API uint32_t RENDERDOC_CC
-RemoteServer_ExecuteAndInject(RemoteServer *remote, const char *app, const char *workingDir,
-                              const char *cmdLine, void *env, const CaptureOptions *opts)
+extern "C" RENDERDOC_API uint32_t RENDERDOC_CC RemoteServer_ExecuteAndInject(
+    IRemoteServer *remote, const char *app, const char *workingDir, const char *cmdLine,
+    const rdctype::array<EnvironmentModification> &env, const CaptureOptions &opts)
 {
-  const char *host = remote->hostname().c_str();
-  if(Android::IsHostADB(host))
-    return Android::StartAndroidPackageForCapture(host, app);
-
   return remote->ExecuteAndInject(app, workingDir, cmdLine, env, opts);
 }
 
-extern "C" RENDERDOC_API void RENDERDOC_CC RemoteServer_TakeOwnershipCapture(RemoteServer *remote,
+extern "C" RENDERDOC_API void RENDERDOC_CC RemoteServer_TakeOwnershipCapture(IRemoteServer *remote,
                                                                              const char *filename)
 {
   remote->TakeOwnershipCapture(filename);
 }
 
-extern "C" RENDERDOC_API void RENDERDOC_CC RemoteServer_CopyCaptureToRemote(RemoteServer *remote,
+extern "C" RENDERDOC_API void RENDERDOC_CC RemoteServer_CopyCaptureToRemote(IRemoteServer *remote,
                                                                             const char *filename,
                                                                             float *progress,
                                                                             rdctype::str *remotepath)
@@ -1199,7 +1180,7 @@ extern "C" RENDERDOC_API void RENDERDOC_CC RemoteServer_CopyCaptureToRemote(Remo
     *remotepath = path;
 }
 
-extern "C" RENDERDOC_API void RENDERDOC_CC RemoteServer_CopyCaptureFromRemote(RemoteServer *remote,
+extern "C" RENDERDOC_API void RENDERDOC_CC RemoteServer_CopyCaptureFromRemote(IRemoteServer *remote,
                                                                               const char *remotepath,
                                                                               const char *localpath,
                                                                               float *progress)
@@ -1207,24 +1188,29 @@ extern "C" RENDERDOC_API void RENDERDOC_CC RemoteServer_CopyCaptureFromRemote(Re
   remote->CopyCaptureFromRemote(remotepath, localpath, progress);
 }
 
-extern "C" RENDERDOC_API ReplayCreateStatus RENDERDOC_CC
-RemoteServer_OpenCapture(RemoteServer *remote, uint32_t proxyid, const char *logfile,
-                         float *progress, ReplayRenderer **rend)
+extern "C" RENDERDOC_API ReplayStatus RENDERDOC_CC RemoteServer_OpenCapture(IRemoteServer *remote,
+                                                                            uint32_t proxyid,
+                                                                            const char *logfile,
+                                                                            float *progress,
+                                                                            IReplayController **rend)
 {
-  return remote->OpenCapture(proxyid, logfile, progress, rend);
+  auto ret = remote->OpenCapture(proxyid, logfile, progress);
+  if(rend)
+    *rend = ret.second;
+  return ret.first;
 }
 
-extern "C" RENDERDOC_API void RENDERDOC_CC RemoteServer_CloseCapture(RemoteServer *remote,
-                                                                     ReplayRenderer *rend)
+extern "C" RENDERDOC_API void RENDERDOC_CC RemoteServer_CloseCapture(IRemoteServer *remote,
+                                                                     IReplayController *rend)
 {
   return remote->CloseCapture(rend);
 }
 
-extern "C" RENDERDOC_API ReplayCreateStatus RENDERDOC_CC
-RENDERDOC_CreateRemoteServerConnection(const char *host, uint32_t port, RemoteServer **rend)
+extern "C" RENDERDOC_API ReplayStatus RENDERDOC_CC
+RENDERDOC_CreateRemoteServerConnection(const char *host, uint32_t port, IRemoteServer **rend)
 {
   if(rend == NULL)
-    return eReplayCreate_InternalError;
+    return ReplayStatus::InternalError;
 
   string s = "localhost";
   if(host != NULL && host[0] != '\0')
@@ -1250,7 +1236,7 @@ RENDERDOC_CreateRemoteServerConnection(const char *host, uint32_t port, RemoteSe
     sock = Network::CreateClientSocket(s.c_str(), (uint16_t)port, 750);
 
     if(sock == NULL)
-      return eReplayCreate_NetworkIOFailed;
+      return ReplayStatus::NetworkIOFailed;
   }
 
   Serialiser sendData("", Serialiser::WRITING, false);
@@ -1263,23 +1249,23 @@ RENDERDOC_CreateRemoteServerConnection(const char *host, uint32_t port, RemoteSe
   if(type == eRemoteServer_Busy)
   {
     SAFE_DELETE(sock);
-    return eReplayCreate_NetworkRemoteBusy;
+    return ReplayStatus::NetworkRemoteBusy;
   }
 
   if(type == eRemoteServer_VersionMismatch)
   {
     SAFE_DELETE(sock);
-    return eReplayCreate_NetworkVersionMismatch;
+    return ReplayStatus::NetworkVersionMismatch;
   }
 
   if(type != eRemoteServer_Handshake)
   {
     RDCWARN("Didn't get proper handshake");
     SAFE_DELETE(sock);
-    return eReplayCreate_NetworkIOFailed;
+    return ReplayStatus::NetworkIOFailed;
   }
 
   *rend = new RemoteServer(sock, host);
 
-  return eReplayCreate_Success;
+  return ReplayStatus::Succeeded;
 }

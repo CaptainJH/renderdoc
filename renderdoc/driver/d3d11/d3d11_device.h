@@ -54,7 +54,7 @@ enum TextureDisplayType
 struct D3D11InitParams : public RDCInitParams
 {
   D3D11InitParams();
-  ReplayCreateStatus Serialise();
+  ReplayStatus Serialise();
 
   D3D_DRIVER_TYPE DriverType;
   UINT Flags;
@@ -395,9 +395,9 @@ private:
 
   vector<DebugMessage> m_DebugMessages;
 
-  vector<FetchFrameInfo> m_CapturedFrames;
-  FetchFrameRecord m_FrameRecord;
-  vector<FetchDrawcall *> m_Drawcalls;
+  vector<FrameDescription> m_CapturedFrames;
+  FrameRecord m_FrameRecord;
+  vector<DrawcallDescription *> m_Drawcalls;
 
 public:
   static const int AllocPoolCount = 4;
@@ -430,9 +430,9 @@ public:
 
   Serialiser *GetSerialiser() { return m_pSerialiser; }
   ResourceId GetResourceID() { return m_ResourceID; }
-  FetchFrameRecord &GetFrameRecord() { return m_FrameRecord; }
-  FetchFrameStatistics &GetFrameStats() { return m_FrameRecord.frameInfo.stats; }
-  const FetchDrawcall *GetDrawcall(uint32_t eventID);
+  FrameRecord &GetFrameRecord() { return m_FrameRecord; }
+  FrameStatistics &GetFrameStats() { return m_FrameRecord.frameInfo.stats; }
+  const DrawcallDescription *GetDrawcall(uint32_t eventID);
 
   void LockForChunkFlushing();
   void UnlockForChunkFlushing();
@@ -443,13 +443,13 @@ public:
 
   vector<DebugMessage> GetDebugMessages();
   void AddDebugMessage(DebugMessage msg);
-  void AddDebugMessage(DebugMessageCategory c, DebugMessageSeverity sv, DebugMessageSource src,
-                       std::string d);
+  void AddDebugMessage(MessageCategory c, MessageSeverity sv, MessageSource src, std::string d);
   const vector<D3D11_INPUT_ELEMENT_DESC> &GetLayoutDesc(ID3D11InputLayout *layout)
   {
     return m_LayoutDescs[layout];
   }
 
+  vector<string> *GetShaderDebugInfoSearchPaths() { return &m_ShaderSearchPaths; }
   void Serialise_CaptureScope(uint64_t offset);
 
   void StartFrameCapture(void *dev, void *wnd);

@@ -107,7 +107,7 @@ struct VulkanRegisterCommand : public Command
 
 void VerifyVulkanLayer(int argc, char *argv[])
 {
-  uint32_t flags = 0;
+  VulkanLayerFlags flags = VulkanLayerFlags::NoFlags;
   rdctype::array<rdctype::str> myJSONs;
   rdctype::array<rdctype::str> otherJSONs;
 
@@ -115,7 +115,7 @@ void VerifyVulkanLayer(int argc, char *argv[])
 
   if(!needUpdate)
   {
-    if(!(flags & eVulkan_Unfixable))
+    if(!(flags & VulkanLayerFlags::Unfixable))
       add_command("vulkanregister", new VulkanRegisterCommand());
     return;
   }
@@ -126,22 +126,22 @@ void VerifyVulkanLayer(int argc, char *argv[])
             << std::endl;
   std::cerr << std::endl;
 
-  if(flags & eVulkan_OtherInstallsRegistered)
+  if(flags & VulkanLayerFlags::OtherInstallsRegistered)
     std::cerr << "Multiple RenderDoc layers are registered, possibly from different builds."
               << std::endl;
 
-  if(!(flags & eVulkan_ThisInstallRegistered))
+  if(!(flags & VulkanLayerFlags::ThisInstallRegistered))
     std::cerr << "This build's RenderDoc layer is not registered." << std::endl;
 
   std::cerr << "To fix this, the following actions must take place: " << std::endl << std::endl;
 
-  const bool registerAll = (flags & eVulkan_RegisterAll);
-  const bool updateAllowed = (flags & eVulkan_UpdateAllowed);
+  const bool registerAll = bool(flags & VulkanLayerFlags::RegisterAll);
+  const bool updateAllowed = bool(flags & VulkanLayerFlags::UpdateAllowed);
 
   for(const rdctype::str &j : otherJSONs)
     std::cerr << (updateAllowed ? "Unregister/update: " : "Unregister: ") << j.c_str() << std::endl;
 
-  if(!(flags & eVulkan_ThisInstallRegistered))
+  if(!(flags & VulkanLayerFlags::ThisInstallRegistered))
   {
     if(registerAll)
     {
@@ -158,7 +158,7 @@ void VerifyVulkanLayer(int argc, char *argv[])
 
   std::cerr << std::endl;
 
-  if(flags & eVulkan_Unfixable)
+  if(flags & VulkanLayerFlags::Unfixable)
   {
     std::cerr << "NOTE: The renderdoc layer registered in /usr is reserved for distribution"
               << std::endl;
@@ -200,7 +200,7 @@ void VerifyVulkanLayer(int argc, char *argv[])
   add_command("vulkanregister", new VulkanRegisterCommand());
 }
 
-void DisplayRendererPreview(ReplayRenderer *renderer, TextureDisplay &displayCfg, uint32_t width,
+void DisplayRendererPreview(IReplayController *renderer, TextureDisplay &displayCfg, uint32_t width,
                             uint32_t height)
 {
 // we only have the preview implemented for platforms that have xlib & xcb. It's unlikely
@@ -209,6 +209,9 @@ void DisplayRendererPreview(ReplayRenderer *renderer, TextureDisplay &displayCfg
 #if defined(RENDERDOC_WINDOWING_XLIB) && defined(RENDERDOC_WINDOWING_XCB)
   // need to create a hybrid setup xlib and xcb in case only one or the other is supported.
   // We'll prefer xcb
+
+  // call XInitThreads - although we don't use xlib concurrently the driver might need to.
+  XInitThreads();
 
   Display *display = XOpenDisplay(NULL);
 
@@ -266,20 +269,19 @@ void DisplayRendererPreview(ReplayRenderer *renderer, TextureDisplay &displayCfg
 
   xcb_map_window(connection, window);
 
-  rdctype::array<WindowingSystem> systems;
-  ReplayRenderer_GetSupportedWindowSystems(renderer, &systems);
+  rdctype::array<WindowingSystem> systems = renderer->GetSupportedWindowSystems();
 
   bool xcb = false, xlib = false;
 
   for(int32_t i = 0; i < systems.count; i++)
   {
-    if(systems[i] == eWindowingSystem_Xlib)
+    if(systems[i] == WindowingSystem::Xlib)
       xlib = true;
-    if(systems[i] == eWindowingSystem_XCB)
+    if(systems[i] == WindowingSystem::XCB)
       xcb = true;
   }
 
-  ReplayOutput *out = NULL;
+  IReplayOutput *out = NULL;
 
   // prefer xcb
   if(xcb)
@@ -288,8 +290,7 @@ void DisplayRendererPreview(ReplayRenderer *renderer, TextureDisplay &displayCfg
     windowData.connection = connection;
     windowData.window = window;
 
-    out = ReplayRenderer_CreateOutput(renderer, eWindowingSystem_XCB, &windowData,
-                                      eOutputType_TexDisplay);
+    out = renderer->CreateOutput(WindowingSystem::XCB, &windowData, ReplayOutputType::Texture);
   }
   else if(xlib)
   {
@@ -297,23 +298,19 @@ void DisplayRendererPreview(ReplayRenderer *renderer, TextureDisplay &displayCfg
     windowData.display = display;
     windowData.window = (Drawable)window;    // safe to cast types
 
-    out = ReplayRenderer_CreateOutput(renderer, eWindowingSystem_Xlib, &windowData,
-                                      eOutputType_TexDisplay);
+    out = renderer->CreateOutput(WindowingSystem::Xlib, &windowData, ReplayOutputType::Texture);
   }
   else
   {
     std::cerr << "Neither XCB nor XLib are supported, can't create window." << std::endl;
     std::cerr << "Supported systems: ";
     for(int32_t i = 0; i < systems.count; i++)
-      std::cerr << systems[i] << std::endl;
+      std::cerr << (uint32_t)systems[i] << std::endl;
     std::cerr << std::endl;
     return;
   }
 
-  OutputConfig c = {eOutputType_TexDisplay};
-
-  ReplayOutput_SetOutputConfig(out, c);
-  ReplayOutput_SetTextureDisplay(out, displayCfg);
+  out->SetTextureDisplay(displayCfg);
 
   xcb_flush(connection);
 
@@ -328,8 +325,8 @@ void DisplayRendererPreview(ReplayRenderer *renderer, TextureDisplay &displayCfg
       switch(event->response_type & 0x7f)
       {
         case XCB_EXPOSE:
-          ReplayRenderer_SetFrameEvent(renderer, 10000000, true);
-          ReplayOutput_Display(out);
+          renderer->SetFrameEvent(10000000, true);
+          out->Display();
           break;
         case XCB_CLIENT_MESSAGE:
           if((*(xcb_client_message_event_t *)event).data.data32[0] == (*atom_wm_delete_window).atom)
@@ -351,8 +348,8 @@ void DisplayRendererPreview(ReplayRenderer *renderer, TextureDisplay &displayCfg
       free(event);
     }
 
-    ReplayRenderer_SetFrameEvent(renderer, 10000000, true);
-    ReplayOutput_Display(out);
+    renderer->SetFrameEvent(10000000, true);
+    out->Display();
 
     usleep(100000);
   }
@@ -360,23 +357,6 @@ void DisplayRendererPreview(ReplayRenderer *renderer, TextureDisplay &displayCfg
   std::cerr << "No supporting windowing systems defined at build time (xlib and xcb)" << std::endl;
 #endif
 }
-
-#if defined(RENDERDOC_SUPPORT_GL)
-
-// symbol defined in libGL but not librenderdoc.
-// Forces link of libGL after renderdoc (otherwise all symbols would
-// be resolved and libGL wouldn't link, meaning dlsym(RTLD_NEXT) would fai
-extern "C" void glXWaitX();
-
-#endif
-
-#if defined(RENDERDOC_SUPPORT_GLES)
-
-// symbol defined in libEGL but not in librenderdoc.
-// Forces link of libEGL.
-extern "C" int eglWaitGL(void);
-
-#endif
 
 void sig_handler(int signo)
 {
@@ -389,21 +369,6 @@ void sig_handler(int signo)
 int main(int argc, char *argv[])
 {
   setlocale(LC_CTYPE, "");
-  volatile bool never_run = false;
-
-#if defined(RENDERDOC_SUPPORT_GL)
-
-  if(never_run)
-    glXWaitX();
-
-#endif
-
-#if defined(RENDERDOC_SUPPORT_GLES)
-
-  if(never_run)
-    eglWaitGL();
-
-#endif
 
   signal(SIGINT, sig_handler);
   signal(SIGTERM, sig_handler);

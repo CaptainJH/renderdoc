@@ -30,13 +30,16 @@
 
 struct GLHookSet;
 
-size_t GetCompressedByteSize(GLsizei w, GLsizei h, GLsizei d, GLenum internalformat, int mip);
+size_t GetCompressedByteSize(GLsizei w, GLsizei h, GLsizei d, GLenum internalformat);
 size_t GetByteSize(GLsizei w, GLsizei h, GLsizei d, GLenum format, GLenum type);
 GLenum GetBaseFormat(GLenum internalFormat);
 GLenum GetDataType(GLenum internalFormat);
-GLenum GetSizedFormat(const GLHookSet &gl, GLenum target, GLenum internalFormat);
+GLenum GetSizedFormat(const GLHookSet &gl, GLenum target, GLenum internalFormat,
+                      GLenum type = eGL_NONE);
 void GetFramebufferMipAndLayer(const GLHookSet &gl, GLenum framebuffer, GLenum attachment,
                                GLint *mip, GLint *layer);
+void GetTextureSwizzle(const GLHookSet &gl, GLuint tex, GLenum target, GLenum *swizzleRGBA);
+void SetTextureSwizzle(const GLHookSet &gl, GLuint tex, GLenum target, GLenum *swizzleRGBA);
 
 bool EmulateLuminanceFormat(const GLHookSet &gl, GLuint tex, GLenum target, GLenum &internalFormat,
                             GLenum &dataFormat);

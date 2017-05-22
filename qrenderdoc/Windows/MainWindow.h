@@ -42,19 +42,26 @@ class QToolButton;
 class CaptureDialog;
 class LiveCapture;
 
-class MainWindow : public QMainWindow, public ILogViewerForm
+class MainWindow : public QMainWindow, public IMainWindow, public ILogViewer
 {
 private:
   Q_OBJECT
 
 public:
-  explicit MainWindow(CaptureContext &ctx);
+  explicit MainWindow(ICaptureContext &ctx);
   ~MainWindow();
 
+  // IMainWindow
+  QWidget *Widget() override { return this; }
+  // ILogViewerForm
   void OnLogfileLoaded() override;
   void OnLogfileClosed() override;
   void OnSelectedEventChanged(uint32_t eventID) override {}
   void OnEventChanged(uint32_t eventID) override;
+
+  ToolWindowManager *mainToolManager();
+  ToolWindowManager::AreaReference mainToolArea();
+  ToolWindowManager::AreaReference leftToolArea();
 
   void setProgress(float val);
   void takeLogOwnership() { m_OwnTempLog = true; }
@@ -63,10 +70,11 @@ public:
   void CloseLogfile();
   QString GetSavePath();
 
-  LiveCapture *OnCaptureTrigger(const QString &exe, const QString &workingDir, const QString &cmdLine,
-                                const QList<EnvironmentModification> &env, CaptureOptions opts);
-  LiveCapture *OnInjectTrigger(uint32_t PID, const QList<EnvironmentModification> &env,
-                               const QString &name, CaptureOptions opts);
+  void OnCaptureTrigger(const QString &exe, const QString &workingDir, const QString &cmdLine,
+                        const QList<EnvironmentModification> &env, CaptureOptions opts,
+                        std::function<void(LiveCapture *)> callback);
+  void OnInjectTrigger(uint32_t PID, const QList<EnvironmentModification> &env, const QString &name,
+                       CaptureOptions opts, std::function<void(LiveCapture *)> callback);
 
   void PopulateRecentFiles();
 
@@ -78,9 +86,10 @@ public:
   void showMeshPreview() { on_action_Mesh_Output_triggered(); }
   void showTextureViewer() { on_action_Texture_Viewer_triggered(); }
   void showPipelineViewer() { on_action_Pipeline_State_triggered(); }
-  void showCaptureDialog() { on_action_Capture_Log_triggered(); }
+  void showCaptureDialog() { on_action_Launch_Application_triggered(); }
   void showDebugMessageView() { on_action_Errors_and_Warnings_triggered(); }
   void showStatisticsViewer() { on_action_Statistics_Viewer_triggered(); }
+  void showPythonShell() { on_action_Python_Shell_triggered(); }
 private slots:
   // automatic slots
   void on_action_Exit_triggered();
@@ -93,9 +102,10 @@ private slots:
   void on_action_Event_Browser_triggered();
   void on_action_Texture_Viewer_triggered();
   void on_action_Pipeline_State_triggered();
-  void on_action_Capture_Log_triggered();
+  void on_action_Launch_Application_triggered();
   void on_action_Errors_and_Warnings_triggered();
   void on_action_Statistics_Viewer_triggered();
+  void on_action_Python_Shell_triggered();
   void on_action_Inject_into_Process_triggered();
   void on_action_Resolve_Symbols_triggered();
   void on_action_Attach_to_Running_Instance_triggered();
@@ -106,13 +116,14 @@ private slots:
   void on_action_View_Diagnostic_Log_File_triggered();
   void on_action_Source_on_github_triggered();
   void on_action_Build_Release_downloads_triggered();
+  void on_actionShow_Tips_triggered();
 
   // manual slots
   void saveLayout_triggered();
   void loadLayout_triggered();
   void messageCheck();
   void remoteProbe();
-  void statusDoubleClicked();
+  void statusDoubleClicked(QMouseEvent *event);
   void switchContext();
   void contextChooser_menuShowing();
 
@@ -124,11 +135,8 @@ private:
 
   QString dragFilename(const QMimeData *mimeData);
 
-  ToolWindowManager::AreaReference mainToolArea();
-  ToolWindowManager::AreaReference leftToolArea();
-
   Ui::MainWindow *ui;
-  CaptureContext &m_Ctx;
+  ICaptureContext &m_Ctx;
 
   QList<LiveCapture *> m_LiveCaptures;
 
@@ -147,7 +155,7 @@ private:
   bool m_OwnTempLog = false;
   bool m_SavedTempLog = false;
 
-  QString m_LastSaveCapturePath = "";
+  QString m_LastSaveCapturePath;
 
   void setLogHasErrors(bool errors);
 

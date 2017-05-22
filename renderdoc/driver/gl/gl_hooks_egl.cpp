@@ -149,14 +149,14 @@ public:
       {
         EGLConfig config;
         EGLint numConfigs;
-        EGLBoolean configFound = eglChooseConfig(share.dpy, attribs, &config, 1, &numConfigs);
+        EGLBoolean configFound = eglChooseConfig(share.egl_dpy, attribs, &config, 1, &numConfigs);
 
         if(configFound)
         {
           const EGLint pbAttribs[] = {EGL_WIDTH, 32, EGL_HEIGHT, 32, EGL_NONE};
-          ret.egl_wnd = eglCreatePbufferSurface(share.dpy, config, pbAttribs);
-          ret.egl_dpy = share.dpy;
-          ret.egl_ctx = eglCreateContext_real(share.dpy, config, share.ctx, ctxAttribs);
+          ret.egl_wnd = eglCreatePbufferSurface(share.egl_dpy, config, pbAttribs);
+          ret.egl_dpy = share.egl_dpy;
+          ret.egl_ctx = eglCreateContext_real(share.egl_dpy, config, share.ctx, ctxAttribs);
         }
       }
     }
@@ -203,22 +203,28 @@ public:
     GLWindowingData ret;
     EGLNativeWindowType window = 0;
 
-    if(system == eWindowingSystem_Xlib)
+    switch(system)
     {
-      XlibWindowData *xlib = (XlibWindowData *)data;
-      window = (EGLNativeWindowType)xlib->window;
-    }
-    else if(system == eWindowingSystem_Unknown)
-    {
-      // allow undefined so that internally we can create a window-less context
-      Display *dpy = XOpenDisplay(NULL);
-
-      if(dpy == NULL)
-        return ret;
-    }
-    else
-    {
-      RDCERR("Unexpected window system %u", system);
+#if ENABLED(RDOC_ANDROID)
+      case WindowingSystem::Android: window = (EGLNativeWindowType)data; break;
+#elif ENABLED(RDOC_LINUX)
+      case WindowingSystem::Xlib:
+      {
+        XlibWindowData *xlib = (XlibWindowData *)data;
+        window = (EGLNativeWindowType)xlib->window;
+        break;
+      }
+#endif
+      case WindowingSystem::Unknown: {
+#if ENABLED(RDOC_LINUX)
+        // allow undefined so that internally we can create a window-less context
+        Display *dpy = XOpenDisplay(NULL);
+        if(dpy == NULL)
+          return ret;
+#endif
+        break;
+      }
+      default: RDCERR("Unexpected window system %u", system); break;
     }
 
     EGLDisplay eglDisplay = eglGetDisplay_real(EGL_DEFAULT_DISPLAY);
@@ -238,7 +244,7 @@ public:
 
     PFN_eglChooseConfig eglChooseConfig = (PFN_eglChooseConfig)dlsym(RTLD_NEXT, "eglChooseConfig");
     PFN_eglCreateWindowSurface eglCreateWindowSurface =
-        (PFN_eglCreateWindowSurface)dlsym(RTLD_NEXT, "eglCreateWindowSurfaceProc");
+        (PFN_eglCreateWindowSurface)dlsym(RTLD_NEXT, "eglCreateWindowSurface");
     PFN_eglCreatePbufferSurface eglCreatePbufferSurface =
         (PFN_eglCreatePbufferSurface)dlsym(RTLD_NEXT, "eglCreatePbufferSurface");
 
@@ -276,6 +282,9 @@ public:
     ret.egl_dpy = eglDisplay;
     ret.egl_ctx = ctx;
     ret.egl_wnd = surface;
+#if ENABLED(RDOC_ANDROID)
+    ret.wnd = (ANativeWindow *)window;
+#endif
 
     return ret;
   }
@@ -351,7 +360,9 @@ __attribute__((visibility("default"))) EGLDisplay eglGetDisplay(EGLNativeDisplay
   if(eglhooks.eglGetDisplay_real == NULL)
     eglhooks.SetupExportedFunctions();
 
+#if DISABLED(RDOC_ANDROID)
   Keyboard::CloneDisplay(display);
+#endif
 
   return eglhooks.eglGetDisplay_real(display);
 }
@@ -424,8 +435,12 @@ __attribute__((visibility("default"))) EGLContext eglCreateContext(EGLDisplay di
   init.depthBits = value;
   eglhooks.eglGetConfigAttrib_real(display, config, EGL_STENCIL_SIZE, &value);
   init.stencilBits = value;
-  // TODO: how to detect this?
+// TODO: how to detect this?
+#if ENABLED(RDOC_ANDROID)
+  init.isSRGB = 0;
+#else
   init.isSRGB = 1;
+#endif
 
   GLWindowingData data;
   data.egl_dpy = display;

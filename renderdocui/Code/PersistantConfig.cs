@@ -223,7 +223,7 @@ namespace renderdocui.Code
 
         [XmlIgnore] // not directly serializable
         public Dictionary<string, string> ConfigSettings = new Dictionary<string, string>();
-        private List<SerializableKeyValuePair<string, string>> ConfigSettingsValues = new List<SerializableKeyValuePair<string, string>>();
+        public List<SerializableKeyValuePair<string, string>> ConfigSettingsValues = new List<SerializableKeyValuePair<string, string>>();
 
         public void SetConfigSetting(string name, string value)
         {
@@ -267,6 +267,8 @@ namespace renderdocui.Code
 
         public bool EventBrowser_ApplyColours = true;
         public bool EventBrowser_ColourEventRow = true;
+
+        public bool EventBrowser_AddFake = true;
 
         public int Formatter_MinFigures = 2;
         public int Formatter_MaxFigures = 5;

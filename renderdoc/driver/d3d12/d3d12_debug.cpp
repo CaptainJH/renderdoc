@@ -92,6 +92,8 @@ D3D12DebugManager::D3D12DebugManager(WrappedID3D12Device *wrapper)
 
   wrapper->GetReplay()->PostDeviceInitCounters();
 
+  m_HighlightCache.driver = wrapper->GetReplay();
+
   m_OutputWindowID = 1;
   m_DSVID = 0;
 
@@ -214,65 +216,7 @@ D3D12DebugManager::D3D12DebugManager(WrappedID3D12Device *wrapper)
 
   m_CustomShaderTex = NULL;
 
-  {
-    D3D12_RESOURCE_DESC soBufDesc;
-    soBufDesc.Alignment = 0;
-    soBufDesc.DepthOrArraySize = 1;
-    soBufDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-    // need to allow UAV access to reset the counter each time
-    soBufDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
-    soBufDesc.Format = DXGI_FORMAT_UNKNOWN;
-    soBufDesc.Height = 1;
-    soBufDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-    soBufDesc.MipLevels = 1;
-    soBufDesc.SampleDesc.Count = 1;
-    soBufDesc.SampleDesc.Quality = 0;
-    // add 64 bytes for the counter at the start
-    soBufDesc.Width = m_SOBufferSize + 64;
-
-    D3D12_HEAP_PROPERTIES heapProps;
-    heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
-    heapProps.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
-    heapProps.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
-    heapProps.CreationNodeMask = 1;
-    heapProps.VisibleNodeMask = 1;
-
-    hr = m_WrappedDevice->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &soBufDesc,
-                                                  D3D12_RESOURCE_STATE_STREAM_OUT, NULL,
-                                                  __uuidof(ID3D12Resource), (void **)&m_SOBuffer);
-
-    if(FAILED(hr))
-    {
-      RDCERR("Failed to create SO output buffer, HRESULT: 0x%08x", hr);
-      return;
-    }
-
-    soBufDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
-    heapProps.Type = D3D12_HEAP_TYPE_READBACK;
-
-    hr = m_WrappedDevice->CreateCommittedResource(
-        &heapProps, D3D12_HEAP_FLAG_NONE, &soBufDesc, D3D12_RESOURCE_STATE_COPY_DEST, NULL,
-        __uuidof(ID3D12Resource), (void **)&m_SOStagingBuffer);
-
-    if(FAILED(hr))
-    {
-      RDCERR("Failed to create readback buffer, HRESULT: 0x%08x", hr);
-      return;
-    }
-
-    soBufDesc.Width = m_SOPatchedIndexBufferSize;
-    heapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
-
-    hr = m_WrappedDevice->CreateCommittedResource(
-        &heapProps, D3D12_HEAP_FLAG_NONE, &soBufDesc, D3D12_RESOURCE_STATE_GENERIC_READ, NULL,
-        __uuidof(ID3D12Resource), (void **)&m_SOPatchedIndexBuffer);
-
-    if(FAILED(hr))
-    {
-      RDCERR("Failed to create SO index buffer, HRESULT: 0x%08x", hr);
-      return;
-    }
-  }
+  CreateSOBuffers();
 
   {
     D3D12_RESOURCE_DESC readbackDesc;
@@ -374,6 +318,7 @@ D3D12DebugManager::D3D12DebugManager(WrappedID3D12Device *wrapper)
   // VS CBV
   param.ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
   param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+  param.Descriptor.RegisterSpace = 0;
   param.Descriptor.ShaderRegister = 0;
   param.Descriptor.Flags = D3D12_ROOT_DESCRIPTOR_FLAG_NONE;
 
@@ -458,6 +403,7 @@ D3D12DebugManager::D3D12DebugManager(WrappedID3D12Device *wrapper)
   // 0: CBV
   param.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
   param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+  param.Descriptor.RegisterSpace = 0;
   param.Descriptor.ShaderRegister = 0;
   param.Descriptor.Flags = D3D12_ROOT_DESCRIPTOR_FLAG_NONE;
 
@@ -506,6 +452,7 @@ D3D12DebugManager::D3D12DebugManager(WrappedID3D12Device *wrapper)
   // 0: CBV
   param.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
   param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+  param.Descriptor.RegisterSpace = 0;
   param.Descriptor.ShaderRegister = 0;
   param.Descriptor.Flags = D3D12_ROOT_DESCRIPTOR_FLAG_NONE;
 
@@ -535,6 +482,7 @@ D3D12DebugManager::D3D12DebugManager(WrappedID3D12Device *wrapper)
   // 0: CBV
   param.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
   param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+  param.Descriptor.RegisterSpace = 0;
   param.Descriptor.ShaderRegister = 0;
   param.Descriptor.Flags = D3D12_ROOT_DESCRIPTOR_FLAG_NONE;
 
@@ -1400,6 +1348,100 @@ D3D12DebugManager::~D3D12DebugManager()
     RenderDoc::Inst().GetCrashHandler()->UnregisterMemoryRegion(this);
 }
 
+void D3D12DebugManager::CreateSOBuffers()
+{
+  HRESULT hr = S_OK;
+
+  SAFE_RELEASE(m_SOBuffer);
+  SAFE_RELEASE(m_SOStagingBuffer);
+  SAFE_RELEASE(m_SOPatchedIndexBuffer);
+  SAFE_RELEASE(m_SOQueryHeap);
+
+  D3D12_RESOURCE_DESC soBufDesc;
+  soBufDesc.Alignment = 0;
+  soBufDesc.DepthOrArraySize = 1;
+  soBufDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+  // need to allow UAV access to reset the counter each time
+  soBufDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+  soBufDesc.Format = DXGI_FORMAT_UNKNOWN;
+  soBufDesc.Height = 1;
+  soBufDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+  soBufDesc.MipLevels = 1;
+  soBufDesc.SampleDesc.Count = 1;
+  soBufDesc.SampleDesc.Quality = 0;
+  // add 64 bytes for the counter at the start
+  soBufDesc.Width = m_SOBufferSize + 64;
+
+  D3D12_HEAP_PROPERTIES heapProps;
+  heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
+  heapProps.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+  heapProps.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+  heapProps.CreationNodeMask = 1;
+  heapProps.VisibleNodeMask = 1;
+
+  hr = m_WrappedDevice->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &soBufDesc,
+                                                D3D12_RESOURCE_STATE_STREAM_OUT, NULL,
+                                                __uuidof(ID3D12Resource), (void **)&m_SOBuffer);
+
+  if(FAILED(hr))
+  {
+    RDCERR("Failed to create SO output buffer, HRESULT: 0x%08x", hr);
+    return;
+  }
+
+  soBufDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+  heapProps.Type = D3D12_HEAP_TYPE_READBACK;
+
+  hr = m_WrappedDevice->CreateCommittedResource(
+      &heapProps, D3D12_HEAP_FLAG_NONE, &soBufDesc, D3D12_RESOURCE_STATE_COPY_DEST, NULL,
+      __uuidof(ID3D12Resource), (void **)&m_SOStagingBuffer);
+
+  if(FAILED(hr))
+  {
+    RDCERR("Failed to create readback buffer, HRESULT: 0x%08x", hr);
+    return;
+  }
+
+  // this is a buffer of unique indices, so it allows for
+  // the worst case - float4 per vertex, all unique indices.
+  soBufDesc.Width = m_SOBufferSize / sizeof(Vec4f);
+  heapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
+
+  hr = m_WrappedDevice->CreateCommittedResource(
+      &heapProps, D3D12_HEAP_FLAG_NONE, &soBufDesc, D3D12_RESOURCE_STATE_GENERIC_READ, NULL,
+      __uuidof(ID3D12Resource), (void **)&m_SOPatchedIndexBuffer);
+
+  if(FAILED(hr))
+  {
+    RDCERR("Failed to create SO index buffer, HRESULT: 0x%08x", hr);
+    return;
+  }
+
+  D3D12_QUERY_HEAP_DESC queryDesc;
+  queryDesc.Count = 16;
+  queryDesc.NodeMask = 1;
+  queryDesc.Type = D3D12_QUERY_HEAP_TYPE_SO_STATISTICS;
+  hr = m_WrappedDevice->CreateQueryHeap(&queryDesc, __uuidof(m_SOQueryHeap), (void **)&m_SOQueryHeap);
+
+  if(FAILED(hr))
+  {
+    RDCERR("Failed to create SO query heap, HRESULT: 0x%08x", hr);
+    return;
+  }
+
+  D3D12_UNORDERED_ACCESS_VIEW_DESC counterDesc = {};
+  counterDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+  counterDesc.Format = DXGI_FORMAT_R32_UINT;
+  counterDesc.Buffer.FirstElement = 0;
+  counterDesc.Buffer.NumElements = 4;
+
+  m_WrappedDevice->CreateUnorderedAccessView(m_SOBuffer, NULL, &counterDesc,
+                                             GetCPUHandle(STREAM_OUT_UAV));
+
+  m_WrappedDevice->CreateUnorderedAccessView(m_SOBuffer, NULL, &counterDesc,
+                                             GetUAVClearHandle(STREAM_OUT_UAV));
+}
+
 string D3D12DebugManager::GetShaderBlob(const char *source, const char *entry,
                                         const uint32_t compileFlags, const char *profile,
                                         ID3DBlob **srcblob)
@@ -1912,7 +1954,7 @@ void D3D12DebugManager::OutputWindow::MakeDSV()
 
 uint64_t D3D12DebugManager::MakeOutputWindow(WindowingSystem system, void *data, bool depth)
 {
-  RDCASSERT(system == eWindowingSystem_Win32, system);
+  RDCASSERT(system == WindowingSystem::Win32, system);
 
   OutputWindow outw;
   outw.wnd = (HWND)data;
@@ -2063,7 +2105,7 @@ void D3D12DebugManager::GetOutputWindowDimensions(uint64_t id, int32_t &w, int32
   h = m_OutputWindows[id].height;
 }
 
-void D3D12DebugManager::ClearOutputWindowColour(uint64_t id, float col[4])
+void D3D12DebugManager::ClearOutputWindowColor(uint64_t id, float col[4])
 {
   if(id == 0 || m_OutputWindows.find(id) == m_OutputWindows.end())
     return;
@@ -2284,8 +2326,7 @@ void D3D12DebugManager::FreeRTV(D3D12_CPU_DESCRIPTOR_HANDLE handle)
 }
 
 void D3D12DebugManager::PickPixel(ResourceId texture, uint32_t x, uint32_t y, uint32_t sliceFace,
-                                  uint32_t mip, uint32_t sample, FormatComponentType typeHint,
-                                  float pixel[4])
+                                  uint32_t mip, uint32_t sample, CompType typeHint, float pixel[4])
 {
   int oldW = GetWidth(), oldH = GetHeight();
 
@@ -2423,7 +2464,7 @@ uint32_t D3D12DebugManager::PickVertex(uint32_t eventID, const MeshDisplay &cfg,
   resFmt.compCount = cfg.position.compCount;
   resFmt.compType = cfg.position.compType;
   resFmt.special = false;
-  if(cfg.position.specialFormat != eSpecial_Unknown)
+  if(cfg.position.specialFormat != SpecialFormat::Unknown)
   {
     resFmt.special = true;
     resFmt.specialFormat = cfg.position.specialFormat;
@@ -2502,22 +2543,22 @@ uint32_t D3D12DebugManager::PickVertex(uint32_t eventID, const MeshDisplay &cfg,
   bool isTriangleMesh = true;
   switch(cfg.position.topo)
   {
-    case eTopology_TriangleList:
+    case Topology::TriangleList:
     {
       cbuf.MeshMode = MESH_TRIANGLE_LIST;
       break;
     }
-    case eTopology_TriangleStrip:
+    case Topology::TriangleStrip:
     {
       cbuf.MeshMode = MESH_TRIANGLE_STRIP;
       break;
     }
-    case eTopology_TriangleList_Adj:
+    case Topology::TriangleList_Adj:
     {
       cbuf.MeshMode = MESH_TRIANGLE_LIST_ADJ;
       break;
     }
-    case eTopology_TriangleStrip_Adj:
+    case Topology::TriangleStrip_Adj:
     {
       cbuf.MeshMode = MESH_TRIANGLE_STRIP_ADJ;
       break;
@@ -2640,7 +2681,7 @@ uint32_t D3D12DebugManager::PickVertex(uint32_t eventID, const MeshDisplay &cfg,
       else if(cfg.position.baseVertex > 0)
         idx += cfg.position.baseVertex;
 
-      vbData[i] = InterpretVertex(data, idx, cfg, dataEnd, false, valid);
+      vbData[i] = HighlightCache::InterpretVertex(data, idx, cfg, dataEnd, valid);
     }
 
     FillBuffer(m_PickVB, 0, vbData, sizeof(Vec4f) * cfg.position.numVerts);
@@ -2780,7 +2821,7 @@ void D3D12DebugManager::FillCBufferVariables(const string &prefix, size_t &offse
       ShaderVariable var;
       var.name = basename;
       var.rows = var.columns = 0;
-      var.type = eVar_Float;
+      var.type = VarType::Float;
 
       std::vector<ShaderVariable> varmembers;
 
@@ -2800,7 +2841,7 @@ void D3D12DebugManager::FillCBufferVariables(const string &prefix, size_t &offse
             ShaderVariable vr;
             vr.name = basename + buf;
             vr.rows = vr.columns = 0;
-            vr.type = eVar_Float;
+            vr.type = VarType::Float;
 
             std::vector<ShaderVariable> mems;
 
@@ -2846,17 +2887,17 @@ void D3D12DebugManager::FillCBufferVariables(const string &prefix, size_t &offse
     }
 
     size_t elemByteSize = 4;
-    VarType type = eVar_Float;
+    VarType type = VarType::Float;
     switch(invars[v].type.descriptor.type)
     {
-      case VARTYPE_INT: type = eVar_Int; break;
-      case VARTYPE_FLOAT: type = eVar_Float; break;
+      case VARTYPE_INT: type = VarType::Int; break;
+      case VARTYPE_FLOAT: type = VarType::Float; break;
       case VARTYPE_BOOL:
       case VARTYPE_UINT:
-      case VARTYPE_UINT8: type = eVar_UInt; break;
+      case VARTYPE_UINT8: type = VarType::UInt; break;
       case VARTYPE_DOUBLE:
         elemByteSize = 8;
-        type = eVar_Double;
+        type = VarType::Double;
         break;
       default:
         RDCERR("Unexpected type %d for variable '%s' in cbuffer", invars[v].type.descriptor.type,
@@ -3105,7 +3146,7 @@ void D3D12DebugManager::FillCBufferVariables(const vector<DXBC::CBufferVariable>
 }
 
 void D3D12DebugManager::BuildShader(string source, string entry, const uint32_t compileFlags,
-                                    ShaderStageType type, ResourceId *id, string *errors)
+                                    ShaderStage type, ResourceId *id, string *errors)
 {
   if(id == NULL || errors == NULL)
   {
@@ -3118,12 +3159,12 @@ void D3D12DebugManager::BuildShader(string source, string entry, const uint32_t 
 
   switch(type)
   {
-    case eShaderStage_Vertex: profile = "vs_5_0"; break;
-    case eShaderStage_Hull: profile = "hs_5_0"; break;
-    case eShaderStage_Domain: profile = "ds_5_0"; break;
-    case eShaderStage_Geometry: profile = "gs_5_0"; break;
-    case eShaderStage_Pixel: profile = "ps_5_0"; break;
-    case eShaderStage_Compute: profile = "cs_5_0"; break;
+    case ShaderStage::Vertex: profile = "vs_5_0"; break;
+    case ShaderStage::Hull: profile = "hs_5_0"; break;
+    case ShaderStage::Domain: profile = "ds_5_0"; break;
+    case ShaderStage::Geometry: profile = "gs_5_0"; break;
+    case ShaderStage::Pixel: profile = "ps_5_0"; break;
+    case ShaderStage::Compute: profile = "cs_5_0"; break;
     default:
       RDCERR("Unexpected type in BuildShader!");
       *id = ResourceId();
@@ -3379,7 +3420,7 @@ byte *D3D12DebugManager::GetTextureData(ResourceId tex, uint32_t arrayIdx, uint3
       texDisplay.Red = texDisplay.Green = texDisplay.Blue = texDisplay.Alpha = true;
       texDisplay.HDRMul = -1.0f;
       texDisplay.linearDisplayAsGamma = false;
-      texDisplay.overlay = eTexOverlay_None;
+      texDisplay.overlay = DebugOverlay::NoOverlay;
       texDisplay.FlipY = false;
       texDisplay.mip = mip;
       texDisplay.sampleIdx = params.resolve ? ~0U : arrayIdx;
@@ -3389,7 +3430,7 @@ byte *D3D12DebugManager::GetTextureData(ResourceId tex, uint32_t arrayIdx, uint3
       texDisplay.rangemax = params.whitePoint;
       texDisplay.scale = 1.0f;
       texDisplay.texid = tex;
-      texDisplay.typeHint = eCompType_None;
+      texDisplay.typeHint = CompType::Typeless;
       texDisplay.rawoutput = false;
       texDisplay.offx = 0;
       texDisplay.offy = 0;
@@ -3759,7 +3800,7 @@ void D3D12DebugManager::InitPostVSBuffers(uint32_t eventID)
 
   D3D_PRIMITIVE_TOPOLOGY topo = rs.topo;
 
-  const FetchDrawcall *drawcall = m_WrappedDevice->GetDrawcall(eventID);
+  const DrawcallDescription *drawcall = m_WrappedDevice->GetDrawcall(eventID);
 
   if(drawcall->numIndices == 0)
     return;
@@ -3842,7 +3883,7 @@ void D3D12DebugManager::InitPostVSBuffers(uint32_t eventID)
       decl.StartComponent = 0;
       decl.ComponentCount = sign.compCount & 0xff;
 
-      if(sign.systemValue == eAttr_Position)
+      if(sign.systemValue == ShaderBuiltin::Position)
       {
         posidx = (int)sodecls.size();
         numPosComponents = decl.ComponentCount = 4;
@@ -3906,8 +3947,28 @@ void D3D12DebugManager::InitPostVSBuffers(uint32_t eventID)
 
     ID3D12Resource *idxBuf = NULL;
 
-    if((drawcall->flags & eDraw_UseIBuffer) == 0)
+    bool recreate = false;
+    uint64_t outputSize = stride * drawcall->numIndices * drawcall->numInstances;
+
+    if(m_SOBufferSize < outputSize)
     {
+      uint64_t oldSize = m_SOBufferSize;
+      while(m_SOBufferSize < outputSize)
+        m_SOBufferSize *= 2;
+      RDCWARN("Resizing stream-out buffer from %llu to %llu for output data", oldSize,
+              m_SOBufferSize);
+      recreate = true;
+    }
+
+    if(!(drawcall->flags & DrawFlags::UseIBuffer))
+    {
+      if(recreate)
+      {
+        m_WrappedDevice->GPUSync();
+
+        CreateSOBuffers();
+      }
+
       m_DebugList->Reset(m_DebugAlloc, NULL);
 
       rs.ApplyState(m_DebugList);
@@ -3995,10 +4056,20 @@ void D3D12DebugManager::InitPostVSBuffers(uint32_t eventID)
         indexRemap[indices[i]] = i;
       }
 
-      if(indices.size() > m_SOPatchedIndexBufferSize / sizeof(uint32_t))
+      if(m_SOBufferSize / sizeof(Vec4f) < indices.size() * sizeof(uint32_t))
       {
-        RDCWARN("Too many unique indices, clamping.");
-        indices.resize(m_SOPatchedIndexBufferSize / sizeof(uint32_t));
+        uint64_t oldSize = m_SOBufferSize;
+        while(m_SOBufferSize / sizeof(Vec4f) < indices.size() * sizeof(uint32_t))
+          m_SOBufferSize *= 2;
+        RDCWARN("Resizing stream-out buffer from %llu to %llu for indices", oldSize, m_SOBufferSize);
+        recreate = true;
+      }
+
+      if(recreate)
+      {
+        m_WrappedDevice->GPUSync();
+
+        CreateSOBuffers();
       }
 
       FillBuffer(m_SOPatchedIndexBuffer, 0, &indices[0], indices.size() * sizeof(uint32_t));
@@ -4034,11 +4105,21 @@ void D3D12DebugManager::InitPostVSBuffers(uint32_t eventID)
       m_DebugList->DrawIndexedInstanced((UINT)indices.size(), drawcall->numInstances, 0, 0,
                                         drawcall->instanceOffset);
 
+      uint32_t stripCutValue = 0;
+      if(psoDesc.IBStripCutValue == D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_0xFFFF)
+        stripCutValue = 0xffff;
+      else if(psoDesc.IBStripCutValue == D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_0xFFFFFFFF)
+        stripCutValue = 0xffffffff;
+
       // rebase existing index buffer to point to the right elements in our stream-out'd
       // vertex buffer
       for(uint32_t i = 0; i < numIndices; i++)
       {
         uint32_t i32 = rs.ibuffer.bytewidth == 2 ? uint32_t(idx16[i]) : idx32[i];
+
+        // preserve primitive restart indices
+        if(stripCutValue && i32 == stripCutValue)
+          continue;
 
         // apply baseVertex but clamp to 0 (don't allow index to become negative)
         if(i32 < idxclamp)
@@ -4103,18 +4184,6 @@ void D3D12DebugManager::InitPostVSBuffers(uint32_t eventID)
     m_DebugList->DiscardResource(m_SOBuffer, NULL);
     m_DebugList->ResourceBarrier(1, &sobarr);
 
-    D3D12_UNORDERED_ACCESS_VIEW_DESC counterDesc = {};
-    counterDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
-    counterDesc.Format = DXGI_FORMAT_R32_UINT;
-    counterDesc.Buffer.FirstElement = 0;
-    counterDesc.Buffer.NumElements = 4;
-
-    m_WrappedDevice->CreateUnorderedAccessView(m_SOBuffer, NULL, &counterDesc,
-                                               GetCPUHandle(STREAM_OUT_UAV));
-
-    m_WrappedDevice->CreateUnorderedAccessView(m_SOBuffer, NULL, &counterDesc,
-                                               GetUAVClearHandle(STREAM_OUT_UAV));
-
     UINT zeroes[4] = {0, 0, 0, 0};
     m_DebugList->ClearUnorderedAccessViewUint(
         GetGPUHandle(STREAM_OUT_UAV), GetUAVClearHandle(STREAM_OUT_UAV), m_SOBuffer, zeroes, 0, NULL);
@@ -4129,7 +4198,7 @@ void D3D12DebugManager::InitPostVSBuffers(uint32_t eventID)
     SAFE_RELEASE(pipe);
 
     byte *byteData = NULL;
-    D3D12_RANGE range = {0, m_SOBufferSize};
+    D3D12_RANGE range = {0, (SIZE_T)m_SOBufferSize};
     hr = m_SOStagingBuffer->Map(0, &range, (void **)&byteData);
     if(FAILED(hr))
     {
@@ -4145,7 +4214,7 @@ void D3D12DebugManager::InitPostVSBuffers(uint32_t eventID)
 
     if(numBytesWritten == 0)
     {
-      m_PostVSData[eventID] = PostVSData();
+      m_PostVSData[eventID] = D3D12PostVSData();
       SAFE_RELEASE(idxBuf);
       SAFE_RELEASE(soSig);
       return;
@@ -4153,16 +4222,6 @@ void D3D12DebugManager::InitPostVSBuffers(uint32_t eventID)
 
     // skip past the counter
     byteData += 64;
-
-    if(numBytesWritten >= m_SOBufferSize)
-    {
-      RDCERR("Generated output data too large: %08x", numBytesWritten);
-
-      m_SOStagingBuffer->Unmap(0, &range);
-      SAFE_RELEASE(idxBuf);
-      SAFE_RELEASE(soSig);
-      return;
-    }
 
     uint64_t numPrims = numBytesWritten / stride;
 
@@ -4264,11 +4323,11 @@ void D3D12DebugManager::InitPostVSBuffers(uint32_t eventID)
     m_PostVSData[eventID].vsout.nearPlane = nearp;
     m_PostVSData[eventID].vsout.farPlane = farp;
 
-    m_PostVSData[eventID].vsout.useIndices = (drawcall->flags & eDraw_UseIBuffer) > 0;
+    m_PostVSData[eventID].vsout.useIndices = bool(drawcall->flags & DrawFlags::UseIBuffer);
     m_PostVSData[eventID].vsout.numVerts = drawcall->numIndices;
 
     m_PostVSData[eventID].vsout.instStride = 0;
-    if(drawcall->flags & eDraw_Instanced)
+    if(drawcall->flags & DrawFlags::Instanced)
       m_PostVSData[eventID].vsout.instStride =
           uint32_t(numBytesWritten / RDCMAX(1U, drawcall->numInstances));
 
@@ -4329,7 +4388,7 @@ void D3D12DebugManager::InitPostVSBuffers(uint32_t eventID)
       decl.StartComponent = 0;
       decl.ComponentCount = sign.compCount & 0xff;
 
-      if(sign.systemValue == eAttr_Position)
+      if(sign.systemValue == ShaderBuiltin::Position)
       {
         posidx = (int)sodecls.size();
         numPosComponents = decl.ComponentCount = 4;
@@ -4375,36 +4434,240 @@ void D3D12DebugManager::InitPostVSBuffers(uint32_t eventID)
       return;
     }
 
-    m_DebugList->Reset(m_DebugAlloc, NULL);
-
-    rs.ApplyState(m_DebugList);
-
-    m_DebugList->SetPipelineState(pipe);
-
-    if(soSig)
-    {
-      m_DebugList->SetGraphicsRootSignature(soSig);
-      rs.ApplyGraphicsRootElements(m_DebugList);
-    }
-
     D3D12_STREAM_OUTPUT_BUFFER_VIEW view;
+
     view.BufferFilledSizeLocation = m_SOBuffer->GetGPUVirtualAddress();
     view.BufferLocation = m_SOBuffer->GetGPUVirtualAddress() + 64;
     view.SizeInBytes = m_SOBufferSize;
-    m_DebugList->SOSetTargets(0, 1, &view);
-
-    // because the result is expanded we don't have to remap index buffers or anything
-    if(drawcall->flags & eDraw_UseIBuffer)
+    // draws with multiple instances must be replayed one at a time so we can record the number of
+    // primitives from each drawcall, as due to expansion this can vary per-instance.
+    if(drawcall->numInstances > 1)
     {
-      m_DebugList->DrawIndexedInstanced(drawcall->numIndices, drawcall->numInstances,
-                                        drawcall->indexOffset, drawcall->baseVertex,
-                                        drawcall->instanceOffset);
+      m_DebugList->Reset(m_DebugAlloc, NULL);
+
+      rs.ApplyState(m_DebugList);
+
+      m_DebugList->SetPipelineState(pipe);
+
+      if(soSig)
+      {
+        m_DebugList->SetGraphicsRootSignature(soSig);
+        rs.ApplyGraphicsRootElements(m_DebugList);
+      }
+
+      view.BufferFilledSizeLocation = m_SOBuffer->GetGPUVirtualAddress();
+      view.BufferLocation = m_SOBuffer->GetGPUVirtualAddress() + 64;
+      view.SizeInBytes = m_SOBufferSize;
+
+      // do a dummy draw to make sure we have enough space in the output buffer
+      m_DebugList->SOSetTargets(0, 1, &view);
+
+      m_DebugList->BeginQuery(m_SOQueryHeap, D3D12_QUERY_TYPE_SO_STATISTICS_STREAM0, 0);
+
+      // because the result is expanded we don't have to remap index buffers or anything
+      if(drawcall->flags & DrawFlags::UseIBuffer)
+      {
+        m_DebugList->DrawIndexedInstanced(drawcall->numIndices, drawcall->numInstances,
+                                          drawcall->indexOffset, drawcall->baseVertex,
+                                          drawcall->instanceOffset);
+      }
+      else
+      {
+        m_DebugList->DrawInstanced(drawcall->numIndices, drawcall->numInstances,
+                                   drawcall->vertexOffset, drawcall->instanceOffset);
+      }
+
+      m_DebugList->EndQuery(m_SOQueryHeap, D3D12_QUERY_TYPE_SO_STATISTICS_STREAM0, 0);
+
+      m_DebugList->ResolveQueryData(m_SOQueryHeap, D3D12_QUERY_TYPE_SO_STATISTICS_STREAM0, 0, 1,
+                                    m_SOStagingBuffer, 0);
+
+      m_DebugList->Close();
+
+      ID3D12CommandList *l = m_DebugList;
+      m_WrappedDevice->GetQueue()->ExecuteCommandLists(1, &l);
+      m_WrappedDevice->GPUSync();
+
+      // check that things are OK, and resize up if needed
+      D3D12_RANGE range;
+      range.Begin = 0;
+      range.End = (SIZE_T)sizeof(D3D12_QUERY_DATA_SO_STATISTICS);
+
+      D3D12_QUERY_DATA_SO_STATISTICS *data;
+      hr = m_SOStagingBuffer->Map(0, &range, (void **)&data);
+
+      D3D12_QUERY_DATA_SO_STATISTICS result = *data;
+
+      range.End = 0;
+      m_SOStagingBuffer->Unmap(0, &range);
+
+      if(m_SOBufferSize < data->PrimitivesStorageNeeded * 3 * stride)
+      {
+        uint64_t oldSize = m_SOBufferSize;
+        while(m_SOBufferSize < data->PrimitivesStorageNeeded * 3 * stride)
+          m_SOBufferSize *= 2;
+        RDCWARN("Resizing stream-out buffer from %llu to %llu for output", oldSize, m_SOBufferSize);
+        CreateSOBuffers();
+      }
+
+      view.BufferFilledSizeLocation = m_SOBuffer->GetGPUVirtualAddress();
+      view.BufferLocation = m_SOBuffer->GetGPUVirtualAddress() + 64;
+      view.SizeInBytes = m_SOBufferSize;
+
+      m_DebugAlloc->Reset();
+
+      // now do the actual stream out
+      m_DebugList->Reset(m_DebugAlloc, NULL);
+
+      // first need to reset the counter byte values which may have either been written to above, or
+      // are newly created
+      {
+        D3D12_RESOURCE_BARRIER sobarr = {};
+        sobarr.Transition.pResource = m_SOBuffer;
+        sobarr.Transition.StateBefore = D3D12_RESOURCE_STATE_STREAM_OUT;
+        sobarr.Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+
+        m_DebugList->ResourceBarrier(1, &sobarr);
+
+        D3D12_UNORDERED_ACCESS_VIEW_DESC counterDesc = {};
+        counterDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+        counterDesc.Format = DXGI_FORMAT_R32_UINT;
+        counterDesc.Buffer.FirstElement = 0;
+        counterDesc.Buffer.NumElements = 4;
+
+        UINT zeroes[4] = {0, 0, 0, 0};
+        m_DebugList->ClearUnorderedAccessViewUint(GetGPUHandle(STREAM_OUT_UAV),
+                                                  GetUAVClearHandle(STREAM_OUT_UAV), m_SOBuffer,
+                                                  zeroes, 0, NULL);
+
+        std::swap(sobarr.Transition.StateBefore, sobarr.Transition.StateAfter);
+        m_DebugList->ResourceBarrier(1, &sobarr);
+      }
+
+      rs.ApplyState(m_DebugList);
+
+      m_DebugList->SetPipelineState(pipe);
+
+      if(soSig)
+      {
+        m_DebugList->SetGraphicsRootSignature(soSig);
+        rs.ApplyGraphicsRootElements(m_DebugList);
+      }
+
+      // reserve space for enough 'buffer filled size' locations
+      view.BufferLocation = m_SOBuffer->GetGPUVirtualAddress() +
+                            AlignUp(uint64_t(drawcall->numInstances * sizeof(UINT64)), 64ULL);
+
+      // do incremental draws to get the output size. We have to do this O(N^2) style because
+      // there's no way to replay only a single instance. We have to replay 1, 2, 3, ... N instances
+      // and count the total number of verts each time, then we can see from the difference how much
+      // each instance wrote.
+      for(uint32_t inst = 1; inst <= drawcall->numInstances; inst++)
+      {
+        if(drawcall->flags & DrawFlags::UseIBuffer)
+        {
+          view.BufferFilledSizeLocation =
+              m_SOBuffer->GetGPUVirtualAddress() + (inst - 1) * sizeof(UINT64);
+          m_DebugList->SOSetTargets(0, 1, &view);
+          m_DebugList->DrawIndexedInstanced(drawcall->numIndices, inst, drawcall->indexOffset,
+                                            drawcall->baseVertex, drawcall->instanceOffset);
+        }
+        else
+        {
+          view.BufferFilledSizeLocation =
+              m_SOBuffer->GetGPUVirtualAddress() + (inst - 1) * sizeof(UINT64);
+          m_DebugList->SOSetTargets(0, 1, &view);
+          m_DebugList->DrawInstanced(drawcall->numIndices, inst, drawcall->vertexOffset,
+                                     drawcall->instanceOffset);
+        }
+      }
+
+      m_DebugList->Close();
+
+      l = m_DebugList;
+      m_WrappedDevice->GetQueue()->ExecuteCommandLists(1, &l);
+      m_WrappedDevice->GPUSync();
+
+      // the last draw will have written the actual data we want into the buffer
     }
     else
     {
-      m_DebugList->DrawInstanced(drawcall->numIndices, drawcall->numInstances,
-                                 drawcall->vertexOffset, drawcall->instanceOffset);
+      // this only loops if we find from a query that we need to resize up
+      while(true)
+      {
+        m_DebugList->Reset(m_DebugAlloc, NULL);
+
+        rs.ApplyState(m_DebugList);
+
+        m_DebugList->SetPipelineState(pipe);
+
+        if(soSig)
+        {
+          m_DebugList->SetGraphicsRootSignature(soSig);
+          rs.ApplyGraphicsRootElements(m_DebugList);
+        }
+
+        view.BufferFilledSizeLocation = m_SOBuffer->GetGPUVirtualAddress();
+        view.BufferLocation = m_SOBuffer->GetGPUVirtualAddress() + 64;
+        view.SizeInBytes = m_SOBufferSize;
+
+        m_DebugList->SOSetTargets(0, 1, &view);
+
+        m_DebugList->BeginQuery(m_SOQueryHeap, D3D12_QUERY_TYPE_SO_STATISTICS_STREAM0, 0);
+
+        // because the result is expanded we don't have to remap index buffers or anything
+        if(drawcall->flags & DrawFlags::UseIBuffer)
+        {
+          m_DebugList->DrawIndexedInstanced(drawcall->numIndices, drawcall->numInstances,
+                                            drawcall->indexOffset, drawcall->baseVertex,
+                                            drawcall->instanceOffset);
+        }
+        else
+        {
+          m_DebugList->DrawInstanced(drawcall->numIndices, drawcall->numInstances,
+                                     drawcall->vertexOffset, drawcall->instanceOffset);
+        }
+
+        m_DebugList->EndQuery(m_SOQueryHeap, D3D12_QUERY_TYPE_SO_STATISTICS_STREAM0, 0);
+
+        m_DebugList->ResolveQueryData(m_SOQueryHeap, D3D12_QUERY_TYPE_SO_STATISTICS_STREAM0, 0, 1,
+                                      m_SOStagingBuffer, 0);
+
+        m_DebugList->Close();
+
+        ID3D12CommandList *l = m_DebugList;
+        m_WrappedDevice->GetQueue()->ExecuteCommandLists(1, &l);
+        m_WrappedDevice->GPUSync();
+
+        // check that things are OK, and resize up if needed
+        D3D12_RANGE range;
+        range.Begin = 0;
+        range.End = (SIZE_T)sizeof(D3D12_QUERY_DATA_SO_STATISTICS);
+
+        D3D12_QUERY_DATA_SO_STATISTICS *data;
+        hr = m_SOStagingBuffer->Map(0, &range, (void **)&data);
+
+        if(m_SOBufferSize < data->PrimitivesStorageNeeded * 3 * stride)
+        {
+          uint64_t oldSize = m_SOBufferSize;
+          while(m_SOBufferSize < data->PrimitivesStorageNeeded * 3 * stride)
+            m_SOBufferSize *= 2;
+          RDCWARN("Resizing stream-out buffer from %llu to %llu for output", oldSize, m_SOBufferSize);
+          CreateSOBuffers();
+
+          continue;
+        }
+
+        range.End = 0;
+        m_SOStagingBuffer->Unmap(0, &range);
+
+        m_DebugAlloc->Reset();
+
+        break;
+      }
     }
+
+    m_DebugList->Reset(m_DebugAlloc, NULL);
 
     D3D12_RESOURCE_BARRIER sobarr = {};
     sobarr.Transition.pResource = m_SOBuffer;
@@ -4442,7 +4705,7 @@ void D3D12DebugManager::InitPostVSBuffers(uint32_t eventID)
     SAFE_RELEASE(pipe);
 
     byte *byteData = NULL;
-    D3D12_RANGE range = {0, m_SOBufferSize};
+    D3D12_RANGE range = {0, (SIZE_T)m_SOBufferSize};
     hr = m_SOStagingBuffer->Map(0, &range, (void **)&byteData);
     if(FAILED(hr))
     {
@@ -4453,7 +4716,32 @@ void D3D12DebugManager::InitPostVSBuffers(uint32_t eventID)
 
     range.End = 0;
 
-    uint64_t numBytesWritten = *(uint64_t *)byteData;
+    uint64_t *counters = (uint64_t *)byteData;
+
+    uint64_t numBytesWritten = 0;
+    std::vector<D3D12PostVSData::InstData> instData;
+    if(drawcall->numInstances > 1)
+    {
+      uint64_t prevByteCount = 0;
+
+      for(uint32_t inst = 0; inst < drawcall->numInstances; inst++)
+      {
+        uint64_t byteCount = counters[inst];
+
+        D3D12PostVSData::InstData d;
+        d.numVerts = uint32_t((byteCount - prevByteCount) / stride);
+        d.bufOffset = prevByteCount;
+        prevByteCount = byteCount;
+
+        instData.push_back(d);
+      }
+
+      numBytesWritten = prevByteCount;
+    }
+    else
+    {
+      numBytesWritten = counters[0];
+    }
 
     if(numBytesWritten == 0)
     {
@@ -4461,17 +4749,8 @@ void D3D12DebugManager::InitPostVSBuffers(uint32_t eventID)
       return;
     }
 
-    // skip past the counter
-    byteData += 64;
-
-    if(numBytesWritten >= m_SOBufferSize)
-    {
-      RDCERR("Generated output data too large: %08x", numBytesWritten);
-
-      m_SOStagingBuffer->Unmap(0, &range);
-      SAFE_RELEASE(soSig);
-      return;
-    }
+    // skip past the counter(s)
+    byteData += (view.BufferLocation - m_SOBuffer->GetGPUVirtualAddress());
 
     uint64_t numVerts = numBytesWritten / stride;
 
@@ -4569,7 +4848,7 @@ void D3D12DebugManager::InitPostVSBuffers(uint32_t eventID)
 
     m_PostVSData[eventID].gsout.buf = gsoutBuffer;
     m_PostVSData[eventID].gsout.instStride = 0;
-    if(drawcall->flags & eDraw_Instanced)
+    if(drawcall->flags & DrawFlags::Instanced)
       m_PostVSData[eventID].gsout.instStride =
           uint32_t(numBytesWritten / RDCMAX(1U, drawcall->numInstances));
     m_PostVSData[eventID].gsout.vertStride = stride;
@@ -4625,8 +4904,10 @@ void D3D12DebugManager::InitPostVSBuffers(uint32_t eventID)
 
     m_PostVSData[eventID].gsout.numVerts = (uint32_t)numVerts;
 
-    if(drawcall->flags & eDraw_Instanced)
+    if(drawcall->flags & DrawFlags::Instanced)
       m_PostVSData[eventID].gsout.numVerts /= RDCMAX(1U, drawcall->numInstances);
+
+    m_PostVSData[eventID].gsout.instData = instData;
   }
 
   SAFE_RELEASE(soSig);
@@ -4638,13 +4919,13 @@ MeshFormat D3D12DebugManager::GetPostVSBuffers(uint32_t eventID, uint32_t instID
   if(m_PostVSAlias.find(eventID) != m_PostVSAlias.end())
     eventID = m_PostVSAlias[eventID];
 
-  PostVSData postvs;
+  D3D12PostVSData postvs;
   RDCEraseEl(postvs);
 
   if(m_PostVSData.find(eventID) != m_PostVSData.end())
     postvs = m_PostVSData[eventID];
 
-  PostVSData::StageData s = postvs.GetStage(stage);
+  const D3D12PostVSData::StageData &s = postvs.GetStage(stage);
 
   MeshFormat ret;
 
@@ -4671,8 +4952,8 @@ MeshFormat D3D12DebugManager::GetPostVSBuffers(uint32_t eventID, uint32_t instID
 
   ret.compCount = 4;
   ret.compByteWidth = 4;
-  ret.compType = eCompType_Float;
-  ret.specialFormat = eSpecial_Unknown;
+  ret.compType = CompType::Float;
+  ret.specialFormat = SpecialFormat::Unknown;
 
   ret.showAlpha = false;
   ret.bgraOrder = false;
@@ -4683,6 +4964,14 @@ MeshFormat D3D12DebugManager::GetPostVSBuffers(uint32_t eventID, uint32_t instID
   ret.unproject = s.hasPosOut;
   ret.nearPlane = s.nearPlane;
   ret.farPlane = s.farPlane;
+
+  if(instID < s.instData.size())
+  {
+    D3D12PostVSData::InstData inst = s.instData[instID];
+
+    ret.offset = inst.bufOffset;
+    ret.numVerts = inst.numVerts;
+  }
 
   return ret;
 }
@@ -4932,96 +5221,6 @@ bool D3D12DebugManager::RenderTexture(TextureDisplay cfg, bool blendAlpha)
   return RenderTextureInternal(m_OutputWindows[m_CurrentOutputWindow].rtv, cfg, blendAlpha);
 }
 
-FloatVector D3D12DebugManager::InterpretVertex(byte *data, uint32_t vert, const MeshDisplay &cfg,
-                                               byte *end, bool &valid)
-{
-  FloatVector ret(0.0f, 0.0f, 0.0f, 1.0f);
-
-  data += vert * cfg.position.stride;
-
-  float *out = &ret.x;
-
-  ResourceFormat fmt;
-  fmt.compByteWidth = cfg.position.compByteWidth;
-  fmt.compCount = cfg.position.compCount;
-  fmt.compType = cfg.position.compType;
-
-  if(cfg.position.specialFormat == eSpecial_R10G10B10A2)
-  {
-    if(data + 4 >= end)
-    {
-      valid = false;
-      return ret;
-    }
-
-    Vec4f v = ConvertFromR10G10B10A2(*(uint32_t *)data);
-    ret.x = v.x;
-    ret.y = v.y;
-    ret.z = v.z;
-    ret.w = v.w;
-    return ret;
-  }
-  else if(cfg.position.specialFormat == eSpecial_R11G11B10)
-  {
-    if(data + 4 >= end)
-    {
-      valid = false;
-      return ret;
-    }
-
-    Vec3f v = ConvertFromR11G11B10(*(uint32_t *)data);
-    ret.x = v.x;
-    ret.y = v.y;
-    ret.z = v.z;
-    return ret;
-  }
-
-  if(data + cfg.position.compCount * cfg.position.compByteWidth > end)
-  {
-    valid = false;
-    return ret;
-  }
-
-  for(uint32_t i = 0; i < cfg.position.compCount; i++)
-  {
-    *out = ConvertComponent(fmt, data);
-
-    data += cfg.position.compByteWidth;
-    out++;
-  }
-
-  if(cfg.position.bgraOrder)
-  {
-    FloatVector reversed;
-    reversed.x = ret.z;
-    reversed.y = ret.y;
-    reversed.z = ret.x;
-    reversed.w = ret.w;
-    return reversed;
-  }
-
-  return ret;
-}
-
-FloatVector D3D12DebugManager::InterpretVertex(byte *data, uint32_t vert, const MeshDisplay &cfg,
-                                               byte *end, bool useidx, bool &valid)
-{
-  FloatVector ret(0.0f, 0.0f, 0.0f, 1.0f);
-
-  if(useidx && m_HighlightCache.useidx)
-  {
-    if(vert >= (uint32_t)m_HighlightCache.indices.size())
-    {
-      valid = false;
-      return ret;
-    }
-
-    vert = m_HighlightCache.indices[vert];
-  }
-
-  return InterpretVertex(data, vert, cfg, end, valid);
-}
-
 D3D12DebugManager::MeshDisplayPipelines D3D12DebugManager::CacheMeshDisplayPipelines(
     const MeshFormat &primary, const MeshFormat &secondary)
 {
@@ -5039,7 +5238,7 @@ D3D12DebugManager::MeshDisplayPipelines D3D12DebugManager::CacheMeshDisplayPipel
   bit += 6;
 
   ResourceFormat fmt;
-  fmt.special = primary.specialFormat != eSpecial_Unknown;
+  fmt.special = primary.specialFormat != SpecialFormat::Unknown;
   fmt.specialFormat = primary.specialFormat;
   fmt.compByteWidth = primary.compByteWidth;
   fmt.compCount = primary.compCount;
@@ -5047,7 +5246,7 @@ D3D12DebugManager::MeshDisplayPipelines D3D12DebugManager::CacheMeshDisplayPipel
 
   DXGI_FORMAT primaryFmt = MakeDXGIFormat(fmt);
 
-  fmt.special = secondary.specialFormat != eSpecial_Unknown;
+  fmt.special = secondary.specialFormat != SpecialFormat::Unknown;
   fmt.specialFormat = secondary.specialFormat;
   fmt.compByteWidth = secondary.compByteWidth;
   fmt.compCount = secondary.compCount;
@@ -5075,7 +5274,7 @@ D3D12DebugManager::MeshDisplayPipelines D3D12DebugManager::CacheMeshDisplayPipel
 
   MeshDisplayPipelines &cache = m_CachedMeshPipelines[key];
 
-  if(cache.pipes[eShade_None] != NULL)
+  if(cache.pipes[(uint32_t)SolidShade::NoSolid] != NULL)
     return cache;
 
   // should we try and evict old pipelines from the cache here?
@@ -5278,7 +5477,7 @@ void D3D12DebugManager::RenderMesh(uint32_t eventID, const vector<MeshFormat> &s
 
       if(fmt.buf != ResourceId())
       {
-        list->SetGraphicsRoot32BitConstants(3, 4, &fmt.meshColour.x, 0);
+        list->SetGraphicsRoot32BitConstants(3, 4, &fmt.meshColor.x, 0);
 
         MeshDisplayPipelines secondaryCache =
             CacheMeshDisplayPipelines(secondaryDraws[i], secondaryDraws[i]);
@@ -5299,6 +5498,9 @@ void D3D12DebugManager::RenderMesh(uint32_t eventID, const vector<MeshFormat> &s
         list->IASetVertexBuffers(1, 1, &view);
 
         list->IASetPrimitiveTopology(MakeD3DPrimitiveTopology(fmt.topo));
+
+        if(PatchList_Count(fmt.topo) > 0)
+          list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_POINTLIST);
 
         if(fmt.idxByteWidth && fmt.idxbuf != ResourceId())
         {
@@ -5339,15 +5541,18 @@ void D3D12DebugManager::RenderMesh(uint32_t eventID, const vector<MeshFormat> &s
     list->IASetVertexBuffers(1, 1, &view);
 
     list->IASetPrimitiveTopology(MakeD3DPrimitiveTopology(cfg.position.topo));
+
+    if(PatchList_Count(cfg.position.topo) > 0)
+      list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_POINTLIST);
   }
 
-  SolidShadeMode solidShadeMode = cfg.solidShadeMode;
+  SolidShade solidShadeMode = cfg.solidShadeMode;
 
   // can't support secondary shading without a buffer - no pipeline will have been created
-  if(solidShadeMode == eShade_Secondary && cfg.second.buf == ResourceId())
-    solidShadeMode = eShade_None;
+  if(solidShadeMode == SolidShade::Secondary && cfg.second.buf == ResourceId())
+    solidShadeMode = SolidShade::NoSolid;
 
-  if(solidShadeMode == eShade_Secondary)
+  if(solidShadeMode == SolidShade::Secondary)
   {
     ID3D12Resource *vb =
         m_WrappedDevice->GetResourceManager()->GetCurrentAs<ID3D12Resource>(cfg.position.buf);
@@ -5361,19 +5566,19 @@ void D3D12DebugManager::RenderMesh(uint32_t eventID, const vector<MeshFormat> &s
   }
 
   // solid render
-  if(solidShadeMode != eShade_None && cfg.position.topo < eTopology_PatchList)
+  if(solidShadeMode != SolidShade::NoSolid && cfg.position.topo < Topology::PatchList)
   {
     ID3D12PipelineState *pipe = NULL;
     switch(solidShadeMode)
     {
       default:
-      case eShade_Solid: pipe = cache.pipes[MeshDisplayPipelines::ePipe_SolidDepth]; break;
-      case eShade_Lit: pipe = cache.pipes[MeshDisplayPipelines::ePipe_Lit]; break;
-      case eShade_Secondary: pipe = cache.pipes[MeshDisplayPipelines::ePipe_Secondary]; break;
+      case SolidShade::Solid: pipe = cache.pipes[MeshDisplayPipelines::ePipe_SolidDepth]; break;
+      case SolidShade::Lit: pipe = cache.pipes[MeshDisplayPipelines::ePipe_Lit]; break;
+      case SolidShade::Secondary: pipe = cache.pipes[MeshDisplayPipelines::ePipe_Secondary]; break;
     }
 
     pixelData.OutputDisplayFormat = (int)cfg.solidShadeMode;
-    if(cfg.solidShadeMode == eShade_Secondary && cfg.second.showAlpha)
+    if(cfg.solidShadeMode == SolidShade::Secondary && cfg.second.showAlpha)
       pixelData.OutputDisplayFormat = MESHDISPLAY_SECONDARY_ALPHA;
     pixelData.WireframeColour = Vec3f(0.8f, 0.8f, 0.0f);
 
@@ -5383,7 +5588,7 @@ void D3D12DebugManager::RenderMesh(uint32_t eventID, const vector<MeshFormat> &s
     list->SetGraphicsRootConstantBufferView(0, vsCB);
     list->SetGraphicsRootConstantBufferView(1, UploadConstants(&pixelData, sizeof(pixelData)));
 
-    if(solidShadeMode == eShade_Lit)
+    if(solidShadeMode == SolidShade::Lit)
     {
       DebugGeometryCBuffer geomData;
       geomData.InvProj = projMat.Inverse();
@@ -5418,10 +5623,11 @@ void D3D12DebugManager::RenderMesh(uint32_t eventID, const vector<MeshFormat> &s
   }
 
   // wireframe render
-  if(solidShadeMode == eShade_None || cfg.wireframeDraw || cfg.position.topo >= eTopology_PatchList)
+  if(solidShadeMode == SolidShade::NoSolid || cfg.wireframeDraw ||
+     cfg.position.topo >= Topology::PatchList)
   {
     Vec4f wireCol =
-        Vec4f(cfg.position.meshColour.x, cfg.position.meshColour.y, cfg.position.meshColour.z, 1.0f);
+        Vec4f(cfg.position.meshColor.x, cfg.position.meshColor.y, cfg.position.meshColor.z, 1.0f);
 
     pixelData.OutputDisplayFormat = MESHDISPLAY_SOLID;
 
@@ -5432,7 +5638,7 @@ void D3D12DebugManager::RenderMesh(uint32_t eventID, const vector<MeshFormat> &s
     list->SetGraphicsRootConstantBufferView(1, UploadConstants(&pixelData, sizeof(pixelData)));
     list->SetGraphicsRootConstantBufferView(2, vsCB);
 
-    list->SetGraphicsRoot32BitConstants(3, 4, &cfg.position.meshColour.x, 0);
+    list->SetGraphicsRoot32BitConstants(3, 4, &cfg.position.meshColor.x, 0);
 
     if(cfg.position.idxByteWidth && cfg.position.idxbuf != ResourceId())
     {
@@ -5455,12 +5661,12 @@ void D3D12DebugManager::RenderMesh(uint32_t eventID, const vector<MeshFormat> &s
 
   MeshFormat helper;
   helper.idxByteWidth = 2;
-  helper.topo = eTopology_LineList;
+  helper.topo = Topology::LineList;
 
-  helper.specialFormat = eSpecial_Unknown;
+  helper.specialFormat = SpecialFormat::Unknown;
   helper.compByteWidth = 4;
   helper.compCount = 4;
-  helper.compType = eCompType_Float;
+  helper.compType = CompType::Float;
 
   helper.stride = sizeof(Vec4f);
 
@@ -5586,105 +5792,12 @@ void D3D12DebugManager::RenderMesh(uint32_t eventID, const vector<MeshFormat> &s
   // show highlighted vertex
   if(cfg.highlightVert != ~0U)
   {
-    MeshDataStage stage = cfg.type;
+    m_HighlightCache.CacheHighlightingData(eventID, cfg);
 
-    if(m_HighlightCache.EID != eventID || stage != m_HighlightCache.stage ||
-       cfg.position.buf != m_HighlightCache.buf || cfg.position.offset != m_HighlightCache.offs)
-    {
-      m_HighlightCache.EID = eventID;
-      m_HighlightCache.buf = cfg.position.buf;
-      m_HighlightCache.offs = cfg.position.offset;
-      m_HighlightCache.stage = stage;
-
-      uint32_t bytesize = cfg.position.idxByteWidth;
-      uint64_t maxIndex = cfg.position.numVerts;
-
-      if(cfg.position.idxByteWidth == 0 || stage == eMeshDataStage_GSOut)
-      {
-        m_HighlightCache.indices.clear();
-        m_HighlightCache.useidx = false;
-      }
-      else
-      {
-        m_HighlightCache.useidx = true;
-
-        vector<byte> idxdata;
-        if(cfg.position.idxbuf != ResourceId())
-          GetBufferData(cfg.position.idxbuf, cfg.position.idxoffs, cfg.position.numVerts * bytesize,
-                        idxdata);
-
-        uint8_t *idx8 = (uint8_t *)&idxdata[0];
-        uint16_t *idx16 = (uint16_t *)&idxdata[0];
-        uint32_t *idx32 = (uint32_t *)&idxdata[0];
-
-        uint32_t numIndices = RDCMIN(cfg.position.numVerts, uint32_t(idxdata.size() / bytesize));
-
-        m_HighlightCache.indices.resize(numIndices);
-
-        if(bytesize == 1)
-        {
-          for(uint32_t i = 0; i < numIndices; i++)
-          {
-            m_HighlightCache.indices[i] = uint32_t(idx8[i]);
-            maxIndex = RDCMAX(maxIndex, (uint64_t)m_HighlightCache.indices[i]);
-          }
-        }
-        else if(bytesize == 2)
-        {
-          for(uint32_t i = 0; i < numIndices; i++)
-          {
-            m_HighlightCache.indices[i] = uint32_t(idx16[i]);
-            maxIndex = RDCMAX(maxIndex, (uint64_t)m_HighlightCache.indices[i]);
-          }
-        }
-        else if(bytesize == 4)
-        {
-          for(uint32_t i = 0; i < numIndices; i++)
-          {
-            m_HighlightCache.indices[i] = idx32[i];
-            maxIndex = RDCMAX(maxIndex, (uint64_t)m_HighlightCache.indices[i]);
-          }
-        }
-
-        uint32_t sub = uint32_t(-cfg.position.baseVertex);
-        uint32_t add = uint32_t(cfg.position.baseVertex);
-
-        if(cfg.position.baseVertex > 0)
-          maxIndex += add;
-
-        for(uint32_t i = 0; cfg.position.baseVertex != 0 && i < numIndices; i++)
-        {
-          if(cfg.position.baseVertex < 0)
-          {
-            if(m_HighlightCache.indices[i] < sub)
-              m_HighlightCache.indices[i] = 0;
-            else
-              m_HighlightCache.indices[i] -= sub;
-          }
-          else
-            m_HighlightCache.indices[i] += add;
-        }
-      }
-
-      GetBufferData(cfg.position.buf, cfg.position.offset, (maxIndex + 1) * cfg.position.stride,
-                    m_HighlightCache.data);
-    }
-
-    PrimitiveTopology meshtopo = cfg.position.topo;
-
-    uint32_t idx = cfg.highlightVert;
-
-    byte *data = &m_HighlightCache.data[0];    // buffer start
-    byte *dataEnd = data + m_HighlightCache.data.size();
-
-    // we already accounted for cfg.position.offset when fetching the cache
-    // above (since this is constant)
-    // data += cfg.position.offset; // to start of position data
+    Topology meshtopo = cfg.position.topo;
 
     ///////////////////////////////////////////////////////////////
     // vectors to be set from buffers, depending on topology
-
-    bool valid = true;
 
     // this vert (blue dot, required)
     FloatVector activeVertex;
@@ -5701,283 +5814,24 @@ void D3D12DebugManager::RenderMesh(uint32_t eventID, const vector<MeshFormat> &s
     // will be N*M long, N adjacent prims of M verts each. M = primSize below
     vector<FloatVector> adjacentPrimVertices;
 
-    helper.topo = eTopology_TriangleList;
+    helper.topo = Topology::TriangleList;
     uint32_t primSize = 3;    // number of verts per primitive
 
-    if(meshtopo == eTopology_LineList || meshtopo == eTopology_LineStrip ||
-       meshtopo == eTopology_LineList_Adj || meshtopo == eTopology_LineStrip_Adj)
+    if(meshtopo == Topology::LineList || meshtopo == Topology::LineStrip ||
+       meshtopo == Topology::LineList_Adj || meshtopo == Topology::LineStrip_Adj)
     {
       primSize = 2;
-      helper.topo = eTopology_LineList;
+      helper.topo = Topology::LineList;
     }
     else
     {
       // update the cache, as it's currently linelist
-      helper.topo = eTopology_TriangleList;
+      helper.topo = Topology::TriangleList;
       cache = CacheMeshDisplayPipelines(helper, helper);
     }
 
-    activeVertex = InterpretVertex(data, idx, cfg, dataEnd, true, valid);
-
-    // see http://msdn.microsoft.com/en-us/library/windows/desktop/bb205124(v=vs.85).aspx for
-    // how primitive topologies are laid out
-    if(meshtopo == eTopology_LineList)
-    {
-      uint32_t v = uint32_t(idx / 2) * 2;    // find first vert in primitive
-
-      activePrim.push_back(InterpretVertex(data, v + 0, cfg, dataEnd, true, valid));
-      activePrim.push_back(InterpretVertex(data, v + 1, cfg, dataEnd, true, valid));
-    }
-    else if(meshtopo == eTopology_TriangleList)
-    {
-      uint32_t v = uint32_t(idx / 3) * 3;    // find first vert in primitive
-
-      activePrim.push_back(InterpretVertex(data, v + 0, cfg, dataEnd, true, valid));
-      activePrim.push_back(InterpretVertex(data, v + 1, cfg, dataEnd, true, valid));
-      activePrim.push_back(InterpretVertex(data, v + 2, cfg, dataEnd, true, valid));
-    }
-    else if(meshtopo == eTopology_LineList_Adj)
-    {
-      uint32_t v = uint32_t(idx / 4) * 4;    // find first vert in primitive
-
-      FloatVector vs[] = {
-          InterpretVertex(data, v + 0, cfg, dataEnd, true, valid),
-          InterpretVertex(data, v + 1, cfg, dataEnd, true, valid),
-          InterpretVertex(data, v + 2, cfg, dataEnd, true, valid),
-          InterpretVertex(data, v + 3, cfg, dataEnd, true, valid),
-      };
-
-      adjacentPrimVertices.push_back(vs[0]);
-      adjacentPrimVertices.push_back(vs[1]);
-
-      adjacentPrimVertices.push_back(vs[2]);
-      adjacentPrimVertices.push_back(vs[3]);
-
-      activePrim.push_back(vs[1]);
-      activePrim.push_back(vs[2]);
-    }
-    else if(meshtopo == eTopology_TriangleList_Adj)
-    {
-      uint32_t v = uint32_t(idx / 6) * 6;    // find first vert in primitive
-
-      FloatVector vs[] = {
-          InterpretVertex(data, v + 0, cfg, dataEnd, true, valid),
-          InterpretVertex(data, v + 1, cfg, dataEnd, true, valid),
-          InterpretVertex(data, v + 2, cfg, dataEnd, true, valid),
-          InterpretVertex(data, v + 3, cfg, dataEnd, true, valid),
-          InterpretVertex(data, v + 4, cfg, dataEnd, true, valid),
-          InterpretVertex(data, v + 5, cfg, dataEnd, true, valid),
-      };
-
-      adjacentPrimVertices.push_back(vs[0]);
-      adjacentPrimVertices.push_back(vs[1]);
-      adjacentPrimVertices.push_back(vs[2]);
-
-      adjacentPrimVertices.push_back(vs[2]);
-      adjacentPrimVertices.push_back(vs[3]);
-      adjacentPrimVertices.push_back(vs[4]);
-
-      adjacentPrimVertices.push_back(vs[4]);
-      adjacentPrimVertices.push_back(vs[5]);
-      adjacentPrimVertices.push_back(vs[0]);
-
-      activePrim.push_back(vs[0]);
-      activePrim.push_back(vs[2]);
-      activePrim.push_back(vs[4]);
-    }
-    else if(meshtopo == eTopology_LineStrip)
-    {
-      // find first vert in primitive. In strips a vert isn't
-      // in only one primitive, so we pick the first primitive
-      // it's in. This means the first N points are in the first
-      // primitive, and thereafter each point is in the next primitive
-      uint32_t v = RDCMAX(idx, 1U) - 1;
-
-      activePrim.push_back(InterpretVertex(data, v + 0, cfg, dataEnd, true, valid));
-      activePrim.push_back(InterpretVertex(data, v + 1, cfg, dataEnd, true, valid));
-    }
-    else if(meshtopo == eTopology_TriangleStrip)
-    {
-      // find first vert in primitive. In strips a vert isn't
-      // in only one primitive, so we pick the first primitive
-      // it's in. This means the first N points are in the first
-      // primitive, and thereafter each point is in the next primitive
-      uint32_t v = RDCMAX(idx, 2U) - 2;
-
-      activePrim.push_back(InterpretVertex(data, v + 0, cfg, dataEnd, true, valid));
-      activePrim.push_back(InterpretVertex(data, v + 1, cfg, dataEnd, true, valid));
-      activePrim.push_back(InterpretVertex(data, v + 2, cfg, dataEnd, true, valid));
-    }
-    else if(meshtopo == eTopology_LineStrip_Adj)
-    {
-      // find first vert in primitive. In strips a vert isn't
-      // in only one primitive, so we pick the first primitive
-      // it's in. This means the first N points are in the first
-      // primitive, and thereafter each point is in the next primitive
-      uint32_t v = RDCMAX(idx, 3U) - 3;
-
-      FloatVector vs[] = {
-          InterpretVertex(data, v + 0, cfg, dataEnd, true, valid),
-          InterpretVertex(data, v + 1, cfg, dataEnd, true, valid),
-          InterpretVertex(data, v + 2, cfg, dataEnd, true, valid),
-          InterpretVertex(data, v + 3, cfg, dataEnd, true, valid),
-      };
-
-      adjacentPrimVertices.push_back(vs[0]);
-      adjacentPrimVertices.push_back(vs[1]);
-
-      adjacentPrimVertices.push_back(vs[2]);
-      adjacentPrimVertices.push_back(vs[3]);
-
-      activePrim.push_back(vs[1]);
-      activePrim.push_back(vs[2]);
-    }
-    else if(meshtopo == eTopology_TriangleStrip_Adj)
-    {
-      // Triangle strip with adjacency is the most complex topology, as
-      // we need to handle the ends separately where the pattern breaks.
-
-      uint32_t numidx = cfg.position.numVerts;
-
-      if(numidx < 6)
-      {
-        // not enough indices provided, bail to make sure logic below doesn't
-        // need to have tons of edge case detection
-        valid = false;
-      }
-      else if(idx <= 4 || numidx <= 7)
-      {
-        FloatVector vs[] = {
-            InterpretVertex(data, 0, cfg, dataEnd, true, valid),
-            InterpretVertex(data, 1, cfg, dataEnd, true, valid),
-            InterpretVertex(data, 2, cfg, dataEnd, true, valid),
-            InterpretVertex(data, 3, cfg, dataEnd, true, valid),
-            InterpretVertex(data, 4, cfg, dataEnd, true, valid),
-
-            // note this one isn't used as it's adjacency for the next triangle
-            InterpretVertex(data, 5, cfg, dataEnd, true, valid),
-
-            // min() with number of indices in case this is a tiny strip
-            // that is basically just a list
-            InterpretVertex(data, RDCMIN(6U, numidx - 1), cfg, dataEnd, true, valid),
-        };
-
-        // these are the triangles on the far left of the MSDN diagram above
-        adjacentPrimVertices.push_back(vs[0]);
-        adjacentPrimVertices.push_back(vs[1]);
-        adjacentPrimVertices.push_back(vs[2]);
-
-        adjacentPrimVertices.push_back(vs[4]);
-        adjacentPrimVertices.push_back(vs[3]);
-        adjacentPrimVertices.push_back(vs[0]);
-
-        adjacentPrimVertices.push_back(vs[4]);
-        adjacentPrimVertices.push_back(vs[2]);
-        adjacentPrimVertices.push_back(vs[6]);
-
-        activePrim.push_back(vs[0]);
-        activePrim.push_back(vs[2]);
-        activePrim.push_back(vs[4]);
-      }
-      else if(idx > numidx - 4)
-      {
-        // in diagram, numidx == 14
-
-        FloatVector vs[] = {
-            /*[0]=*/InterpretVertex(data, numidx - 8, cfg, dataEnd, true, valid),    // 6 in diagram
-
-            // as above, unused since this is adjacency for 2-previous triangle
-            /*[1]=*/InterpretVertex(data, numidx - 7, cfg, dataEnd, true, valid),    // 7 in diagram
-            /*[2]=*/InterpretVertex(data, numidx - 6, cfg, dataEnd, true, valid),    // 8 in diagram
-
-            // as above, unused since this is adjacency for previous triangle
-            /*[3]=*/InterpretVertex(data, numidx - 5, cfg, dataEnd, true, valid),    // 9 in diagram
-            /*[4]=*/InterpretVertex(data, numidx - 4, cfg, dataEnd, true,
-                                    valid),    // 10 in diagram
-            /*[5]=*/InterpretVertex(data, numidx - 3, cfg, dataEnd, true,
-                                    valid),    // 11 in diagram
-            /*[6]=*/InterpretVertex(data, numidx - 2, cfg, dataEnd, true,
-                                    valid),    // 12 in diagram
-            /*[7]=*/InterpretVertex(data, numidx - 1, cfg, dataEnd, true,
-                                    valid),    // 13 in diagram
-        };
-
-        // these are the triangles on the far right of the MSDN diagram above
-        adjacentPrimVertices.push_back(vs[2]);    // 8 in diagram
-        adjacentPrimVertices.push_back(vs[0]);    // 6 in diagram
-        adjacentPrimVertices.push_back(vs[4]);    // 10 in diagram
-
-        adjacentPrimVertices.push_back(vs[4]);    // 10 in diagram
-        adjacentPrimVertices.push_back(vs[7]);    // 13 in diagram
-        adjacentPrimVertices.push_back(vs[6]);    // 12 in diagram
-
-        adjacentPrimVertices.push_back(vs[6]);    // 12 in diagram
-        adjacentPrimVertices.push_back(vs[5]);    // 11 in diagram
-        adjacentPrimVertices.push_back(vs[2]);    // 8 in diagram
-
-        activePrim.push_back(vs[2]);    // 8 in diagram
-        activePrim.push_back(vs[4]);    // 10 in diagram
-        activePrim.push_back(vs[6]);    // 12 in diagram
-      }
-      else
-      {
-        // we're in the middle somewhere. Each primitive has two vertices for it
-        // so our step rate is 2. The first 'middle' primitive starts at indices 5&6
-        // and uses indices all the way back to 0
-        uint32_t v = RDCMAX(((idx + 1) / 2) * 2, 6U) - 6;
-
-        // these correspond to the indices in the MSDN diagram, with {2,4,6} as the
-        // main triangle
-        FloatVector vs[] = {
-            InterpretVertex(data, v + 0, cfg, dataEnd, true, valid),
-
-            // this one is adjacency for 2-previous triangle
-            InterpretVertex(data, v + 1, cfg, dataEnd, true, valid),
-            InterpretVertex(data, v + 2, cfg, dataEnd, true, valid),
-
-            // this one is adjacency for previous triangle
-            InterpretVertex(data, v + 3, cfg, dataEnd, true, valid),
-            InterpretVertex(data, v + 4, cfg, dataEnd, true, valid),
-            InterpretVertex(data, v + 5, cfg, dataEnd, true, valid),
-            InterpretVertex(data, v + 6, cfg, dataEnd, true, valid),
-            InterpretVertex(data, v + 7, cfg, dataEnd, true, valid),
-            InterpretVertex(data, v + 8, cfg, dataEnd, true, valid),
-        };
-
-        // these are the triangles around {2,4,6} in the MSDN diagram above
-        adjacentPrimVertices.push_back(vs[0]);
-        adjacentPrimVertices.push_back(vs[2]);
-        adjacentPrimVertices.push_back(vs[4]);
-
-        adjacentPrimVertices.push_back(vs[2]);
-        adjacentPrimVertices.push_back(vs[5]);
-        adjacentPrimVertices.push_back(vs[6]);
-
-        adjacentPrimVertices.push_back(vs[6]);
-        adjacentPrimVertices.push_back(vs[8]);
-        adjacentPrimVertices.push_back(vs[4]);
-
-        activePrim.push_back(vs[2]);
-        activePrim.push_back(vs[4]);
-        activePrim.push_back(vs[6]);
-      }
-    }
-    else if(meshtopo >= eTopology_PatchList)
-    {
-      uint32_t dim = (cfg.position.topo - eTopology_PatchList_1CPs + 1);
-
-      uint32_t v0 = uint32_t(idx / dim) * dim;
-
-      for(uint32_t v = v0; v < v0 + dim; v++)
-      {
-        if(v != idx && valid)
-          inactiveVertices.push_back(InterpretVertex(data, v, cfg, dataEnd, true, valid));
-      }
-    }
-    else    // if(meshtopo == eTopology_PointList) point list, or unknown/unhandled type
-    {
-      // no adjacency, inactive verts or active primitive
-    }
+    bool valid = m_HighlightCache.FetchHighlightPositions(cfg, activeVertex, activePrim,
+                                                          adjacentPrimVertices, inactiveVertices);
 
     if(valid)
     {
@@ -5991,6 +5845,9 @@ void D3D12DebugManager::RenderMesh(uint32_t eventID, const vector<MeshFormat> &s
         vertexData.ModelViewProj = projMat.Mul(camMat);
 
       list->IASetPrimitiveTopology(MakeD3DPrimitiveTopology(helper.topo));
+
+      if(PatchList_Count(helper.topo) > 0)
+        list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_POINTLIST);
 
       list->SetGraphicsRootConstantBufferView(0, UploadConstants(&vertexData, sizeof(vertexData)));
 
@@ -6046,7 +5903,7 @@ void D3D12DebugManager::RenderMesh(uint32_t eventID, const vector<MeshFormat> &s
       list->SetGraphicsRoot32BitConstants(3, 4, &colour.x, 0);
 
       // vertices are drawn with tri strips
-      helper.topo = eTopology_TriangleStrip;
+      helper.topo = Topology::TriangleStrip;
       cache = CacheMeshDisplayPipelines(helper, helper);
 
       FloatVector vertSprite[4] = {
@@ -6054,6 +5911,9 @@ void D3D12DebugManager::RenderMesh(uint32_t eventID, const vector<MeshFormat> &s
       };
 
       list->IASetPrimitiveTopology(MakeD3DPrimitiveTopology(helper.topo));
+
+      if(PatchList_Count(helper.topo) > 0)
+        list->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_POINTLIST);
 
       list->SetPipelineState(cache.pipes[MeshDisplayPipelines::ePipe_Solid]);
 
@@ -6107,9 +5967,8 @@ void D3D12DebugManager::RenderMesh(uint32_t eventID, const vector<MeshFormat> &s
 #endif
 }
 
-void D3D12DebugManager::PrepareTextureSampling(ID3D12Resource *resource,
-                                               FormatComponentType typeHint, int &resType,
-                                               vector<D3D12_RESOURCE_BARRIER> &barriers)
+void D3D12DebugManager::PrepareTextureSampling(ID3D12Resource *resource, CompType typeHint,
+                                               int &resType, vector<D3D12_RESOURCE_BARRIER> &barriers)
 {
   int srvOffset = 0;
 
@@ -6371,8 +6230,8 @@ void D3D12DebugManager::PrepareTextureSampling(ID3D12Resource *resource,
   }
 }
 
-bool D3D12DebugManager::GetMinMax(ResourceId texid, uint32_t sliceFace, uint32_t mip, uint32_t sample,
-                                  FormatComponentType typeHint, float *minval, float *maxval)
+bool D3D12DebugManager::GetMinMax(ResourceId texid, uint32_t sliceFace, uint32_t mip,
+                                  uint32_t sample, CompType typeHint, float *minval, float *maxval)
 {
   ID3D12Resource *resource = WrappedID3D12Resource::GetList()[texid];
 
@@ -6540,8 +6399,8 @@ bool D3D12DebugManager::GetMinMax(ResourceId texid, uint32_t sliceFace, uint32_t
 }
 
 bool D3D12DebugManager::GetHistogram(ResourceId texid, uint32_t sliceFace, uint32_t mip,
-                                     uint32_t sample, FormatComponentType typeHint, float minval,
-                                     float maxval, bool channels[4], vector<uint32_t> &histogram)
+                                     uint32_t sample, CompType typeHint, float minval, float maxval,
+                                     bool channels[4], vector<uint32_t> &histogram)
 {
   if(minval >= maxval)
     return false;
@@ -6916,7 +6775,7 @@ struct D3D12QuadOverdrawCallback : public D3D12DrawcallCallback
 
 ResourceId D3D12DebugManager::ApplyCustomShader(ResourceId shader, ResourceId texid, uint32_t mip,
                                                 uint32_t arrayIdx, uint32_t sampleIdx,
-                                                FormatComponentType typeHint)
+                                                CompType typeHint)
 {
   ID3D12Resource *resource = WrappedID3D12Resource::GetList()[texid];
 
@@ -6988,12 +6847,12 @@ ResourceId D3D12DebugManager::ApplyCustomShader(ResourceId shader, ResourceId te
   disp.CustomShader = shader;
   disp.texid = texid;
   disp.typeHint = typeHint;
-  disp.lightBackgroundColour = disp.darkBackgroundColour = FloatVector(0, 0, 0, 0);
+  disp.lightBackgroundColor = disp.darkBackgroundColor = FloatVector(0, 0, 0, 0);
   disp.HDRMul = -1.0f;
   disp.linearDisplayAsGamma = false;
   disp.mip = mip;
   disp.sampleIdx = sampleIdx;
-  disp.overlay = eTexOverlay_None;
+  disp.overlay = DebugOverlay::NoOverlay;
   disp.rangemin = 0.0f;
   disp.rangemax = 1.0f;
   disp.rawoutput = false;
@@ -7008,9 +6867,8 @@ ResourceId D3D12DebugManager::ApplyCustomShader(ResourceId shader, ResourceId te
   return m_CustomShaderResourceId;
 }
 
-ResourceId D3D12DebugManager::RenderOverlay(ResourceId texid, FormatComponentType typeHint,
-                                            TextureDisplayOverlay overlay, uint32_t eventID,
-                                            const vector<uint32_t> &passEvents)
+ResourceId D3D12DebugManager::RenderOverlay(ResourceId texid, CompType typeHint, DebugOverlay overlay,
+                                            uint32_t eventID, const vector<uint32_t> &passEvents)
 {
   ID3D12Resource *resource = WrappedID3D12Resource::GetList()[texid];
 
@@ -7199,11 +7057,11 @@ ResourceId D3D12DebugManager::RenderOverlay(ResourceId texid, FormatComponentTyp
   if(rs.pipe != ResourceId())
     pipe = m_WrappedDevice->GetResourceManager()->GetCurrentAs<WrappedID3D12PipelineState>(rs.pipe);
 
-  if(overlay == eTexOverlay_NaN || overlay == eTexOverlay_Clipping)
+  if(overlay == DebugOverlay::NaN || overlay == DebugOverlay::Clipping)
   {
     // just need the basic texture
   }
-  else if(overlay == eTexOverlay_Drawcall)
+  else if(overlay == DebugOverlay::Drawcall)
   {
     if(pipe && pipe->IsGraphics())
     {
@@ -7227,6 +7085,8 @@ ResourceId D3D12DebugManager::RenderOverlay(ResourceId texid, FormatComponentTyp
       RDCEraseEl(psoDesc.RTVFormats);
       psoDesc.RTVFormats[0] = DXGI_FORMAT_R16G16B16A16_UNORM;
       psoDesc.NumRenderTargets = 1;
+      psoDesc.SampleMask = ~0U;
+      psoDesc.SampleDesc.Count = RDCMAX(1U, psoDesc.SampleDesc.Count);
       psoDesc.DSVFormat = DXGI_FORMAT_UNKNOWN;
 
       psoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
@@ -7274,7 +7134,7 @@ ResourceId D3D12DebugManager::RenderOverlay(ResourceId texid, FormatComponentTyp
       SAFE_RELEASE(ps);
     }
   }
-  else if(overlay == eTexOverlay_BackfaceCull)
+  else if(overlay == DebugOverlay::BackfaceCull)
   {
     if(pipe && pipe->IsGraphics())
     {
@@ -7300,6 +7160,8 @@ ResourceId D3D12DebugManager::RenderOverlay(ResourceId texid, FormatComponentTyp
       RDCEraseEl(psoDesc.RTVFormats);
       psoDesc.RTVFormats[0] = DXGI_FORMAT_R16G16B16A16_UNORM;
       psoDesc.NumRenderTargets = 1;
+      psoDesc.SampleMask = ~0U;
+      psoDesc.SampleDesc.Count = RDCMAX(1U, psoDesc.SampleDesc.Count);
       psoDesc.DSVFormat = DXGI_FORMAT_UNKNOWN;
 
       psoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
@@ -7370,7 +7232,7 @@ ResourceId D3D12DebugManager::RenderOverlay(ResourceId texid, FormatComponentTyp
       SAFE_RELEASE(greenPSO);
     }
   }
-  else if(overlay == eTexOverlay_Wireframe)
+  else if(overlay == DebugOverlay::Wireframe)
   {
     if(pipe && pipe->IsGraphics())
     {
@@ -7394,6 +7256,8 @@ ResourceId D3D12DebugManager::RenderOverlay(ResourceId texid, FormatComponentTyp
       RDCEraseEl(psoDesc.RTVFormats);
       psoDesc.RTVFormats[0] = DXGI_FORMAT_R16G16B16A16_UNORM;
       psoDesc.NumRenderTargets = 1;
+      psoDesc.SampleMask = ~0U;
+      psoDesc.SampleDesc.Count = RDCMAX(1U, psoDesc.SampleDesc.Count);
       psoDesc.DSVFormat = DXGI_FORMAT_UNKNOWN;
 
       psoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_WIREFRAME;
@@ -7441,11 +7305,11 @@ ResourceId D3D12DebugManager::RenderOverlay(ResourceId texid, FormatComponentTyp
       SAFE_RELEASE(ps);
     }
   }
-  else if(overlay == eTexOverlay_ClearBeforePass || overlay == eTexOverlay_ClearBeforeDraw)
+  else if(overlay == DebugOverlay::ClearBeforePass || overlay == DebugOverlay::ClearBeforeDraw)
   {
     vector<uint32_t> events = passEvents;
 
-    if(overlay == eTexOverlay_ClearBeforeDraw)
+    if(overlay == DebugOverlay::ClearBeforeDraw)
       events.clear();
 
     events.push_back(eventID);
@@ -7458,7 +7322,7 @@ ResourceId D3D12DebugManager::RenderOverlay(ResourceId texid, FormatComponentTyp
       bool rtSingle = rs.rtSingle;
       vector<PortableHandle> rts = rs.rts;
 
-      if(overlay == eTexOverlay_ClearBeforePass)
+      if(overlay == DebugOverlay::ClearBeforePass)
         m_WrappedDevice->ReplayLog(0, events[0], eReplay_WithoutDraw);
 
       list = m_WrappedDevice->GetNewList();
@@ -7489,12 +7353,12 @@ ResourceId D3D12DebugManager::RenderOverlay(ResourceId texid, FormatComponentTyp
       {
         m_WrappedDevice->ReplayLog(events[i], events[i], eReplay_OnlyDraw);
 
-        if(overlay == eTexOverlay_ClearBeforePass && i + 1 < events.size())
+        if(overlay == DebugOverlay::ClearBeforePass && i + 1 < events.size())
           m_WrappedDevice->ReplayLog(events[i] + 1, events[i + 1], eReplay_WithoutDraw);
       }
     }
   }
-  else if(overlay == eTexOverlay_ViewportScissor)
+  else if(overlay == DebugOverlay::ViewportScissor)
   {
     if(pipe && pipe->IsGraphics() && !rs.views.empty())
     {
@@ -7555,7 +7419,7 @@ ResourceId D3D12DebugManager::RenderOverlay(ResourceId texid, FormatComponentTyp
       list->DrawInstanced(3, 1, 0, 0);
     }
   }
-  else if(overlay == eTexOverlay_TriangleSizeDraw || overlay == eTexOverlay_TriangleSizePass)
+  else if(overlay == DebugOverlay::TriangleSizeDraw || overlay == DebugOverlay::TriangleSizePass)
   {
     if(pipe && pipe->IsGraphics())
     {
@@ -7563,15 +7427,15 @@ ResourceId D3D12DebugManager::RenderOverlay(ResourceId texid, FormatComponentTyp
 
       vector<uint32_t> events = passEvents;
 
-      if(overlay == eTexOverlay_TriangleSizeDraw)
+      if(overlay == DebugOverlay::TriangleSizeDraw)
         events.clear();
 
       while(!events.empty())
       {
-        const FetchDrawcall *draw = m_WrappedDevice->GetDrawcall(events[0]);
+        const DrawcallDescription *draw = m_WrappedDevice->GetDrawcall(events[0]);
 
         // remove any non-drawcalls, like the pass boundary.
-        if((draw->flags & eDraw_Drawcall) == 0)
+        if(!(draw->flags & DrawFlags::Drawcall))
           events.erase(events.begin());
         else
           break;
@@ -7660,13 +7524,13 @@ ResourceId D3D12DebugManager::RenderOverlay(ResourceId texid, FormatComponentTyp
 
       for(size_t i = 0; i < events.size(); i++)
       {
-        const FetchDrawcall *draw = m_WrappedDevice->GetDrawcall(events[i]);
+        const DrawcallDescription *draw = m_WrappedDevice->GetDrawcall(events[i]);
 
         for(uint32_t inst = 0; draw && inst < RDCMAX(1U, draw->numInstances); inst++)
         {
-          MeshFormat fmt = GetPostVSBuffers(events[i], inst, eMeshDataStage_GSOut);
+          MeshFormat fmt = GetPostVSBuffers(events[i], inst, MeshDataStage::GSOut);
           if(fmt.buf == ResourceId())
-            fmt = GetPostVSBuffers(events[i], inst, eMeshDataStage_VSOut);
+            fmt = GetPostVSBuffers(events[i], inst, MeshDataStage::VSOut);
 
           if(fmt.buf != ResourceId())
           {
@@ -7742,20 +7606,20 @@ ResourceId D3D12DebugManager::RenderOverlay(ResourceId texid, FormatComponentTyp
     // restore back to normal
     m_WrappedDevice->ReplayLog(0, eventID, eReplay_WithoutDraw);
   }
-  else if(overlay == eTexOverlay_QuadOverdrawPass || overlay == eTexOverlay_QuadOverdrawDraw)
+  else if(overlay == DebugOverlay::QuadOverdrawPass || overlay == DebugOverlay::QuadOverdrawDraw)
   {
     SCOPED_TIMER("Quad Overdraw");
 
     vector<uint32_t> events = passEvents;
 
-    if(overlay == eTexOverlay_QuadOverdrawDraw)
+    if(overlay == DebugOverlay::QuadOverdrawDraw)
       events.clear();
 
     events.push_back(eventID);
 
     if(!events.empty())
     {
-      if(overlay == eTexOverlay_QuadOverdrawPass)
+      if(overlay == DebugOverlay::QuadOverdrawPass)
       {
         list->Close();
         m_WrappedDevice->ReplayLog(0, events[0], eReplay_WithoutDraw);
@@ -7871,10 +7735,10 @@ ResourceId D3D12DebugManager::RenderOverlay(ResourceId texid, FormatComponentTyp
       SAFE_RELEASE(overdrawTex);
     }
 
-    if(overlay == eTexOverlay_QuadOverdrawPass)
+    if(overlay == DebugOverlay::QuadOverdrawPass)
       m_WrappedDevice->ReplayLog(0, eventID, eReplay_WithoutDraw);
   }
-  else if(overlay == eTexOverlay_Depth || overlay == eTexOverlay_Stencil)
+  else if(overlay == DebugOverlay::Depth || overlay == DebugOverlay::Stencil)
   {
     if(pipe && pipe->IsGraphics())
     {
@@ -7896,7 +7760,7 @@ ResourceId D3D12DebugManager::RenderOverlay(ResourceId texid, FormatComponentTyp
         psoDesc.DepthStencilState.BackFace.StencilFunc = D3D12_COMPARISON_FUNC_ALWAYS;
       }
 
-      if(overlay == eTexOverlay_Depth)
+      if(overlay == DebugOverlay::Depth)
       {
         psoDesc.DepthStencilState.StencilEnable = FALSE;
         psoDesc.DepthStencilState.FrontFace.StencilFunc = D3D12_COMPARISON_FUNC_ALWAYS;
@@ -7911,6 +7775,8 @@ ResourceId D3D12DebugManager::RenderOverlay(ResourceId texid, FormatComponentTyp
       RDCEraseEl(psoDesc.RTVFormats);
       psoDesc.RTVFormats[0] = DXGI_FORMAT_R16G16B16A16_UNORM;
       psoDesc.NumRenderTargets = 1;
+      psoDesc.SampleMask = ~0U;
+      psoDesc.SampleDesc.Count = RDCMAX(1U, psoDesc.SampleDesc.Count);
       psoDesc.BlendState.AlphaToCoverageEnable = FALSE;
       psoDesc.BlendState.IndependentBlendEnable = FALSE;
       psoDesc.BlendState.RenderTarget[0].BlendEnable = FALSE;
@@ -7929,6 +7795,9 @@ ResourceId D3D12DebugManager::RenderOverlay(ResourceId texid, FormatComponentTyp
 
       psoDesc.PS.pShaderBytecode = green->GetBufferPointer();
       psoDesc.PS.BytecodeLength = green->GetBufferSize();
+
+      list->Close();
+      list = NULL;
 
       ID3D12PipelineState *greenPSO = NULL;
       HRESULT hr = m_WrappedDevice->CreateGraphicsPipelineState(
@@ -7960,9 +7829,6 @@ ResourceId D3D12DebugManager::RenderOverlay(ResourceId texid, FormatComponentTyp
         SAFE_RELEASE(green);
         return m_OverlayResourceId;
       }
-
-      list->Close();
-      list = NULL;
 
       D3D12RenderState prev = rs;
 
@@ -8086,9 +7952,6 @@ bool D3D12DebugManager::RenderTextureInternal(D3D12_CPU_DESCRIPTOR_HANDLE rtv, T
   if(resourceDesc.DepthOrArraySize > 1 && resourceDesc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE3D)
     pixelData.TextureResolutionPS.z = float(resourceDesc.DepthOrArraySize);
 
-  if(resourceDesc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D)
-    pixelData.Slice = float(cfg.sliceFace) / float(resourceDesc.DepthOrArraySize);
-
   vertexData.Scale = cfg.scale;
   pixelData.ScalePS = cfg.scale;
 
@@ -8117,16 +7980,19 @@ bool D3D12DebugManager::RenderTextureInternal(D3D12_CPU_DESCRIPTOR_HANDLE rtv, T
   pixelData.OutputDisplayFormat = RESTYPE_TEX2D;
   pixelData.Slice = float(RDCCLAMP(cfg.sliceFace, 0U, uint32_t(resourceDesc.DepthOrArraySize - 1)));
 
+  if(resourceDesc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D)
+    pixelData.Slice = (float(cfg.sliceFace) / float(resourceDesc.DepthOrArraySize)) + 0.001f;
+
   vector<D3D12_RESOURCE_BARRIER> barriers;
   int resType = 0;
   PrepareTextureSampling(resource, cfg.typeHint, resType, barriers);
 
   pixelData.OutputDisplayFormat = resType;
 
-  if(cfg.overlay == eTexOverlay_NaN)
+  if(cfg.overlay == DebugOverlay::NaN)
     pixelData.OutputDisplayFormat |= TEXDISPLAY_NANS;
 
-  if(cfg.overlay == eTexOverlay_Clipping)
+  if(cfg.overlay == DebugOverlay::Clipping)
     pixelData.OutputDisplayFormat |= TEXDISPLAY_CLIPPING;
 
   if(IsUIntFormat(resourceDesc.Format))

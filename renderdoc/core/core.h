@@ -32,8 +32,7 @@
 #include <utility>
 #include <vector>
 #include "api/app/renderdoc_app.h"
-#include "api/replay/capture_options.h"
-#include "api/replay/replay_enums.h"
+#include "api/replay/renderdoc_replay.h"
 #include "common/threading.h"
 #include "common/timing.h"
 #include "os/os_specific.h"
@@ -66,6 +65,16 @@ struct IFrameCapturer
   virtual bool EndFrameCapture(void *dev, void *wnd) = 0;
 };
 
+// READING and EXECUTING are replay states.
+// WRITING_IDLE and WRITING_CAPFRAME are capture states.
+// WRITING isn't actually a state, it's just a midpoint in the enum,
+// so it takes fewer characters to check which state we're in.
+//
+// on replay, m_State < WRITING is the same as
+//(m_State == READING || m_State == EXECUTING)
+//
+// on capture, m_State >= WRITING is the same as
+//(m_State == WRITING_IDLE || m_State == WRITING_CAPFRAME)
 enum LogState
 {
   READING = 0,
@@ -137,7 +146,7 @@ struct RDCInitParams
     m_pSerialiser = NULL;
   }
   virtual ~RDCInitParams() {}
-  virtual ReplayCreateStatus Serialise() = 0;
+  virtual ReplayStatus Serialise() = 0;
 
   LogState m_State;
   Serialiser *m_pSerialiser;
@@ -168,10 +177,10 @@ enum LoadProgressSection
 class IRemoteDriver;
 class IReplayDriver;
 
-typedef ReplayCreateStatus (*RemoteDriverProvider)(const char *logfile, IRemoteDriver **driver);
-typedef ReplayCreateStatus (*ReplayDriverProvider)(const char *logfile, IReplayDriver **driver);
+typedef ReplayStatus (*RemoteDriverProvider)(const char *logfile, IRemoteDriver **driver);
+typedef ReplayStatus (*ReplayDriverProvider)(const char *logfile, IReplayDriver **driver);
 
-typedef bool (*VulkanLayerCheck)(uint32_t &flags, std::vector<std::string> &myJSONs,
+typedef bool (*VulkanLayerCheck)(VulkanLayerFlags &flags, std::vector<std::string> &myJSONs,
                                  std::vector<std::string> &otherJSONs);
 typedef void (*VulkanLayerInstall)(bool systemLevel);
 
@@ -238,15 +247,15 @@ public:
     }
   }
 
-  ReplayCreateStatus FillInitParams(const char *logfile, RDCDriver &driverType, string &driverName,
-                                    uint64_t &fileMachineIdent, RDCInitParams *params);
+  ReplayStatus FillInitParams(const char *logfile, RDCDriver &driverType, string &driverName,
+                              uint64_t &fileMachineIdent, RDCInitParams *params);
 
   void RegisterReplayProvider(RDCDriver driver, const char *name, ReplayDriverProvider provider);
   void RegisterRemoteProvider(RDCDriver driver, const char *name, RemoteDriverProvider provider);
 
   void SetVulkanLayerCheck(VulkanLayerCheck callback) { m_VulkanCheck = callback; }
   void SetVulkanLayerInstall(VulkanLayerInstall callback) { m_VulkanInstall = callback; }
-  bool NeedVulkanLayerRegistration(uint32_t &flags, std::vector<std::string> &myJSONs,
+  bool NeedVulkanLayerRegistration(VulkanLayerFlags &flags, std::vector<std::string> &myJSONs,
                                    std::vector<std::string> &otherJSONs)
   {
     if(m_VulkanCheck)
@@ -261,10 +270,8 @@ public:
       m_VulkanInstall(systemLevel);
   }
 
-  ReplayCreateStatus CreateReplayDriver(RDCDriver driverType, const char *logfile,
-                                        IReplayDriver **driver);
-  ReplayCreateStatus CreateRemoteDriver(RDCDriver driverType, const char *logfile,
-                                        IRemoteDriver **driver);
+  ReplayStatus CreateReplayDriver(RDCDriver driverType, const char *logfile, IReplayDriver **driver);
+  ReplayStatus CreateRemoteDriver(RDCDriver driverType, const char *logfile, IRemoteDriver **driver);
 
   map<RDCDriver, string> GetReplayDrivers();
   map<RDCDriver, string> GetRemoteDrivers();

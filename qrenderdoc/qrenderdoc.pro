@@ -4,7 +4,7 @@
 #
 #-------------------------------------------------
 
-QT       += core gui widgets
+QT       += core gui widgets svg
 
 CONFIG   += silent
 
@@ -29,17 +29,14 @@ INCLUDEPATH += $$_PRO_FILE_PWD_/3rdparty/flowlayout
 INCLUDEPATH += $$_PRO_FILE_PWD_/3rdparty/scintilla/include/qt
 INCLUDEPATH += $$_PRO_FILE_PWD_/3rdparty/scintilla/include
 
+# Disable conversions to/from const char * in QString
+DEFINES += QT_NO_CAST_FROM_ASCII QT_NO_CAST_TO_ASCII
+
 # Different output folders per platform
 win32 {
 
 	RC_INCLUDEPATH = $$_PRO_FILE_PWD_/../renderdoc/api/replay
 	RC_FILE = Resources/qrenderdoc.rc
-
-	# it is fine to alias these across targets, because the output
-	# is identical on all targets
-	MOC_DIR = $$_PRO_FILE_PWD_/obj/generated
-	UI_DIR = $$_PRO_FILE_PWD_/obj/generated
-	RCC_DIR = $$_PRO_FILE_PWD_/obj/generated
 
 	# generate pdb files even in release
 	QMAKE_LFLAGS_RELEASE+=/MAP
@@ -49,16 +46,47 @@ win32 {
 	!contains(QMAKE_TARGET.arch, x86_64) {
 		Debug:DESTDIR = $$_PRO_FILE_PWD_/../Win32/Development
 		Release:DESTDIR = $$_PRO_FILE_PWD_/../Win32/Release
-
-		Debug:OBJECTS_DIR = $$_PRO_FILE_PWD_/obj/Win32/Development
-		Release:OBJECTS_DIR = $$_PRO_FILE_PWD_/obj/Win32/Release
-
 	} else {
 		Debug:DESTDIR = $$_PRO_FILE_PWD_/../x64/Development
 		Release:DESTDIR = $$_PRO_FILE_PWD_/../x64/Release
+	}
 
-		Debug:OBJECTS_DIR = $$_PRO_FILE_PWD_/obj/x64/Development
-		Release:OBJECTS_DIR = $$_PRO_FILE_PWD_/obj/x64/Release
+	# Run SWIG here, since normally we run it from VS
+	swig.name = SWIG ${QMAKE_FILE_IN}
+	swig.input = SWIGSOURCES
+	swig.output = ${QMAKE_FILE_BASE}_python.cxx
+	swig.commands = $$_PRO_FILE_PWD_/3rdparty/swig/swig.exe -v -Wextra -Werror -O -c++ -python -modern -modernargs -enumclass -fastunpack -py3 -builtin -I$$_PRO_FILE_PWD_ -I$$_PRO_FILE_PWD_/../renderdoc/api/replay -outdir . -o ${QMAKE_FILE_BASE}_python.cxx ${QMAKE_FILE_IN}
+	swig.CONFIG += target_predeps
+	swig.variable_out = GENERATED_SOURCES
+	silent:swig.commands = @echo SWIG ${QMAKE_FILE_IN} && $$swig.commands
+	QMAKE_EXTRA_COMPILERS += swig
+
+	SWIGSOURCES += Code/pyrenderdoc/renderdoc.i
+	SWIGSOURCES += Code/pyrenderdoc/qrenderdoc.i
+
+	# Embed renderdoc.py and qrenderdoc.py
+	RC_DEFINES = RENDERDOC_PY_PATH=renderdoc.py
+	RC_DEFINES += QRENDERDOC_PY_PATH=qrenderdoc.py
+
+	# Include and link against python
+	INCLUDEPATH += $$_PRO_FILE_PWD_/3rdparty/python/include
+	!contains(QMAKE_TARGET.arch, x86_64) {
+		LIBS += $$_PRO_FILE_PWD_/3rdparty/python/Win32/python36.lib
+	} else {
+		LIBS += $$_PRO_FILE_PWD_/3rdparty/python/x64/python36.lib
+	}
+
+	# Include and link against PySide2
+	DEFINES += PYSIDE2_ENABLED=1
+	INCLUDEPATH += $$_PRO_FILE_PWD_/3rdparty/pyside/include/shiboken2
+	INCLUDEPATH += $$_PRO_FILE_PWD_/3rdparty/pyside/include/PySide2
+	INCLUDEPATH += $$_PRO_FILE_PWD_/3rdparty/pyside/include/PySide2/QtCore
+	INCLUDEPATH += $$_PRO_FILE_PWD_/3rdparty/pyside/include/PySide2/QtGui
+	INCLUDEPATH += $$_PRO_FILE_PWD_/3rdparty/pyside/include/PySide2/QtWidgets
+	!contains(QMAKE_TARGET.arch, x86_64) {
+		LIBS += $$_PRO_FILE_PWD_/3rdparty/pyside/Win32/shiboken2.lib
+	} else {
+		LIBS += $$_PRO_FILE_PWD_/3rdparty/pyside/x64/shiboken2.lib
 	}
 
 	# Link against the core library
@@ -68,9 +96,13 @@ win32 {
 	DEFINES += RENDERDOC_PLATFORM_WIN32
 
 } else {
-	isEmpty(DESTDIR) {
-		DESTDIR = $$_PRO_FILE_PWD_/../bin
+	isEmpty(CMAKE_DIR) {
+		error("When run from outside CMake, please set the Build Environment Variable CMAKE_DIR to point to your CMake build root. In Qt Creator add CMAKE_DIR=/path/to/renderdoc/build under 'Additional arguments' in the qmake Build Step. If running qmake directly, add CMAKE_DIR=/path/to/renderdoc/build/ to the command line.")
 	}
+
+	DESTDIR=$$CMAKE_DIR/bin
+
+	include($$CMAKE_DIR/qrenderdoc/qrenderdoc_cmake.pri)
 
 	# Temp files into .obj
 	MOC_DIR = .obj
@@ -79,11 +111,17 @@ win32 {
 	OBJECTS_DIR = .obj
 
 	# Link against the core library
-	LIBS += -L$$DESTDIR -lrenderdoc
+	LIBS += -lrenderdoc
 	QMAKE_LFLAGS += '-Wl,-rpath,\'\$$ORIGIN\',-rpath,\'\$$ORIGIN/../lib\''
 
+	# Add the SWIG files that were generated in cmake
+	SOURCES += $$CMAKE_DIR/qrenderdoc/renderdoc_python.cxx
+	SOURCES += $$CMAKE_DIR/qrenderdoc/renderdoc.py.c
+	SOURCES += $$CMAKE_DIR/qrenderdoc/qrenderdoc_python.cxx
+	SOURCES += $$CMAKE_DIR/qrenderdoc/qrenderdoc.py.c
+
 	CONFIG += warn_off
-	CONFIG += c++11
+	CONFIG += c++14
 	QMAKE_CFLAGS_WARN_OFF -= -w
 	QMAKE_CXXFLAGS_WARN_OFF -= -w
 
@@ -91,11 +129,12 @@ win32 {
 		DEFINES += RENDERDOC_PLATFORM_POSIX RENDERDOC_PLATFORM_APPLE
 		ICON = $$OSX_ICONFILE
 
-		INFO_PLIST_PATH = $$shell_quote($${DESTDIR}/$${TARGET}.app/Contents/Info.plist)
+		INFO_PLIST_PATH = $$shell_quote($$DESTDIR/$${TARGET}.app/Contents/Info.plist)
 		QMAKE_POST_LINK += /usr/libexec/PlistBuddy -c \"Add :CFBundleShortVersionString string $${RENDERDOC_VERSION}.0\" -c \"Set :CFBundleIdentifier org.renderdoc.qrenderdoc\" $${INFO_PLIST_PATH}
 	} else {
 		QT += x11extras
 		DEFINES += RENDERDOC_PLATFORM_POSIX RENDERDOC_PLATFORM_LINUX RENDERDOC_WINDOWING_XLIB RENDERDOC_WINDOWING_XCB
+		QMAKE_LFLAGS += '-Wl,--no-as-needed'
 
 		contains(QMAKE_CXXFLAGS, "-DRENDERDOC_SUPPORT_GL") {
 			# Link against GL
@@ -113,21 +152,25 @@ win32 {
 
 SOURCES += Code/qrenderdoc.cpp \
     Code/qprocessinfo.cpp \
-    Code/RenderManager.cpp \
-    Code/CommonPipelineState.cpp \
-    Code/PersistantConfig.cpp \
+    Code/ReplayManager.cpp \
     Code/CaptureContext.cpp \
     Code/ScintillaSyntax.cpp \
     Code/QRDUtils.cpp \
     Code/FormatElement.cpp \
-    Code/RemoteHost.cpp \
     Code/Resources.cpp \
+    Code/pyrenderdoc/PythonContext.cpp \
+    Code/Interface/QRDInterface.cpp \
+    Code/Interface/CommonPipelineState.cpp \
+    Code/Interface/PersistantConfig.cpp \
+    Code/Interface/RemoteHost.cpp \
     Windows/Dialogs/AboutDialog.cpp \
     Windows/MainWindow.cpp \
     Windows/EventBrowser.cpp \
     Windows/TextureViewer.cpp \
     Widgets/Extended/RDLineEdit.cpp \
+    Widgets/Extended/RDTextEdit.cpp \
     Widgets/Extended/RDLabel.cpp \
+    Widgets/Extended/RDToolButton.cpp \
     Widgets/Extended/RDDoubleSpinBox.cpp \
     Widgets/Extended/RDListView.cpp \
     Widgets/CustomPaintWidget.cpp \
@@ -162,23 +205,31 @@ SOURCES += Code/qrenderdoc.cpp \
     Windows/PixelHistoryView.cpp \
     Widgets/PipelineFlowChart.cpp \
     Windows/Dialogs/EnvironmentEditor.cpp \
-    Widgets/FindReplace.cpp
-
+    Widgets/FindReplace.cpp \
+    Widgets/Extended/RDSplitter.cpp \
+    Windows/Dialogs/TipsDialog.cpp \
+    Windows/PythonShell.cpp
 HEADERS += Code/CaptureContext.h \
     Code/qprocessinfo.h \
-    Code/RenderManager.h \
-    Code/PersistantConfig.h \
-    Code/CommonPipelineState.h \
+    Code/ReplayManager.h \
     Code/ScintillaSyntax.h \
-    Code/RemoteHost.h \
     Code/QRDUtils.h \
     Code/Resources.h \
+    Code/pyrenderdoc/PythonContext.h \
+    Code/pyrenderdoc/pyconversion.h \
+    Code/pyrenderdoc/document_check.h \
+    Code/Interface/QRDInterface.h \
+    Code/Interface/CommonPipelineState.h \
+    Code/Interface/PersistantConfig.h \
+    Code/Interface/RemoteHost.h \
     Windows/Dialogs/AboutDialog.h \
     Windows/MainWindow.h \
     Windows/EventBrowser.h \
     Windows/TextureViewer.h \
     Widgets/Extended/RDLineEdit.h \
+    Widgets/Extended/RDTextEdit.h \
     Widgets/Extended/RDLabel.h \
+    Widgets/Extended/RDToolButton.h \
     Widgets/Extended/RDDoubleSpinBox.h \
     Widgets/Extended/RDListView.h \
     Widgets/CustomPaintWidget.h \
@@ -213,8 +264,10 @@ HEADERS += Code/CaptureContext.h \
     Windows/PixelHistoryView.h \
     Widgets/PipelineFlowChart.h \
     Windows/Dialogs/EnvironmentEditor.h \
-    Widgets/FindReplace.h
-
+    Widgets/FindReplace.h \
+    Widgets/Extended/RDSplitter.h \
+    Windows/Dialogs/TipsDialog.h \
+    Windows/PythonShell.h
 FORMS    += Windows/Dialogs/AboutDialog.ui \
     Windows/MainWindow.ui \
     Windows/EventBrowser.ui \
@@ -243,7 +296,9 @@ FORMS    += Windows/Dialogs/AboutDialog.ui \
     Windows/Dialogs/RemoteManager.ui \
     Windows/PixelHistoryView.ui \
     Windows/Dialogs/EnvironmentEditor.ui \
-    Widgets/FindReplace.ui
+    Widgets/FindReplace.ui \
+    Windows/Dialogs/TipsDialog.ui \
+    Windows/PythonShell.ui
 
 RESOURCES += Resources/resources.qrc
 

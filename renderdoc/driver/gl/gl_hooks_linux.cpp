@@ -226,7 +226,7 @@ public:
     Display *dpy = NULL;
     Drawable draw = 0;
 
-    if(system == eWindowingSystem_Xlib)
+    if(system == WindowingSystem::Xlib)
     {
 #if ENABLED(RDOC_XLIB)
       XlibWindowData *xlib = (XlibWindowData *)data;
@@ -239,7 +239,7 @@ public:
           "support compiled in");
 #endif
     }
-    else if(system == eWindowingSystem_Unknown)
+    else if(system == WindowingSystem::Unknown)
     {
       // allow undefined so that internally we can create a window-less context
       dpy = XOpenDisplay(NULL);
@@ -334,7 +334,12 @@ public:
     }
     else
     {
-      wnd = glXCreateWindow(dpy, fbcfg[0], draw, 0);
+      // on NV and AMD creating this window causes problems rendering to any widgets in Qt, with the
+      // width/height queries failing to return any values and the framebuffer blitting not working.
+      // For the moment, we use the passed-in drawable directly as this works in testing on
+      // renderdoccmd and qrenderdoc
+      wnd = draw;
+      // glXCreateWindow(dpy, fbcfg[0], draw, 0);
     }
 
     XFree(fbcfg);

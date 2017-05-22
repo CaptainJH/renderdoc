@@ -112,7 +112,6 @@ namespace renderdoc
 
         public ResourceFormat()
         {
-            rawType = 0;
             special = false;
             specialFormat = SpecialFormat.Unknown;
 
@@ -127,7 +126,6 @@ namespace renderdoc
 
         public ResourceFormat(FormatComponentType type, UInt32 count, UInt32 byteWidth)
         {
-            rawType = 0;
             special = false;
             specialFormat = SpecialFormat.Unknown;
 
@@ -139,8 +137,6 @@ namespace renderdoc
 
             strname = "";
         }
-
-        public UInt32 rawType;
 
         // indicates it's not a type represented with the members below
         // usually this means non-uniform across components or block compressed
@@ -284,6 +280,44 @@ namespace renderdoc
     };
 
     [StructLayout(LayoutKind.Sequential)]
+    public class TextureFilter
+    {
+        public FilterMode minify;
+        public FilterMode magnify;
+        public FilterMode mip;
+        public FilterFunc func;
+
+        public override string ToString()
+        {
+            string[] filters = { minify.ToString(), magnify.ToString(), mip.ToString() };
+            string[] filterPrefixes = { "Min", "Mag", "Mip" };
+
+            string filter = "", filtPrefix = "", filtVal = "";
+
+            for (int a = 0; a < 3; a++)
+            {
+                if (a == 0 || filters[a] == filters[a - 1])
+                {
+                    if (filtPrefix != "")
+                        filtPrefix += "/";
+                    filtPrefix += filterPrefixes[a];
+                }
+                else
+                {
+                    filter += filtPrefix + ": " + filtVal + ", ";
+
+                    filtPrefix = filterPrefixes[a];
+                }
+                filtVal = filters[a];
+            }
+
+            filter += filtPrefix + ": " + filtVal;
+
+            return filter;
+        }
+    };
+
+    [StructLayout(LayoutKind.Sequential)]
     public class FetchBuffer
     {
         public ResourceId ID;
@@ -312,12 +346,6 @@ namespace renderdoc
         public TextureCreationFlags creationFlags;
         public UInt32 msQual, msSamp;
         public UInt64 byteSize;
-    };
-
-    [StructLayout(LayoutKind.Sequential)]
-    public class OutputConfig
-    {
-        public OutputType m_Type = OutputType.None;
     };
 
     [StructLayout(LayoutKind.Sequential)]
@@ -497,7 +525,6 @@ namespace renderdoc
     public class FetchFrameInfo
     {
         public UInt32 frameNumber;
-        public UInt32 firstEvent;
         public UInt64 fileOffset;
         public UInt64 uncompressedFileSize;
         public UInt64 compressedFileSize;
@@ -515,8 +542,6 @@ namespace renderdoc
     public class FetchAPIEvent
     {
         public UInt32 eventID;
-
-        public ResourceId context;
 
         [CustomMarshalAs(CustomUnmanagedType.TemplatedArray)]
         public UInt64[] callstack;

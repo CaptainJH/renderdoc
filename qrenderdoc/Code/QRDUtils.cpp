@@ -25,6 +25,7 @@
 #include "QRDUtils.h"
 #include <QApplication>
 #include <QFileSystemModel>
+#include <QFontDatabase>
 #include <QGridLayout>
 #include <QGuiApplication>
 #include <QJsonDocument>
@@ -35,7 +36,6 @@
 #include <QProcess>
 #include <QProgressDialog>
 #include <QStandardPaths>
-#include <QTreeWidget>
 #include <QtMath>
 
 QString ToQStr(const ResourceUsage usage, const GraphicsAPI apitype)
@@ -44,162 +44,164 @@ QString ToQStr(const ResourceUsage usage, const GraphicsAPI apitype)
   {
     switch(usage)
     {
-      case eUsage_VertexBuffer: return "Vertex Buffer";
-      case eUsage_IndexBuffer: return "Index Buffer";
+      case ResourceUsage::VertexBuffer: return lit("Vertex Buffer");
+      case ResourceUsage::IndexBuffer: return lit("Index Buffer");
 
-      case eUsage_VS_Constants: return "VS - Constant Buffer";
-      case eUsage_GS_Constants: return "GS - Constant Buffer";
-      case eUsage_HS_Constants: return "HS - Constant Buffer";
-      case eUsage_DS_Constants: return "DS - Constant Buffer";
-      case eUsage_CS_Constants: return "CS - Constant Buffer";
-      case eUsage_PS_Constants: return "PS - Constant Buffer";
-      case eUsage_All_Constants: return "All - Constant Buffer";
+      case ResourceUsage::VS_Constants: return lit("VS - Constant Buffer");
+      case ResourceUsage::GS_Constants: return lit("GS - Constant Buffer");
+      case ResourceUsage::HS_Constants: return lit("HS - Constant Buffer");
+      case ResourceUsage::DS_Constants: return lit("DS - Constant Buffer");
+      case ResourceUsage::CS_Constants: return lit("CS - Constant Buffer");
+      case ResourceUsage::PS_Constants: return lit("PS - Constant Buffer");
+      case ResourceUsage::All_Constants: return lit("All - Constant Buffer");
 
-      case eUsage_SO: return "Stream Out";
+      case ResourceUsage::StreamOut: return lit("Stream Out");
 
-      case eUsage_VS_Resource: return "VS - Resource";
-      case eUsage_GS_Resource: return "GS - Resource";
-      case eUsage_HS_Resource: return "HS - Resource";
-      case eUsage_DS_Resource: return "DS - Resource";
-      case eUsage_CS_Resource: return "CS - Resource";
-      case eUsage_PS_Resource: return "PS - Resource";
-      case eUsage_All_Resource: return "All - Resource";
+      case ResourceUsage::VS_Resource: return lit("VS - Resource");
+      case ResourceUsage::GS_Resource: return lit("GS - Resource");
+      case ResourceUsage::HS_Resource: return lit("HS - Resource");
+      case ResourceUsage::DS_Resource: return lit("DS - Resource");
+      case ResourceUsage::CS_Resource: return lit("CS - Resource");
+      case ResourceUsage::PS_Resource: return lit("PS - Resource");
+      case ResourceUsage::All_Resource: return lit("All - Resource");
 
-      case eUsage_VS_RWResource: return "VS - UAV";
-      case eUsage_HS_RWResource: return "HS - UAV";
-      case eUsage_DS_RWResource: return "DS - UAV";
-      case eUsage_GS_RWResource: return "GS - UAV";
-      case eUsage_PS_RWResource: return "PS - UAV";
-      case eUsage_CS_RWResource: return "CS - UAV";
-      case eUsage_All_RWResource: return "All - UAV";
+      case ResourceUsage::VS_RWResource: return lit("VS - UAV");
+      case ResourceUsage::HS_RWResource: return lit("HS - UAV");
+      case ResourceUsage::DS_RWResource: return lit("DS - UAV");
+      case ResourceUsage::GS_RWResource: return lit("GS - UAV");
+      case ResourceUsage::PS_RWResource: return lit("PS - UAV");
+      case ResourceUsage::CS_RWResource: return lit("CS - UAV");
+      case ResourceUsage::All_RWResource: return lit("All - UAV");
 
-      case eUsage_InputTarget: return "Colour Input";
-      case eUsage_ColourTarget: return "Rendertarget";
-      case eUsage_DepthStencilTarget: return "Depthstencil";
+      case ResourceUsage::InputTarget: return lit("Color Input");
+      case ResourceUsage::ColorTarget: return lit("Rendertarget");
+      case ResourceUsage::DepthStencilTarget: return lit("Depthstencil");
 
-      case eUsage_Indirect: return "Indirect argument";
+      case ResourceUsage::Indirect: return lit("Indirect argument");
 
-      case eUsage_Clear: return "Clear";
+      case ResourceUsage::Clear: return lit("Clear");
 
-      case eUsage_GenMips: return "Generate Mips";
-      case eUsage_Resolve: return "Resolve";
-      case eUsage_ResolveSrc: return "Resolve - Source";
-      case eUsage_ResolveDst: return "Resolve - Dest";
-      case eUsage_Copy: return "Copy";
-      case eUsage_CopySrc: return "Copy - Source";
-      case eUsage_CopyDst: return "Copy - Dest";
+      case ResourceUsage::GenMips: return lit("Generate Mips");
+      case ResourceUsage::Resolve: return lit("Resolve");
+      case ResourceUsage::ResolveSrc: return lit("Resolve - Source");
+      case ResourceUsage::ResolveDst: return lit("Resolve - Dest");
+      case ResourceUsage::Copy: return lit("Copy");
+      case ResourceUsage::CopySrc: return lit("Copy - Source");
+      case ResourceUsage::CopyDst: return lit("Copy - Dest");
 
-      case eUsage_Barrier: return "Barrier";
+      case ResourceUsage::Barrier: return lit("Barrier");
       default: break;
     }
   }
-  else if(apitype == eGraphicsAPI_OpenGL || apitype == eGraphicsAPI_Vulkan)
+  else if(apitype == GraphicsAPI::OpenGL || apitype == GraphicsAPI::Vulkan)
   {
-    const bool vk = (apitype == eGraphicsAPI_Vulkan);
+    const bool vk = (apitype == GraphicsAPI::Vulkan);
 
     switch(usage)
     {
-      case eUsage_VertexBuffer: return "Vertex Buffer";
-      case eUsage_IndexBuffer: return "Index Buffer";
+      case ResourceUsage::VertexBuffer: return lit("Vertex Buffer");
+      case ResourceUsage::IndexBuffer: return lit("Index Buffer");
 
-      case eUsage_VS_Constants: return "VS - Uniform Buffer";
-      case eUsage_GS_Constants: return "GS - Uniform Buffer";
-      case eUsage_HS_Constants: return "HS - Uniform Buffer";
-      case eUsage_DS_Constants: return "DS - Uniform Buffer";
-      case eUsage_CS_Constants: return "CS - Uniform Buffer";
-      case eUsage_PS_Constants: return "PS - Uniform Buffer";
-      case eUsage_All_Constants: return "All - Uniform Buffer";
+      case ResourceUsage::VS_Constants: return lit("VS - Uniform Buffer");
+      case ResourceUsage::GS_Constants: return lit("GS - Uniform Buffer");
+      case ResourceUsage::HS_Constants: return lit("HS - Uniform Buffer");
+      case ResourceUsage::DS_Constants: return lit("DS - Uniform Buffer");
+      case ResourceUsage::CS_Constants: return lit("CS - Uniform Buffer");
+      case ResourceUsage::PS_Constants: return lit("PS - Uniform Buffer");
+      case ResourceUsage::All_Constants: return lit("All - Uniform Buffer");
 
-      case eUsage_SO: return "Transform Feedback";
+      case ResourceUsage::StreamOut: return lit("Transform Feedback");
 
-      case eUsage_VS_Resource: return "VS - Texture";
-      case eUsage_GS_Resource: return "GS - Texture";
-      case eUsage_HS_Resource: return "HS - Texture";
-      case eUsage_DS_Resource: return "DS - Texture";
-      case eUsage_CS_Resource: return "CS - Texture";
-      case eUsage_PS_Resource: return "PS - Texture";
-      case eUsage_All_Resource: return "All - Texture";
+      case ResourceUsage::VS_Resource: return lit("VS - Texture");
+      case ResourceUsage::GS_Resource: return lit("GS - Texture");
+      case ResourceUsage::HS_Resource: return lit("HS - Texture");
+      case ResourceUsage::DS_Resource: return lit("DS - Texture");
+      case ResourceUsage::CS_Resource: return lit("CS - Texture");
+      case ResourceUsage::PS_Resource: return lit("PS - Texture");
+      case ResourceUsage::All_Resource: return lit("All - Texture");
 
-      case eUsage_VS_RWResource: return "VS - Image/SSBO";
-      case eUsage_HS_RWResource: return "HS - Image/SSBO";
-      case eUsage_DS_RWResource: return "DS - Image/SSBO";
-      case eUsage_GS_RWResource: return "GS - Image/SSBO";
-      case eUsage_PS_RWResource: return "PS - Image/SSBO";
-      case eUsage_CS_RWResource: return "CS - Image/SSBO";
-      case eUsage_All_RWResource: return "All - Image/SSBO";
+      case ResourceUsage::VS_RWResource: return lit("VS - Image/SSBO");
+      case ResourceUsage::HS_RWResource: return lit("HS - Image/SSBO");
+      case ResourceUsage::DS_RWResource: return lit("DS - Image/SSBO");
+      case ResourceUsage::GS_RWResource: return lit("GS - Image/SSBO");
+      case ResourceUsage::PS_RWResource: return lit("PS - Image/SSBO");
+      case ResourceUsage::CS_RWResource: return lit("CS - Image/SSBO");
+      case ResourceUsage::All_RWResource: return lit("All - Image/SSBO");
 
-      case eUsage_InputTarget: return "FBO Input";
-      case eUsage_ColourTarget: return "FBO Colour";
-      case eUsage_DepthStencilTarget: return "FBO Depthstencil";
+      case ResourceUsage::InputTarget: return lit("FBO Input");
+      case ResourceUsage::ColorTarget: return lit("FBO Color");
+      case ResourceUsage::DepthStencilTarget: return lit("FBO Depthstencil");
 
-      case eUsage_Indirect: return "Indirect argument";
+      case ResourceUsage::Indirect: return lit("Indirect argument");
 
-      case eUsage_Clear: return "Clear";
+      case ResourceUsage::Clear: return lit("Clear");
 
-      case eUsage_GenMips: return "Generate Mips";
-      case eUsage_Resolve: return vk ? "Resolve" : "Framebuffer blit";
-      case eUsage_ResolveSrc: return vk ? "Resolve - Source" : "Framebuffer blit - Source";
-      case eUsage_ResolveDst: return vk ? "Resolve - Dest" : "Framebuffer blit - Dest";
-      case eUsage_Copy: return "Copy";
-      case eUsage_CopySrc: return "Copy - Source";
-      case eUsage_CopyDst: return "Copy - Dest";
+      case ResourceUsage::GenMips: return lit("Generate Mips");
+      case ResourceUsage::Resolve: return vk ? lit("Resolve") : lit("Framebuffer blit");
+      case ResourceUsage::ResolveSrc:
+        return vk ? lit("Resolve - Source") : lit("Framebuffer blit - Source");
+      case ResourceUsage::ResolveDst:
+        return vk ? lit("Resolve - Dest") : lit("Framebuffer blit - Dest");
+      case ResourceUsage::Copy: return lit("Copy");
+      case ResourceUsage::CopySrc: return lit("Copy - Source");
+      case ResourceUsage::CopyDst: return lit("Copy - Dest");
 
-      case eUsage_Barrier: return "Barrier";
+      case ResourceUsage::Barrier: return lit("Barrier");
       default: break;
     }
   }
 
-  return "Unknown";
+  return lit("Unknown");
 }
 
-QString ToQStr(const ShaderStageType stage, const GraphicsAPI apitype)
+QString ToQStr(const ShaderStage stage, const GraphicsAPI apitype)
 {
   if(IsD3D(apitype))
   {
     switch(stage)
     {
-      case eShaderStage_Vertex: return "Vertex";
-      case eShaderStage_Hull: return "Hull";
-      case eShaderStage_Domain: return "Domain";
-      case eShaderStage_Geometry: return "Geometry";
-      case eShaderStage_Pixel: return "Pixel";
-      case eShaderStage_Compute: return "Compute";
+      case ShaderStage::Vertex: return lit("Vertex");
+      case ShaderStage::Hull: return lit("Hull");
+      case ShaderStage::Domain: return lit("Domain");
+      case ShaderStage::Geometry: return lit("Geometry");
+      case ShaderStage::Pixel: return lit("Pixel");
+      case ShaderStage::Compute: return lit("Compute");
       default: break;
     }
   }
-  else if(apitype == eGraphicsAPI_OpenGL || apitype == eGraphicsAPI_Vulkan)
+  else if(apitype == GraphicsAPI::OpenGL || apitype == GraphicsAPI::Vulkan)
   {
     switch(stage)
     {
-      case eShaderStage_Vertex: return "Vertex";
-      case eShaderStage_Tess_Control: return "Tess. Control";
-      case eShaderStage_Tess_Eval: return "Tess. Eval";
-      case eShaderStage_Geometry: return "Geometry";
-      case eShaderStage_Fragment: return "Fragment";
-      case eShaderStage_Compute: return "Compute";
+      case ShaderStage::Vertex: return lit("Vertex");
+      case ShaderStage::Tess_Control: return lit("Tess. Control");
+      case ShaderStage::Tess_Eval: return lit("Tess. Eval");
+      case ShaderStage::Geometry: return lit("Geometry");
+      case ShaderStage::Fragment: return lit("Fragment");
+      case ShaderStage::Compute: return lit("Compute");
       default: break;
     }
   }
 
-  return "Unknown";
+  return lit("Unknown");
 }
 
 QString TypeString(const SigParameter &sig)
 {
-  QString ret = "";
+  QString ret = lit("");
 
-  if(sig.compType == eCompType_Float)
-    ret += "float";
-  else if(sig.compType == eCompType_UInt || sig.compType == eCompType_UScaled)
-    ret += "uint";
-  else if(sig.compType == eCompType_SInt || sig.compType == eCompType_SScaled)
-    ret += "int";
-  else if(sig.compType == eCompType_UNorm)
-    ret += "unorm float";
-  else if(sig.compType == eCompType_SNorm)
-    ret += "snorm float";
-  else if(sig.compType == eCompType_Depth)
-    ret += "float";
+  if(sig.compType == CompType::Float)
+    ret += lit("float");
+  else if(sig.compType == CompType::UInt || sig.compType == CompType::UScaled)
+    ret += lit("uint");
+  else if(sig.compType == CompType::SInt || sig.compType == CompType::SScaled)
+    ret += lit("int");
+  else if(sig.compType == CompType::UNorm)
+    ret += lit("unorm float");
+  else if(sig.compType == CompType::SNorm)
+    ret += lit("snorm float");
+  else if(sig.compType == CompType::Depth)
+    ret += lit("float");
 
   if(sig.compCount > 1)
     ret += QString::number(sig.compCount);
@@ -209,14 +211,14 @@ QString TypeString(const SigParameter &sig)
 
 QString D3DSemanticString(const SigParameter &sig)
 {
-  if(sig.systemValue == eAttr_None)
+  if(sig.systemValue == ShaderBuiltin::Undefined)
     return ToQStr(sig.semanticIdxName);
 
   QString ret = ToQStr(sig.systemValue);
 
   // need to include the index if it's a system value semantic that's numbered
-  if(sig.systemValue == eAttr_ColourOutput || sig.systemValue == eAttr_CullDistance ||
-     sig.systemValue == eAttr_ClipDistance)
+  if(sig.systemValue == ShaderBuiltin::ColorOutput ||
+     sig.systemValue == ShaderBuiltin::CullDistance || sig.systemValue == ShaderBuiltin::ClipDistance)
     ret += QString::number(sig.semanticIndex);
 
   return ret;
@@ -224,16 +226,16 @@ QString D3DSemanticString(const SigParameter &sig)
 
 QString GetComponentString(byte mask)
 {
-  QString ret = "";
+  QString ret;
 
   if((mask & 0x1) > 0)
-    ret += "R";
+    ret += lit("R");
   if((mask & 0x2) > 0)
-    ret += "G";
+    ret += lit("G");
   if((mask & 0x4) > 0)
-    ret += "B";
+    ret += lit("B");
   if((mask & 0x8) > 0)
-    ret += "A";
+    ret += lit("A");
 
   return ret;
 }
@@ -241,7 +243,7 @@ QString GetComponentString(byte mask)
 bool SaveToJSON(QVariantMap &data, QIODevice &f, const char *magicIdentifier, uint32_t magicVersion)
 {
   // marker that this data is valid
-  data[magicIdentifier] = magicVersion;
+  data[QString::fromLatin1(magicIdentifier)] = magicVersion;
 
   QJsonDocument doc = QJsonDocument::fromVariant(data);
 
@@ -284,13 +286,15 @@ bool LoadFromJSON(QVariantMap &data, QIODevice &f, const char *magicIdentifier, 
 
   data = doc.toVariant().toMap();
 
-  if(data.isEmpty() || !data.contains(magicIdentifier))
+  QString ident = QString::fromLatin1(magicIdentifier);
+
+  if(data.isEmpty() || !data.contains(ident))
   {
     qCritical() << "Converted config data is invalid or unrecognised";
     return false;
   }
 
-  if(data[magicIdentifier].toUInt() != magicVersion)
+  if(data[ident].toUInt() != magicVersion)
   {
     qCritical() << "Converted config data is not the right version";
     return false;
@@ -428,7 +432,7 @@ QString RDDialog::getExecutableFileName(QWidget *parent, const QString &caption,
 
 #if defined(Q_OS_WIN32)
   // can't filter by executable bit on windows, but we have extensions
-  filter = "Executables (*.exe);;All Files (*.*)";
+  filter = QApplication::translate("RDDialog", "Executables (*.exe);;All Files (*.*)");
 #endif
 
   QFileDialog fd(parent, caption, dir, filter);
@@ -525,47 +529,16 @@ void addGridLines(QGridLayout *grid)
       if(w == NULL)
         continue;
 
-      QString style = "border: solid black; border-bottom-width: 1px; border-right-width: 1px;";
+      QString style =
+          lit("border: solid black; border-bottom-width: 1px; border-right-width: 1px;");
 
       if(x == 0)
-        style += "border-left-width: 1px;";
+        style += lit("border-left-width: 1px;");
       if(y == 0)
-        style += "border-top-width: 1px;";
+        style += lit("border-top-width: 1px;");
 
       w->setStyleSheet(style);
     }
-  }
-}
-
-QTreeWidgetItem *makeTreeNode(const std::initializer_list<QVariant> &values)
-{
-  QTreeWidgetItem *ret = new QTreeWidgetItem();
-
-  int i = 0;
-  for(const QVariant &v : values)
-    ret->setData(i++, Qt::DisplayRole, v);
-
-  return ret;
-}
-
-QTreeWidgetItem *makeTreeNode(const QVariantList &values)
-{
-  QTreeWidgetItem *ret = new QTreeWidgetItem();
-
-  int i = 0;
-  for(const QVariant &v : values)
-    ret->setData(i++, Qt::DisplayRole, v);
-
-  return ret;
-}
-
-void deleteChildren(QTreeWidgetItem *item)
-{
-  while(item->childCount() > 0)
-  {
-    QTreeWidgetItem *child = item->takeChild(0);
-    deleteChildren(child);
-    delete child;
   }
 }
 
@@ -573,27 +546,38 @@ int Formatter::m_minFigures = 2, Formatter::m_maxFigures = 5, Formatter::m_expNe
     Formatter::m_expPosCutoff = 7;
 double Formatter::m_expNegValue = 0.00001;       // 10^(-5)
 double Formatter::m_expPosValue = 10000000.0;    // 10^7
+QFont *Formatter::m_Font = NULL;
 
-void Formatter::setParams(int minFigures, int maxFigures, int expNegCutoff, int expPosCutoff)
+void Formatter::setParams(const PersistantConfig &config)
 {
-  m_minFigures = qMax(0, minFigures);
-  m_maxFigures = qMax(2, maxFigures);
-  m_expNegCutoff = qMax(0, expNegCutoff);
-  m_expPosCutoff = qMax(0, expPosCutoff);
+  m_minFigures = qMax(0, config.Formatter_MinFigures);
+  m_maxFigures = qMax(2, config.Formatter_MaxFigures);
+  m_expNegCutoff = qMax(0, config.Formatter_NegExp);
+  m_expPosCutoff = qMax(0, config.Formatter_PosExp);
 
-  m_expNegValue = qPow(10.0, -m_expNegCutoff);
-  m_expPosValue = qPow(10.0, m_expPosCutoff);
+  m_expNegValue = qPow(10.0, -config.Formatter_NegExp);
+  m_expPosValue = qPow(10.0, config.Formatter_PosExp);
+
+  if(!m_Font)
+    m_Font = new QFont();
+  *m_Font =
+      config.Font_PreferMonospaced ? QFontDatabase::systemFont(QFontDatabase::FixedFont) : QFont();
+}
+
+void Formatter::shutdown()
+{
+  delete m_Font;
 }
 
 QString Formatter::Format(double f, bool)
 {
   if(f != 0.0 && (qAbs(f) < m_expNegValue || qAbs(f) > m_expPosValue))
-    return QString("%1").arg(f, -m_minFigures, 'E', m_maxFigures);
+    return QFormatStr("%1").arg(f, -m_minFigures, 'E', m_maxFigures);
 
-  QString ret = QString("%1").arg(f, 0, 'f', m_maxFigures);
+  QString ret = QFormatStr("%1").arg(f, 0, 'f', m_maxFigures);
 
   // trim excess trailing 0s
-  int decimal = ret.lastIndexOf(QChar('.'));
+  int decimal = ret.lastIndexOf(QLatin1Char('.'));
   if(decimal > 0)
   {
     decimal += m_minFigures;
@@ -601,7 +585,7 @@ QString Formatter::Format(double f, bool)
     const int len = ret.count();
 
     int remove = 0;
-    while(len - remove - 1 > decimal && ret.at(len - remove - 1) == QChar('0'))
+    while(len - remove - 1 > decimal && ret.at(len - remove - 1) == QLatin1Char('0'))
       remove++;
 
     if(remove > 0)
@@ -686,7 +670,7 @@ bool RunProcessAsAdmin(const QString &fullExecutablePath, const QStringList &par
 #if defined(Q_OS_WIN32)
 
   std::wstring wideExe = fullExecutablePath.toStdWString();
-  std::wstring wideParams = params.join(QChar(' ')).toStdWString();
+  std::wstring wideParams = params.join(QLatin1Char(' ')).toStdWString();
 
   SHELLEXECUTEINFOW info = {};
   info.cbSize = sizeof(info);
@@ -726,12 +710,12 @@ bool RunProcessAsAdmin(const QString &fullExecutablePath, const QStringList &par
 #else
   // try to find a way to run the application elevated.
   const QString graphicalSudo[] = {
-      "pkexec", "kdesudo", "gksudo", "beesu",
+      lit("pkexec"), lit("kdesudo"), lit("gksudo"), lit("beesu"),
   };
 
   // if none of the graphical options, then look for sudo and either
   const QString termEmulator[] = {
-      "x-terminal-emulator", "gnome-terminal", "knosole", "xterm",
+      lit("x-terminal-emulator"), lit("gnome-terminal"), lit("knosole"), lit("xterm"),
   };
 
   for(const QString &sudo : graphicalSudo)
@@ -764,7 +748,7 @@ bool RunProcessAsAdmin(const QString &fullExecutablePath, const QStringList &par
     return true;
   }
 
-  QString sudo = QStandardPaths::findExecutable("sudo");
+  QString sudo = QStandardPaths::findExecutable(lit("sudo"));
 
   if(sudo.isEmpty())
   {
@@ -785,8 +769,9 @@ bool RunProcessAsAdmin(const QString &fullExecutablePath, const QStringList &par
 
     // run terminal sudo with emulator
     QStringList termParams;
-    termParams << "-e"
-               << QString("bash -c 'sudo %1 %2'").arg(fullExecutablePath).arg(params.join(QChar(' ')));
+    termParams
+        << lit("-e")
+        << lit("bash -c 'sudo %1 %2'").arg(fullExecutablePath).arg(params.join(QLatin1Char(' ')));
 
     process->start(term, termParams);
 
@@ -946,11 +931,36 @@ QString GetSystemUsername()
 {
   QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
 
-  QString username = env.value("USER");
+  QString username = env.value(lit("USER"));
   if(username == QString())
-    username = env.value("USERNAME");
+    username = env.value(lit("USERNAME"));
   if(username == QString())
-    username = "Unknown_User";
+    username = lit("Unknown_User");
 
   return username;
+}
+
+static float getLuminance(const QColor &col)
+{
+  return (float)(0.2126 * qPow(col.redF(), 2.2) + 0.7152 * qPow(col.greenF(), 2.2) +
+                 0.0722 * qPow(col.blueF(), 2.2));
+}
+
+QColor contrastingColor(const QColor &col, const QColor &defaultCol)
+{
+  float backLum = getLuminance(col);
+  float textLum = getLuminance(defaultCol);
+
+  bool backDark = backLum < 0.2f;
+  bool textDark = textLum < 0.2f;
+
+  // if they're contrasting, use the text colour desired
+  if(backDark != textDark)
+    return defaultCol;
+
+  // otherwise pick a contrasting colour
+  if(backDark)
+    return QColor(Qt::white);
+  else
+    return QColor(Qt::black);
 }

@@ -108,6 +108,12 @@ HANDLE WrappedOpenGL::wglDXRegisterObjectNV(HANDLE hDevice, void *dxObject, GLui
     uint32_t width = 0, height = 0, depth = 0, mips = 0, layers = 0, samples = 0;
     GetDXTextureProperties(dxObject, fmt, width, height, depth, mips, layers, samples);
 
+    // defined as arrays mostly for Coverity code analysis to stay calm about passing
+    // them to the *TexParameter* functions
+    GLint maxlevel[4] = {GLint(mips - 1), 0, 0, 0};
+
+    m_Real.glTextureParameteriEXT(wrapped->res.name, type, eGL_TEXTURE_MAX_LEVEL, GLint(mips - 1));
+
     ResourceId texId = record->GetResourceID();
     m_Textures[texId].resource = wrapped->res;
     m_Textures[texId].curType = type;
@@ -115,7 +121,6 @@ HANDLE WrappedOpenGL::wglDXRegisterObjectNV(HANDLE hDevice, void *dxObject, GLui
     m_Textures[texId].height = height;
     m_Textures[texId].depth = RDCMAX(depth, samples);
     m_Textures[texId].samples = samples;
-    m_Textures[texId].mips = mips;
     m_Textures[texId].dimension = 2;
     if(type == eGL_TEXTURE_1D || type == eGL_TEXTURE_1D_ARRAY)
       m_Textures[texId].dimension = 1;
@@ -311,7 +316,6 @@ bool WrappedOpenGL::Serialise_wglDXRegisterObjectNV(GLResource res, GLenum type,
     m_Textures[liveId].height = height;
     m_Textures[liveId].depth = RDCMAX(depth, samples);
     m_Textures[liveId].samples = samples;
-    m_Textures[liveId].mips = mips;
     m_Textures[liveId].dimension = 2;
     if(type == eGL_TEXTURE_1D || type == eGL_TEXTURE_1D_ARRAY)
       m_Textures[liveId].dimension = 1;
@@ -343,24 +347,10 @@ bool WrappedOpenGL::Serialise_wglDXLockObjectsNV(GLResource res)
     gl.glGetIntegerv(eGL_PIXEL_PACK_BUFFER_BINDING, (GLint *)&ppb);
     gl.glBindBuffer(eGL_PIXEL_PACK_BUFFER, 0);
 
-    GLint packParams[8];
-    gl.glGetIntegerv(eGL_PACK_SWAP_BYTES, &packParams[0]);
-    gl.glGetIntegerv(eGL_PACK_LSB_FIRST, &packParams[1]);
-    gl.glGetIntegerv(eGL_PACK_ROW_LENGTH, &packParams[2]);
-    gl.glGetIntegerv(eGL_PACK_IMAGE_HEIGHT, &packParams[3]);
-    gl.glGetIntegerv(eGL_PACK_SKIP_PIXELS, &packParams[4]);
-    gl.glGetIntegerv(eGL_PACK_SKIP_ROWS, &packParams[5]);
-    gl.glGetIntegerv(eGL_PACK_SKIP_IMAGES, &packParams[6]);
-    gl.glGetIntegerv(eGL_PACK_ALIGNMENT, &packParams[7]);
+    PixelPackState pack;
+    pack.Fetch(&gl, false);
 
-    gl.glPixelStorei(eGL_PACK_SWAP_BYTES, 0);
-    gl.glPixelStorei(eGL_PACK_LSB_FIRST, 0);
-    gl.glPixelStorei(eGL_PACK_ROW_LENGTH, 0);
-    gl.glPixelStorei(eGL_PACK_IMAGE_HEIGHT, 0);
-    gl.glPixelStorei(eGL_PACK_SKIP_PIXELS, 0);
-    gl.glPixelStorei(eGL_PACK_SKIP_ROWS, 0);
-    gl.glPixelStorei(eGL_PACK_SKIP_IMAGES, 0);
-    gl.glPixelStorei(eGL_PACK_ALIGNMENT, 1);
+    ResetPixelPackState(gl, false, 1);
 
     {
       TextureData &details = m_Textures[id];
@@ -380,7 +370,9 @@ bool WrappedOpenGL::Serialise_wglDXLockObjectsNV(GLResource res)
 
       gl.glBindTexture(textype, tex);
 
-      for(int i = 0; i < details.mips; i++)
+      int mips = GetNumMips(gl, textype, tex, details.width, details.height, details.depth);
+
+      for(int i = 0; i < mips; i++)
       {
         int w = RDCMAX(details.width >> i, 1);
         int h = RDCMAX(details.height >> i, 1);
@@ -422,14 +414,7 @@ bool WrappedOpenGL::Serialise_wglDXLockObjectsNV(GLResource res)
 
     gl.glBindBuffer(eGL_PIXEL_PACK_BUFFER, ppb);
 
-    gl.glPixelStorei(eGL_PACK_SWAP_BYTES, packParams[0]);
-    gl.glPixelStorei(eGL_PACK_LSB_FIRST, packParams[1]);
-    gl.glPixelStorei(eGL_PACK_ROW_LENGTH, packParams[2]);
-    gl.glPixelStorei(eGL_PACK_IMAGE_HEIGHT, packParams[3]);
-    gl.glPixelStorei(eGL_PACK_SKIP_PIXELS, packParams[4]);
-    gl.glPixelStorei(eGL_PACK_SKIP_ROWS, packParams[5]);
-    gl.glPixelStorei(eGL_PACK_SKIP_IMAGES, packParams[6]);
-    gl.glPixelStorei(eGL_PACK_ALIGNMENT, packParams[7]);
+    pack.Apply(&gl, false);
   }
   else
   {
@@ -437,24 +422,10 @@ bool WrappedOpenGL::Serialise_wglDXLockObjectsNV(GLResource res)
     gl.glGetIntegerv(eGL_PIXEL_UNPACK_BUFFER_BINDING, (GLint *)&pub);
     gl.glBindBuffer(eGL_PIXEL_UNPACK_BUFFER, 0);
 
-    GLint unpackParams[8];
-    gl.glGetIntegerv(eGL_UNPACK_SWAP_BYTES, &unpackParams[0]);
-    gl.glGetIntegerv(eGL_UNPACK_LSB_FIRST, &unpackParams[1]);
-    gl.glGetIntegerv(eGL_UNPACK_ROW_LENGTH, &unpackParams[2]);
-    gl.glGetIntegerv(eGL_UNPACK_IMAGE_HEIGHT, &unpackParams[3]);
-    gl.glGetIntegerv(eGL_UNPACK_SKIP_PIXELS, &unpackParams[4]);
-    gl.glGetIntegerv(eGL_UNPACK_SKIP_ROWS, &unpackParams[5]);
-    gl.glGetIntegerv(eGL_UNPACK_SKIP_IMAGES, &unpackParams[6]);
-    gl.glGetIntegerv(eGL_UNPACK_ALIGNMENT, &unpackParams[7]);
+    PixelUnpackState unpack;
+    unpack.Fetch(&gl, false);
 
-    gl.glPixelStorei(eGL_UNPACK_SWAP_BYTES, 0);
-    gl.glPixelStorei(eGL_UNPACK_LSB_FIRST, 0);
-    gl.glPixelStorei(eGL_UNPACK_ROW_LENGTH, 0);
-    gl.glPixelStorei(eGL_UNPACK_IMAGE_HEIGHT, 0);
-    gl.glPixelStorei(eGL_UNPACK_SKIP_PIXELS, 0);
-    gl.glPixelStorei(eGL_UNPACK_SKIP_ROWS, 0);
-    gl.glPixelStorei(eGL_UNPACK_SKIP_IMAGES, 0);
-    gl.glPixelStorei(eGL_UNPACK_ALIGNMENT, 1);
+    ResetPixelUnpackState(gl, false, 1);
 
     {
       TextureData &details = m_Textures[GetResourceManager()->GetLiveID(id)];
@@ -465,7 +436,9 @@ bool WrappedOpenGL::Serialise_wglDXLockObjectsNV(GLResource res)
 
       GLint dim = details.dimension;
 
-      for(int i = 0; i < details.mips; i++)
+      int mips = GetNumMips(m_Real, textype, tex, details.width, details.height, details.depth);
+
+      for(int i = 0; i < mips; i++)
       {
         uint32_t w = RDCMAX(details.width >> i, 1);
         uint32_t h = RDCMAX(details.height >> i, 1);
@@ -509,14 +482,7 @@ bool WrappedOpenGL::Serialise_wglDXLockObjectsNV(GLResource res)
 
     gl.glBindBuffer(eGL_PIXEL_UNPACK_BUFFER, pub);
 
-    gl.glPixelStorei(eGL_UNPACK_SWAP_BYTES, unpackParams[0]);
-    gl.glPixelStorei(eGL_UNPACK_LSB_FIRST, unpackParams[1]);
-    gl.glPixelStorei(eGL_UNPACK_ROW_LENGTH, unpackParams[2]);
-    gl.glPixelStorei(eGL_UNPACK_IMAGE_HEIGHT, unpackParams[3]);
-    gl.glPixelStorei(eGL_UNPACK_SKIP_PIXELS, unpackParams[4]);
-    gl.glPixelStorei(eGL_UNPACK_SKIP_ROWS, unpackParams[5]);
-    gl.glPixelStorei(eGL_UNPACK_SKIP_IMAGES, unpackParams[6]);
-    gl.glPixelStorei(eGL_UNPACK_ALIGNMENT, unpackParams[7]);
+    unpack.Apply(&gl, false);
   }
 
   return true;

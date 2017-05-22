@@ -33,6 +33,7 @@ namespace Ui
 class ShaderViewer;
 }
 
+class RDTreeWidgetItem;
 struct ShaderDebugTrace;
 struct ShaderReflection;
 class ScintillaEdit;
@@ -41,17 +42,14 @@ class FindReplace;
 // from Scintilla
 typedef intptr_t sptr_t;
 
-class ShaderViewer : public QFrame, public ILogViewerForm
+class ShaderViewer : public QFrame, public IShaderViewer, public ILogViewer
 {
   Q_OBJECT
 
 public:
-  typedef std::function<void(CaptureContext *ctx, ShaderViewer *, const QStringMap &)> SaveMethod;
-  typedef std::function<void(CaptureContext *ctx)> CloseMethod;
-
-  static ShaderViewer *editShader(CaptureContext &ctx, bool customShader, const QString &entryPoint,
-                                  const QStringMap &files, SaveMethod saveCallback,
-                                  CloseMethod closeCallback, QWidget *parent)
+  static IShaderViewer *EditShader(ICaptureContext &ctx, bool customShader, const QString &entryPoint,
+                                   const QStringMap &files, IShaderViewer::SaveCallback saveCallback,
+                                   IShaderViewer::CloseCallback closeCallback, QWidget *parent)
   {
     ShaderViewer *ret = new ShaderViewer(ctx, parent);
     ret->m_SaveCallback = saveCallback;
@@ -60,36 +58,38 @@ public:
     return ret;
   }
 
-  static ShaderViewer *debugShader(CaptureContext &ctx, const ShaderBindpointMapping *bind,
-                                   const ShaderReflection *shader, ShaderStageType stage,
-                                   ShaderDebugTrace *trace, const QString &debugContext,
-                                   QWidget *parent)
+  static IShaderViewer *DebugShader(ICaptureContext &ctx, const ShaderBindpointMapping *bind,
+                                    const ShaderReflection *shader, ShaderStage stage,
+                                    ShaderDebugTrace *trace, const QString &debugContext,
+                                    QWidget *parent)
   {
     ShaderViewer *ret = new ShaderViewer(ctx, parent);
     ret->debugShader(bind, shader, stage, trace, debugContext);
     return ret;
   }
 
-  static ShaderViewer *viewShader(CaptureContext &ctx, const ShaderBindpointMapping *bind,
-                                  const ShaderReflection *shader, ShaderStageType stage,
-                                  QWidget *parent)
+  static IShaderViewer *ViewShader(ICaptureContext &ctx, const ShaderBindpointMapping *bind,
+                                   const ShaderReflection *shader, ShaderStage stage, QWidget *parent)
   {
-    return ShaderViewer::debugShader(ctx, bind, shader, stage, NULL, "", parent);
+    return DebugShader(ctx, bind, shader, stage, NULL, QString(), parent);
   }
 
   ~ShaderViewer();
 
-  void OnLogfileLoaded();
-  void OnLogfileClosed();
-  void OnSelectedEventChanged(uint32_t eventID) {}
-  void OnEventChanged(uint32_t eventID);
+  // IShaderViewer
+  virtual QWidget *Widget() override { return this; }
+  virtual int CurrentStep() override;
+  virtual void SetCurrentStep(int step) override;
 
-  int currentStep();
-  void setCurrentStep(int step);
+  virtual void ToggleBreakpoint(int instruction = -1) override;
 
-  void toggleBreakpoint(int instruction = -1);
+  virtual void ShowErrors(const QString &errors) override;
 
-  void showErrors(const QString &errors);
+  // ILogViewerForm
+  void OnLogfileLoaded() override;
+  void OnLogfileClosed() override;
+  void OnSelectedEventChanged(uint32_t eventID) override {}
+  void OnEventChanged(uint32_t eventID) override;
 
 private slots:
   // automatic slots
@@ -101,7 +101,7 @@ private slots:
   // manual slots
   void readonly_keyPressed(QKeyEvent *event);
   void editable_keyPressed(QKeyEvent *event);
-  void disassembly_buttonReleased(QMouseEvent *event);
+  void disassembly_contextMenu(const QPoint &pos);
   void performFind();
   void performFindAll();
   void performReplace();
@@ -125,16 +125,16 @@ public slots:
   void run();
 
 private:
-  explicit ShaderViewer(CaptureContext &ctx, QWidget *parent = 0);
+  explicit ShaderViewer(ICaptureContext &ctx, QWidget *parent = 0);
   void editShader(bool customShader, const QString &entryPoint, const QStringMap &files);
   void debugShader(const ShaderBindpointMapping *bind, const ShaderReflection *shader,
-                   ShaderStageType stage, ShaderDebugTrace *trace, const QString &debugContext);
+                   ShaderStage stage, ShaderDebugTrace *trace, const QString &debugContext);
 
   Ui::ShaderViewer *ui;
-  CaptureContext &m_Ctx;
+  ICaptureContext &m_Ctx;
   const ShaderBindpointMapping *m_Mapping = NULL;
   const ShaderReflection *m_ShaderDetails = NULL;
-  ShaderStageType m_Stage;
+  ShaderStage m_Stage;
   ScintillaEdit *m_DisassemblyView = NULL;
   ScintillaEdit *m_Errors = NULL;
   ScintillaEdit *m_FindResults = NULL;
@@ -158,8 +158,8 @@ private:
     QPair<int, int> prevResult;
   } m_FindState;
 
-  SaveMethod m_SaveCallback;
-  CloseMethod m_CloseCallback;
+  SaveCallback m_SaveCallback;
+  CloseCallback m_CloseCallback;
 
   ShaderDebugTrace *m_Trace = NULL;
   int m_CurrentStep;
@@ -191,9 +191,9 @@ private:
 
   void find(bool down);
 
-  void runTo(int runToInstruction, bool forward, ShaderDebugStateFlags condition = eShaderDbg_None);
+  void runTo(int runToInstruction, bool forward, ShaderEvents condition = ShaderEvents::NoEvent);
 
   QString stringRep(const ShaderVariable &var, bool useType);
-  QTreeWidgetItem *makeResourceRegister(const BindpointMap &bind, uint32_t idx,
-                                        const BoundResource &ro, const ShaderResource &resources);
+  RDTreeWidgetItem *makeResourceRegister(const BindpointMap &bind, uint32_t idx,
+                                         const BoundResource &ro, const ShaderResource &resources);
 };

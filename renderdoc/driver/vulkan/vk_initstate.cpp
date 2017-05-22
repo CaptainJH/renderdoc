@@ -112,7 +112,7 @@ bool WrappedVulkan::Prepare_SparseInitialState(WrappedVkBuffer *buf)
   info->memDataOffs = memDataOffs;
   info->binds = binds;
 
-  memcpy(info, &buf->record->sparseInfo->opaquemappings[0], sizeof(VkSparseMemoryBind) * numElems);
+  memcpy(binds, &buf->record->sparseInfo->opaquemappings[0], sizeof(VkSparseMemoryBind) * numElems);
 
   VkDevice d = GetDev();
   // INITSTATEBATCH
@@ -740,9 +740,13 @@ bool WrappedVulkan::Apply_SparseInitialState(WrappedVkBuffer *buf,
 
   // unbind the entire buffer so that any new areas that are bound are unbound again
 
-  VkSparseMemoryBind unbind = {0, m_CreationInfo.m_Buffer[buf->id].size, VK_NULL_HANDLE, 0, 0};
-
   VkQueue q = GetQ();
+
+  VkMemoryRequirements mrq = {};
+  ObjDisp(q)->GetBufferMemoryRequirements(Unwrap(GetDev()), buf->real.As<VkBuffer>(), &mrq);
+
+  VkSparseMemoryBind unbind = {0, RDCMAX(mrq.size, m_CreationInfo.m_Buffer[buf->id].size),
+                               VK_NULL_HANDLE, 0, 0};
 
   VkSparseBufferMemoryBindInfo bufBind = {buf->real.As<VkBuffer>(), 1, &unbind};
 
@@ -2068,88 +2072,6 @@ void WrappedVulkan::Apply_InitialState(WrappedVkRes *live,
       return;
     }
 
-    if(m_CreationInfo.m_Image[id].samples != VK_SAMPLE_COUNT_1_BIT)
-    {
-      VkCommandBuffer cmd = GetNextCmd();
-
-      vkr = ObjDisp(cmd)->BeginCommandBuffer(Unwrap(cmd), &beginInfo);
-      RDCASSERTEQUAL(vkr, VK_SUCCESS);
-
-      VkImageAspectFlags aspectFlags = VK_IMAGE_ASPECT_COLOR_BIT;
-
-      VulkanCreationInfo::Image &c = m_CreationInfo.m_Image[id];
-
-      VkFormat fmt = c.format;
-      if(IsStencilOnlyFormat(fmt))
-        aspectFlags = VK_IMAGE_ASPECT_STENCIL_BIT;
-      else if(IsDepthOrStencilFormat(fmt))
-        aspectFlags = VK_IMAGE_ASPECT_DEPTH_BIT;
-
-      if(aspectFlags == VK_IMAGE_ASPECT_DEPTH_BIT && !IsDepthOnlyFormat(fmt))
-        aspectFlags |= VK_IMAGE_ASPECT_STENCIL_BIT;
-
-      VkImageMemoryBarrier barrier = {
-          VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-          NULL,
-          0,
-          0,
-          VK_IMAGE_LAYOUT_UNDEFINED,
-          VK_IMAGE_LAYOUT_GENERAL,
-          VK_QUEUE_FAMILY_IGNORED,
-          VK_QUEUE_FAMILY_IGNORED,
-          ToHandle<VkImage>(live),
-          {aspectFlags, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS},
-      };
-
-      barrier.srcAccessMask = VK_ACCESS_ALL_WRITE_BITS;
-      barrier.dstAccessMask =
-          VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-
-      for(size_t si = 0; si < m_ImageLayouts[id].subresourceStates.size(); si++)
-      {
-        barrier.subresourceRange = m_ImageLayouts[id].subresourceStates[si].subresourceRange;
-        barrier.oldLayout = m_ImageLayouts[id].subresourceStates[si].newLayout;
-        DoPipelineBarrier(cmd, 1, &barrier);
-      }
-
-      WrappedVkImage *arrayIm = (WrappedVkImage *)initial.resource;
-
-      vkr = ObjDisp(cmd)->EndCommandBuffer(Unwrap(cmd));
-      RDCASSERTEQUAL(vkr, VK_SUCCESS);
-
-      GetDebugManager()->CopyArrayToTex2DMS(ToHandle<VkImage>(live), arrayIm->real.As<VkImage>(),
-                                            c.extent, (uint32_t)c.arrayLayers, (uint32_t)c.samples,
-                                            fmt);
-
-      cmd = GetNextCmd();
-
-      vkr = ObjDisp(cmd)->BeginCommandBuffer(Unwrap(cmd), &beginInfo);
-      RDCASSERTEQUAL(vkr, VK_SUCCESS);
-
-      barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-
-      // complete copy before any other work
-      barrier.srcAccessMask =
-          VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-      barrier.dstAccessMask = VK_ACCESS_ALL_READ_BITS;
-
-      for(size_t si = 0; si < m_ImageLayouts[id].subresourceStates.size(); si++)
-      {
-        barrier.subresourceRange = m_ImageLayouts[id].subresourceStates[si].subresourceRange;
-        barrier.newLayout = m_ImageLayouts[id].subresourceStates[si].newLayout;
-        barrier.dstAccessMask |= MakeAccessMask(barrier.newLayout);
-        DoPipelineBarrier(cmd, 1, &barrier);
-      }
-
-      vkr = ObjDisp(cmd)->EndCommandBuffer(Unwrap(cmd));
-      RDCASSERTEQUAL(vkr, VK_SUCCESS);
-
-#if ENABLED(SINGLE_FLUSH_VALIDATE)
-      SubmitCmds();
-#endif
-      return;
-    }
-
     // handle any 'created' initial states, without an actual image with contents
     if(initial.resource == NULL)
     {
@@ -2288,6 +2210,88 @@ void WrappedVulkan::Apply_InitialState(WrappedVkRes *live,
         RDCERR("Unexpected initial state type %u with NULL resource", initial.num);
       }
 
+      return;
+    }
+
+    if(m_CreationInfo.m_Image[id].samples != VK_SAMPLE_COUNT_1_BIT)
+    {
+      VkCommandBuffer cmd = GetNextCmd();
+
+      vkr = ObjDisp(cmd)->BeginCommandBuffer(Unwrap(cmd), &beginInfo);
+      RDCASSERTEQUAL(vkr, VK_SUCCESS);
+
+      VkImageAspectFlags aspectFlags = VK_IMAGE_ASPECT_COLOR_BIT;
+
+      VulkanCreationInfo::Image &c = m_CreationInfo.m_Image[id];
+
+      VkFormat fmt = c.format;
+      if(IsStencilOnlyFormat(fmt))
+        aspectFlags = VK_IMAGE_ASPECT_STENCIL_BIT;
+      else if(IsDepthOrStencilFormat(fmt))
+        aspectFlags = VK_IMAGE_ASPECT_DEPTH_BIT;
+
+      if(aspectFlags == VK_IMAGE_ASPECT_DEPTH_BIT && !IsDepthOnlyFormat(fmt))
+        aspectFlags |= VK_IMAGE_ASPECT_STENCIL_BIT;
+
+      VkImageMemoryBarrier barrier = {
+          VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+          NULL,
+          0,
+          0,
+          VK_IMAGE_LAYOUT_UNDEFINED,
+          VK_IMAGE_LAYOUT_GENERAL,
+          VK_QUEUE_FAMILY_IGNORED,
+          VK_QUEUE_FAMILY_IGNORED,
+          ToHandle<VkImage>(live),
+          {aspectFlags, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS},
+      };
+
+      barrier.srcAccessMask = VK_ACCESS_ALL_WRITE_BITS;
+      barrier.dstAccessMask =
+          VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+      for(size_t si = 0; si < m_ImageLayouts[id].subresourceStates.size(); si++)
+      {
+        barrier.subresourceRange = m_ImageLayouts[id].subresourceStates[si].subresourceRange;
+        barrier.oldLayout = m_ImageLayouts[id].subresourceStates[si].newLayout;
+        DoPipelineBarrier(cmd, 1, &barrier);
+      }
+
+      WrappedVkImage *arrayIm = (WrappedVkImage *)initial.resource;
+
+      vkr = ObjDisp(cmd)->EndCommandBuffer(Unwrap(cmd));
+      RDCASSERTEQUAL(vkr, VK_SUCCESS);
+
+      GetDebugManager()->CopyArrayToTex2DMS(ToHandle<VkImage>(live), arrayIm->real.As<VkImage>(),
+                                            c.extent, (uint32_t)c.arrayLayers, (uint32_t)c.samples,
+                                            fmt);
+
+      cmd = GetNextCmd();
+
+      vkr = ObjDisp(cmd)->BeginCommandBuffer(Unwrap(cmd), &beginInfo);
+      RDCASSERTEQUAL(vkr, VK_SUCCESS);
+
+      barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+      // complete copy before any other work
+      barrier.srcAccessMask =
+          VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+      barrier.dstAccessMask = VK_ACCESS_ALL_READ_BITS;
+
+      for(size_t si = 0; si < m_ImageLayouts[id].subresourceStates.size(); si++)
+      {
+        barrier.subresourceRange = m_ImageLayouts[id].subresourceStates[si].subresourceRange;
+        barrier.newLayout = m_ImageLayouts[id].subresourceStates[si].newLayout;
+        barrier.dstAccessMask |= MakeAccessMask(barrier.newLayout);
+        DoPipelineBarrier(cmd, 1, &barrier);
+      }
+
+      vkr = ObjDisp(cmd)->EndCommandBuffer(Unwrap(cmd));
+      RDCASSERTEQUAL(vkr, VK_SUCCESS);
+
+#if ENABLED(SINGLE_FLUSH_VALIDATE)
+      SubmitCmds();
+#endif
       return;
     }
 

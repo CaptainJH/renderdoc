@@ -36,6 +36,10 @@
 
 #define VK_NO_PROTOTYPES
 
+#if defined(VK_USE_PLATFORM_WIN32_KHR)
+#define VK_USE_PLATFORM_WIN32_KHX 1
+#endif
+
 #if ENABLED(RDOC_X64)
 
 #define VK_DEFINE_NON_DISPATCHABLE_HANDLE(object) typedef struct object##_T *object;
@@ -78,13 +82,23 @@
 
 ResourceFormat MakeResourceFormat(VkFormat fmt);
 VkFormat MakeVkFormat(ResourceFormat fmt);
-PrimitiveTopology MakePrimitiveTopology(VkPrimitiveTopology Topo, uint32_t patchControlPoints);
-VkPrimitiveTopology MakeVkPrimitiveTopology(PrimitiveTopology Topo);
+Topology MakePrimitiveTopology(VkPrimitiveTopology Topo, uint32_t patchControlPoints);
+VkPrimitiveTopology MakeVkPrimitiveTopology(Topology Topo);
+AddressMode MakeAddressMode(VkSamplerAddressMode addr);
+void MakeBorderColor(VkBorderColor border, FloatVector *BorderColor);
+CompareFunc MakeCompareFunc(VkCompareOp func);
+TextureFilter MakeFilter(VkFilter minFilter, VkFilter magFilter, VkSamplerMipmapMode mipmapMode,
+                         bool anisoEnable, bool compareEnable);
+LogicOp MakeLogicOp(VkLogicOp op);
+BlendMultiplier MakeBlendMultiplier(VkBlendFactor blend);
+BlendOp MakeBlendOp(VkBlendOp op);
+StencilOp MakeStencilOp(VkStencilOp op);
 
 // set conservative access bits for this image layout
 VkAccessFlags MakeAccessMask(VkImageLayout layout);
 
 void ReplacePresentableImageLayout(VkImageLayout &layout);
+void ReplaceExternalQueueFamily(uint32_t &srcQueueFamily, uint32_t &dstQueueFamily);
 
 void DoPipelineBarrier(VkCommandBuffer cmd, uint32_t count, VkImageMemoryBarrier *barriers);
 void DoPipelineBarrier(VkCommandBuffer cmd, uint32_t count, VkBufferMemoryBarrier *barriers);
@@ -159,6 +173,45 @@ struct VkGenericStruct
   VkStructureType sType;
   const VkGenericStruct *pNext;
 };
+
+// utility function for when we're modifying one struct in a pNext chain, this
+// lets us just copy across a struct unmodified into some temporary memory and
+// append it onto a pNext chain we're building
+template <typename VkStruct>
+void CopyNextChainedStruct(byte *&tempMem, const VkGenericStruct *nextInput,
+                           VkGenericStruct *&nextChainTail)
+{
+  const VkStruct *instruct = (const VkStruct *)nextInput;
+  VkStruct *outstruct = (VkStruct *)tempMem;
+
+  tempMem = (byte *)(outstruct + 1);
+
+  // copy the struct, nothing to unwrap
+  *outstruct = *instruct;
+
+  // default to NULL. It will be overwritten next time if there is a next object
+  outstruct->pNext = NULL;
+
+  // append this onto the chain
+  nextChainTail->pNext = (const VkGenericStruct *)outstruct;
+  nextChainTail = (VkGenericStruct *)outstruct;
+}
+
+// this is similar to the above function, but for use after we've modified a struct locally
+// e.g. to unwrap some members or patch flags, etc.
+template <typename VkStruct>
+void AppendModifiedChainedStruct(byte *&tempMem, VkStruct *outputStruct,
+                                 VkGenericStruct *&nextChainTail)
+{
+  tempMem = (byte *)(outputStruct + 1);
+
+  // default to NULL. It will be overwritten in the next step if there is a next object
+  outputStruct->pNext = NULL;
+
+  // append this onto the chain
+  nextChainTail->pNext = (const VkGenericStruct *)outputStruct;
+  nextChainTail = (VkGenericStruct *)outputStruct;
+}
 
 #define RENDERDOC_LAYER_NAME "VK_LAYER_RENDERDOC_Capture"
 

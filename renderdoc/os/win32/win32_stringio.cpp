@@ -347,9 +347,9 @@ void Delete(const char *path)
   ::DeleteFileW(wpath.c_str());
 }
 
-vector<FoundFile> GetFilesInDirectory(const char *path)
+std::vector<PathEntry> GetFilesInDirectory(const char *path)
 {
-  vector<FoundFile> ret;
+  std::vector<PathEntry> ret;
 
   if(path[0] == '/' && path[1] == 0)
   {
@@ -364,7 +364,7 @@ vector<FoundFile> GetFilesInDirectory(const char *path)
         string fn = "A:/";
         fn[0] = char('A' + i);
 
-        ret.push_back(FoundFile(fn, eFileProp_Directory));
+        ret.push_back(PathEntry(fn.c_str(), PathProperty::Directory));
       }
     }
 
@@ -394,14 +394,14 @@ vector<FoundFile> GetFilesInDirectory(const char *path)
   {
     DWORD err = GetLastError();
 
-    uint32_t flags = eFileProp_ErrorUnknown;
+    PathProperty flags = PathProperty::ErrorUnknown;
 
     if(err == ERROR_FILE_NOT_FOUND)
-      flags = eFileProp_ErrorInvalidPath;
+      flags = PathProperty::ErrorInvalidPath;
     else if(err == ERROR_ACCESS_DENIED)
-      flags = eFileProp_ErrorAccessDenied;
+      flags = PathProperty::ErrorAccessDenied;
 
-    ret.push_back(FoundFile(path, flags));
+    ret.push_back(PathEntry(path, flags));
     return ret;
   }
 
@@ -418,21 +418,21 @@ vector<FoundFile> GetFilesInDirectory(const char *path)
     }
     else
     {
-      uint32_t flags = 0;
+      PathProperty flags = PathProperty::NoFlags;
 
       if(findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-        flags |= eFileProp_Directory;
+        flags |= PathProperty::Directory;
 
       if(findData.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN)
-        flags |= eFileProp_Hidden;
+        flags |= PathProperty::Hidden;
 
       if(wcsstr(findData.cFileName, L".EXE") || wcsstr(findData.cFileName, L".exe") ||
          wcsstr(findData.cFileName, L".Exe"))
       {
-        flags |= eFileProp_Executable;
+        flags |= PathProperty::Executable;
       }
 
-      FoundFile f(StringFormat::Wide2UTF8(findData.cFileName), flags);
+      PathEntry f(StringFormat::Wide2UTF8(findData.cFileName).c_str(), flags);
 
       uint64_t nanosecondsSinceWindowsEpoch = uint64_t(findData.ftLastWriteTime.dwHighDateTime) << 8 |
                                               uint64_t(findData.ftLastWriteTime.dwLowDateTime);
@@ -464,6 +464,16 @@ FILE *fopen(const char *filename, const char *mode)
   FILE *ret = NULL;
   ::_wfopen_s(&ret, wfn.c_str(), wmode.c_str());
   return ret;
+}
+
+bool exists(const char *filename)
+{
+  wstring wfn = StringFormat::UTF82Wide(filename);
+
+  struct _stat st;
+  int res = _wstat(wfn.c_str(), &st);
+
+  return (res == 0);
 }
 
 string getline(FILE *f)
@@ -514,25 +524,39 @@ int fclose(FILE *f)
   return ::fclose(f);
 }
 
-void *logfile_open(const char *filename)
+static HANDLE logHandle = NULL;
+
+bool logfile_open(const char *filename)
 {
   wstring wfn = StringFormat::UTF82Wide(string(filename));
-  return (void *)CreateFileW(wfn.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
-                             NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+  logHandle = CreateFileW(wfn.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                          OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+
+  return logHandle != NULL;
 }
 
-void logfile_append(void *handle, const char *msg, size_t length)
+void logfile_append(const char *msg, size_t length)
 {
-  if(handle)
+  if(logHandle)
   {
     DWORD bytesWritten = 0;
-    WriteFile((HANDLE)handle, msg, (DWORD)length, &bytesWritten, NULL);
+    WriteFile(logHandle, msg, (DWORD)length, &bytesWritten, NULL);
   }
 }
 
-void logfile_close(void *handle)
+void logfile_close(const char *filename)
 {
-  CloseHandle((HANDLE)handle);
+  CloseHandle(logHandle);
+  logHandle = NULL;
+
+  if(filename)
+  {
+    // we can just try to delete the file. If it's open elsewhere in another process, the delete
+    // will
+    // fail.
+    wstring wpath = StringFormat::UTF82Wide(string(filename));
+    ::DeleteFileW(wpath.c_str());
+  }
 }
 };
 
@@ -561,33 +585,6 @@ void sntimef(char *str, size_t bufSize, const char *format)
     memcpy(str, result.c_str(), result.length());
     str[result.length()] = 0;
   }
-}
-
-// this function is only platform specific because va_copy isn't implemented
-// on MSVC
-string Fmt(const char *format, ...)
-{
-  va_list args;
-  va_start(args, format);
-
-  va_list args2;
-  // va_copy(args2, args); // not implemented on VS2010
-  args2 = args;
-
-  int size = StringFormat::vsnprintf(NULL, 0, format, args2);
-
-  char *buf = new char[size + 1];
-  StringFormat::vsnprintf(buf, size + 1, format, args);
-  buf[size] = 0;
-
-  va_end(args);
-  va_end(args2);
-
-  string ret = buf;
-
-  delete[] buf;
-
-  return ret;
 }
 
 string Wide2UTF8(const wstring &s)

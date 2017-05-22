@@ -39,14 +39,13 @@ class D3D12DebugManager
 {
 public:
   D3D12DebugManager(WrappedID3D12Device *wrapper);
-
   ~D3D12DebugManager();
 
   uint64_t MakeOutputWindow(WindowingSystem system, void *data, bool depth);
   void DestroyOutputWindow(uint64_t id);
   bool CheckResizeOutputWindow(uint64_t id);
   void GetOutputWindowDimensions(uint64_t id, int32_t &w, int32_t &h);
-  void ClearOutputWindowColour(uint64_t id, float col[4]);
+  void ClearOutputWindowColor(uint64_t id, float col[4]);
   void ClearOutputWindowDepth(uint64_t id, float depth, uint8_t stencil);
   void BindOutputWindow(uint64_t id, bool depth);
   bool IsOutputWindowVisible(uint64_t id);
@@ -77,20 +76,19 @@ public:
   void RenderMesh(uint32_t eventID, const vector<MeshFormat> &secondaryDraws, const MeshDisplay &cfg);
 
   bool GetMinMax(ResourceId texid, uint32_t sliceFace, uint32_t mip, uint32_t sample,
-                 FormatComponentType typeHint, float *minval, float *maxval);
+                 CompType typeHint, float *minval, float *maxval);
 
   bool GetHistogram(ResourceId texid, uint32_t sliceFace, uint32_t mip, uint32_t sample,
-                    FormatComponentType typeHint, float minval, float maxval, bool channels[4],
+                    CompType typeHint, float minval, float maxval, bool channels[4],
                     vector<uint32_t> &histogram);
 
-  ResourceId RenderOverlay(ResourceId texid, FormatComponentType typeHint,
-                           TextureDisplayOverlay overlay, uint32_t eventID,
-                           const vector<uint32_t> &passEvents);
+  ResourceId RenderOverlay(ResourceId texid, CompType typeHint, DebugOverlay overlay,
+                           uint32_t eventID, const vector<uint32_t> &passEvents);
   ResourceId ApplyCustomShader(ResourceId shader, ResourceId texid, uint32_t mip, uint32_t arrayIdx,
-                               uint32_t sampleIdx, FormatComponentType typeHint);
+                               uint32_t sampleIdx, CompType typeHint);
 
   void PickPixel(ResourceId texture, uint32_t x, uint32_t y, uint32_t sliceFace, uint32_t mip,
-                 uint32_t sample, FormatComponentType typeHint, float pixel[4]);
+                 uint32_t sample, CompType typeHint, float pixel[4]);
   uint32_t PickVertex(uint32_t eventID, const MeshDisplay &cfg, uint32_t x, uint32_t y);
 
   void FillCBufferVariables(const vector<DXBC::CBufferVariable> &invars,
@@ -109,7 +107,7 @@ public:
   byte *GetTextureData(ResourceId tex, uint32_t arrayIdx, uint32_t mip,
                        const GetTextureDataParams &params, size_t &dataSize);
 
-  void BuildShader(string source, string entry, const uint32_t compileFlags, ShaderStageType type,
+  void BuildShader(string source, string entry, const uint32_t compileFlags, ShaderStage type,
                    ResourceId *id, string *errors);
 
   D3D12_CPU_DESCRIPTOR_HANDLE AllocRTV();
@@ -313,12 +311,14 @@ private:
   void RenderTextInternal(ID3D12GraphicsCommandList *list, float x, float y, const char *text);
   bool RenderTextureInternal(D3D12_CPU_DESCRIPTOR_HANDLE rtv, TextureDisplay cfg, bool blendAlpha);
 
-  void PrepareTextureSampling(ID3D12Resource *resource, FormatComponentType typeHint, int &resType,
+  void PrepareTextureSampling(ID3D12Resource *resource, CompType typeHint, int &resType,
                               vector<D3D12_RESOURCE_BARRIER> &barriers);
 
   string GetShaderBlob(const char *source, const char *entry, const uint32_t compileFlags,
                        const char *profile, ID3DBlob **srcblob);
   ID3DBlob *MakeFixedColShader(float overlayConsts[4]);
+
+  void CreateSOBuffers();
 
   struct MeshDisplayPipelines
   {
@@ -336,39 +336,43 @@ private:
     ID3D12PipelineState *pipes[ePipe_Count];
   };
 
-  struct PostVSData
+  struct D3D12PostVSData
   {
+    struct InstData
+    {
+      uint32_t numVerts = 0;
+      uint64_t bufOffset = 0;
+    };
+
     struct StageData
     {
-      ID3D12Resource *buf;
-      D3D_PRIMITIVE_TOPOLOGY topo;
+      ID3D12Resource *buf = NULL;
+      D3D_PRIMITIVE_TOPOLOGY topo = D3D_PRIMITIVE_TOPOLOGY_UNDEFINED;
 
-      uint32_t numVerts;
-      uint32_t vertStride;
-      uint32_t instStride;
+      uint32_t vertStride = 0;
 
-      bool useIndices;
-      ID3D12Resource *idxBuf;
-      DXGI_FORMAT idxFmt;
+      // simple case - uniform
+      uint32_t numVerts = 0;
+      uint32_t instStride = 0;
 
-      bool hasPosOut;
+      // complex case - expansion per instance
+      std::vector<InstData> instData;
 
-      float nearPlane;
-      float farPlane;
+      bool useIndices = false;
+      ID3D12Resource *idxBuf = NULL;
+      DXGI_FORMAT idxFmt = DXGI_FORMAT_UNKNOWN;
+
+      bool hasPosOut = false;
+
+      float nearPlane = 0.0f;
+      float farPlane = 0.0f;
     } vsin, vsout, gsout;
-
-    PostVSData()
-    {
-      RDCEraseEl(vsin);
-      RDCEraseEl(vsout);
-      RDCEraseEl(gsout);
-    }
 
     const StageData &GetStage(MeshDataStage type)
     {
-      if(type == eMeshDataStage_VSOut)
+      if(type == MeshDataStage::VSOut)
         return vsout;
-      else if(type == eMeshDataStage_GSOut)
+      else if(type == MeshDataStage::GSOut)
         return gsout;
       else
         RDCERR("Unexpected mesh data stage!");
@@ -387,41 +391,19 @@ private:
   uint32_t m_PickSize;
   ID3D12Resource *m_PickResultBuf;
 
-  static const int m_SOBufferSize = 32 * 1024 * 1024;
-  ID3D12Resource *m_SOBuffer;
-  ID3D12Resource *m_SOStagingBuffer;
+  uint64_t m_SOBufferSize = 128;
+  ID3D12Resource *m_SOBuffer = NULL;
+  ID3D12Resource *m_SOStagingBuffer = NULL;
+  ID3D12Resource *m_SOPatchedIndexBuffer = NULL;
+  ID3D12QueryHeap *m_SOQueryHeap = NULL;
 
-  // this is a buffer of unique indices, so it allows for
-  // the worst case - float4 per vertex, all unique indices.
-  static const int m_SOPatchedIndexBufferSize = m_SOBufferSize / 16;
-  ID3D12Resource *m_SOPatchedIndexBuffer;
-
-  map<uint32_t, PostVSData> m_PostVSData;
+  map<uint32_t, D3D12PostVSData> m_PostVSData;
   map<uint32_t, uint32_t> m_PostVSAlias;
 
   ID3D12Resource *m_CustomShaderTex;
   ResourceId m_CustomShaderResourceId;
 
-  // simple cache for when we need buffer data for highlighting
-  // vertices, typical use will be lots of vertices in the same
-  // mesh, not jumping back and forth much between meshes.
-  struct HighlightCache
-  {
-    HighlightCache() : EID(0), buf(), offs(0), stage(eMeshDataStage_Unknown), useidx(false) {}
-    uint32_t EID;
-    ResourceId buf;
-    uint64_t offs;
-    MeshDataStage stage;
-    bool useidx;
-
-    vector<byte> data;
-    vector<uint32_t> indices;
-  } m_HighlightCache;
-
-  FloatVector InterpretVertex(byte *data, uint32_t vert, const MeshDisplay &cfg, byte *end,
-                              bool &valid);
-  FloatVector InterpretVertex(byte *data, uint32_t vert, const MeshDisplay &cfg, byte *end,
-                              bool useidx, bool &valid);
+  HighlightCache m_HighlightCache;
 
   int m_width, m_height;
 

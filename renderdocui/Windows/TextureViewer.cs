@@ -1090,9 +1090,6 @@ namespace renderdocui.Windows
 
         public void OnLogfileLoaded()
         {
-            var outConfig = new OutputConfig();
-            outConfig.m_Type = OutputType.TexDisplay;
-
             saveTex.Enabled = gotoLocationButton.Enabled = viewTexBuffer.Enabled = true;
 
             m_Following = Following.Default;
@@ -1111,7 +1108,6 @@ namespace renderdocui.Windows
             {
                 m_Output = r.CreateOutput(renderHandle, OutputType.TexDisplay);
                 m_Output.SetPixelContext(contextHandle);
-                m_Output.SetOutputConfig(outConfig);
 
                 this.BeginInvoke(new Action(UI_CreateThumbnails));
             });
@@ -1138,6 +1134,8 @@ namespace renderdocui.Windows
 
         void CustomShaderModified(object sender, FileSystemEventArgs e)
         {
+            if (!Visible || IsDisposed) return;
+
             Thread.Sleep(5);
             BeginInvoke((MethodInvoker)delegate
             {
@@ -2452,7 +2450,7 @@ namespace renderdocui.Windows
                 return;
             }
 
-            m_Core.Renderer.InvokeForPaint((ReplayRenderer r) => { if (m_Output != null) m_Output.Display(); });
+            m_Core.Renderer.InvokeForPaint("contextpaint", (ReplayRenderer r) => { if (m_Output != null) m_Output.Display(); });
         }
 
         private void render_Paint(object sender, PaintEventArgs e)
@@ -2470,7 +2468,7 @@ namespace renderdocui.Windows
             foreach (var prev in roPanel.Thumbnails)
                 if (prev.Unbound) prev.Clear();
 
-            m_Core.Renderer.InvokeForPaint((ReplayRenderer r) => { if (m_Output != null) m_Output.Display(); });
+            m_Core.Renderer.InvokeForPaint("texpaint", (ReplayRenderer r) => { if (m_Output != null) m_Output.Display(); });
         }
 
         #endregion
@@ -2910,7 +2908,7 @@ namespace renderdocui.Windows
                     m_PickedPoint.X = Helpers.Clamp(m_PickedPoint.X, 0, (int)tex.width - 1);
                     m_PickedPoint.Y = Helpers.Clamp(m_PickedPoint.Y, 0, (int)tex.height - 1);
 
-                    m_Core.Renderer.BeginInvoke((ReplayRenderer r) =>
+                    m_Core.Renderer.BeginInvoke("PickPixelClick", (ReplayRenderer r) =>
                     {
                         if (m_Output != null)
                             RT_PickPixelsAndUpdate(m_PickedPoint.X, m_PickedPoint.Y, true);
@@ -2926,7 +2924,7 @@ namespace renderdocui.Windows
 
                 if (tex != null)
                 {
-                    m_Core.Renderer.BeginInvoke((ReplayRenderer r) =>
+                    m_Core.Renderer.BeginInvoke("PickPixelHover", (ReplayRenderer r) =>
                     {
                         if (m_Output != null)
                         {
@@ -3289,7 +3287,7 @@ namespace renderdocui.Windows
 
             rangePaintThread = Helpers.NewThread(new ThreadStart(() =>
             {
-                m_Core.Renderer.InvokeForPaint((ReplayRenderer r) => { RT_UpdateAndDisplay(r); if (m_Output != null) m_Output.Display(); });
+                m_Core.Renderer.InvokeForPaint("", (ReplayRenderer r) => { RT_UpdateAndDisplay(r); if (m_Output != null) m_Output.Display(); });
                 Thread.Sleep(8);
             }));
             rangePaintThread.Start();
@@ -3345,9 +3343,8 @@ namespace renderdocui.Windows
             m_Core.Renderer.BeginInvoke((ReplayRenderer r) =>
             {
                 PixelValue min, max;
-                bool success = m_Output.GetMinMax(out min, out max);
+                m_Output.GetMinMax(out min, out max);
 
-                if (success)
                 {
                     float minval = float.MaxValue;
                     float maxval = -float.MaxValue;
@@ -3441,17 +3438,14 @@ namespace renderdocui.Windows
             if (m_TexDisplay.CustomShader != ResourceId.Null)
                 fmt.compCount = 4;
 
-            bool success = true;
-
             uint[] histogram;
-            success = m_Output.GetHistogram(rangeHistogram.RangeMin, rangeHistogram.RangeMax,
+            m_Output.GetHistogram(rangeHistogram.RangeMin, rangeHistogram.RangeMax,
                                      m_TexDisplay.Red,
                                      m_TexDisplay.Green && fmt.compCount > 1,
                                      m_TexDisplay.Blue && fmt.compCount > 2,
                                      m_TexDisplay.Alpha && fmt.compCount > 3,
                                      out histogram);
 
-            if (success)
             {
                 this.BeginInvoke(new Action(() =>
                 {
